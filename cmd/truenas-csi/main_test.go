@@ -87,3 +87,28 @@ func TestMetricsAndHealthAreServed(t *testing.T) {
 		}
 	}
 }
+
+// TestEveryBuiltProtocolIsLinkedIn guards a subtle way a backend becomes dead
+// code: it registers itself from init(), so if nothing imports the package the
+// protocol simply does not exist in the shipped binary and a StorageClass
+// naming it fails with "protocol is not supported by this driver version".
+func TestEveryBuiltProtocolIsLinkedIn(t *testing.T) {
+	src, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir("../../internal/backend")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		want := "internal/backend/" + e.Name()
+		if !strings.Contains(string(src), want) {
+			t.Errorf("protocol package %s is built but never imported by main, so it is "+
+				"not registered in the shipped binary", want)
+		}
+	}
+}
