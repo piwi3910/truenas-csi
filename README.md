@@ -539,3 +539,6 @@ responds.
 `iosInProgress` is evidence, not proof: it reports whether the volume's mount point was
 modified within the sample window, so "no I/O observed" means no evidence of activity, not
 a guarantee of idleness. Weigh it alongside `connected` rather than acting on it alone.
+- [docs/replication.md](docs/replication.md) — StorageProtectionGroup: cross-appliance
+  replication, failover, test failover and failback, their safety rules, and what has
+  not been verified against real hardware.
