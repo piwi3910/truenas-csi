@@ -129,7 +129,17 @@ func run(mode, endpoint, configPath, nodeID, hostRoot string) error {
 			slog.Warn("capability unavailable on this node",
 				"capability", capName, "install", missing)
 		}
-		nd = csi.NewNode(node.NewNode(cfg.NodeID, pf, node.HostExec(hostRoot)))
+		nn := node.NewNode(cfg.NodeID, pf, node.HostExec(hostRoot))
+		nn.Root = hostRoot
+		// The connectivity monitor polls the data path of every volume this
+		// node has staged, so a NAS the node can no longer reach shows up as an
+		// abnormal volume condition and a metric instead of as pods hanging on
+		// I/O that never completes.
+		go nn.Health().Run(ctx)
+		slog.Info("volume connectivity monitoring enabled",
+			"interval", node.DefaultHealthInterval.String(),
+			"timeout", node.DefaultHealthTimeout.String())
+		nd = csi.NewNode(nn)
 		obs.MarkReady()
 	}
 

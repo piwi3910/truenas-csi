@@ -257,7 +257,7 @@ can see every LUN. RWO is enforced by Kubernetes, not below it.
 
 Controller: `CREATE_DELETE_VOLUME`, `PUBLISH_UNPUBLISH_VOLUME`, `CREATE_DELETE_SNAPSHOT`,
 `LIST_SNAPSHOTS`, `LIST_VOLUMES`, `EXPAND_VOLUME`, `CLONE_VOLUME`, `GET_CAPACITY`.
-Node: `STAGE_UNSTAGE_VOLUME`, `EXPAND_VOLUME`, `GET_VOLUME_STATS`.
+Node: `STAGE_UNSTAGE_VOLUME`, `EXPAND_VOLUME`, `GET_VOLUME_STATS`, `GET_VOLUME_HEALTH`.
 
 - **Snapshots and restore.** `CreateSnapshot`/`DeleteSnapshot`/`ListSnapshots`, and
   `CreateVolume` from a snapshot source. A restored volume is a ZFS clone that stays
@@ -285,6 +285,36 @@ Prometheus metrics on `metricsAddr` (default `:9090`) and health on `healthAddr`
 `truenas_csi_backend_up` and `truenas_csi_orphaned_volumes`. Label values are bounded to
 method and backend names — a volume ID or a credential never becomes a label. Volume IDs
 appear in log lines instead, so a failing volume can be traced end to end.
+
+### Connectivity health monitoring
+
+The node plugin polls the data path of every volume it has staged (every 10s, each probe
+bounded to 3s) and the data address of every backend behind them. The probe runs under a
+deadline in a goroutine of its own: the failure being detected — a hung NFS mount or an
+iSCSI session whose portal is gone — is exactly the failure that makes `statfs(2)` never
+return, so a monitor that waited for it would report nothing at all.
+
+Two more series come out of it:
+
+- `truenas_csi_volume_health{volume_id_hash,protocol}` — 1 when the volume's data path
+  answered its last check, 0 when it did not. The label is the first 12 hex characters of
+  the volume ID's SHA-256, never the ID itself: one series per PVC ever staged would grow
+  without bound. The full ID is in the log line next to the transition.
+- `truenas_csi_node_backend_reachable{backend}` — 1 when this node's bounded TCP probe of
+  the appliance's data address succeeded. Distinct from `truenas_csi_backend_up`, which
+  describes the controller's middleware websocket: a node can lose NFS while the API
+  connection is perfectly healthy.
+
+A transition is logged exactly once in each direction (`volume data path is unreachable`
+at ERROR, `volume data path recovered` at INFO) — never once per poll. Unhealthy volumes
+are also reported to Kubernetes through the CSI volume-health surface: the driver
+advertises the `GET_VOLUME_HEALTH` node capability and answers `NodeGetVolumeHealth` with
+an `INACCESSIBLE` condition and the underlying error. (CSI v1.13 replaced the earlier
+alpha `volume_condition` field on `NodeGetVolumeStats` with this RPC; it is the same
+signal.) The RPC answers from the monitor's recorded state, so it cannot hang on the mount
+it is reporting about. Only volumes this driver staged are watched — the monitor never
+reads `/proc/mounts`, so another storage system's mounts can never be reported as this
+driver's.
 
 ## Data safety
 

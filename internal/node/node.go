@@ -175,9 +175,16 @@ type Usage struct {
 	Available int64
 }
 
-// StatsResponse is NodeGetVolumeStats' reply.
+// StatsResponse is NodeGetVolumeStats' reply. Abnormal and Message carry the
+// volume condition the health monitor last observed, which the gRPC adapter
+// turns into the CSI volume-health report the CO acts on.
 type StatsResponse struct {
 	Usage []Usage
+	// Abnormal is true when this node cannot currently reach the volume's data
+	// path.
+	Abnormal bool
+	// Message explains an abnormal condition; empty when healthy.
+	Message string
 }
 
 // NodeInfo is NodeGetInfo's reply.
@@ -237,6 +244,12 @@ type Node struct {
 	// multipathWarn fires the single degradation warning per node start, not per
 	// volume: a node without multipath-tools would otherwise log on every attach.
 	multipathWarn sync.Once
+
+	// health watches the data path of every volume staged on this node. It is
+	// owned by the node so that Stage and Unstage can keep its target set in
+	// step with what is actually mounted, rather than parsing /proc/mounts and
+	// picking up another storage system's mounts.
+	health *HealthMonitor
 }
 
 // NewNode builds the node plugin for one node from its identity, the startup
@@ -247,8 +260,13 @@ func NewNode(nodeID string, p *Preflight, exec Executor) *Node {
 		nodeID: nodeID,
 		pre:    p,
 		exec:   exec,
+		health: NewHealthMonitor(),
 	}
 }
+
+// Health returns the node's connectivity monitor, for the caller that starts its
+// polling loop and for the gRPC adapter that reports its verdict.
+func (n *Node) Health() *HealthMonitor { return n.health }
 
 // GetInfo reports this node's identity, the capabilities the startup preflight
 // found, and how many volumes it will host.
@@ -269,14 +287,30 @@ func (n *Node) Stage(ctx context.Context, req StageRequest) error {
 	}
 	ctx = obs.WithVolume(ctx, req.VolumeID)
 
-	switch protocolOf(req.PublishContext) {
+	proto := protocolOf(req.PublishContext)
+	var err error
+	switch proto {
 	case ProtocolNFS:
-		return n.stageNFS(ctx, req)
+		err = n.stageNFS(ctx, req)
 	case ProtocolISCSI:
-		return n.stageISCSI(ctx, req)
+		err = n.stageISCSI(ctx, req)
 	default:
 		return fmt.Errorf("%w: publish context names no supported protocol", ErrInvalidRequest)
 	}
+	if err != nil {
+		return err
+	}
+	// Only a volume this driver actually staged is watched. The monitor never
+	// discovers mounts on its own, so Longhorn's or local-path's mounts can
+	// never be reported — or acted on — as this driver's.
+	n.health.Track(HealthTarget{
+		VolumeID: req.VolumeID,
+		Protocol: proto,
+		Path:     healthPathOf(req),
+		Backend:  backendOf(req.VolumeID),
+		DataAddr: dataAddrOf(req.PublishContext),
+	})
+	return nil
 }
 
 // Unstage tears down what Stage built. Unstaging a path that is not mounted is a
@@ -291,7 +325,11 @@ func (n *Node) Unstage(ctx context.Context, req UnstageRequest) error {
 	if err := n.unmountIfMounted(ctx, req.StagingPath); err != nil {
 		return err
 	}
-	return n.unstageISCSI(ctx, req)
+	if err := n.unstageISCSI(ctx, req); err != nil {
+		return err
+	}
+	n.health.Forget(req.VolumeID)
+	return nil
 }
 
 // Publish makes a staged volume visible at the pod's target path: a bind mount of
@@ -383,3 +421,25 @@ var (
 	expandWaitTimeout  = 30 * time.Second
 	expandPollInterval = 200 * time.Millisecond
 )
+
+// healthPathOf is the path the monitor stats for a staged volume. A raw block
+// volume has no filesystem, so it has no path and is judged by its backend
+// alone.
+func healthPathOf(req StageRequest) string {
+	if req.VolumeCapability.Block {
+		return ""
+	}
+	return req.StagingPath
+}
+
+// backendOf is the backend name encoded in a volume id
+// (<backend>/<protocol>/<pool>/<dataset path>/<name>). An id in any other shape
+// yields no backend, and the volume is then watched without a backend gauge
+// rather than under a bogus label.
+func backendOf(volumeID string) string {
+	name, _, ok := strings.Cut(volumeID, "/")
+	if !ok {
+		return ""
+	}
+	return name
+}

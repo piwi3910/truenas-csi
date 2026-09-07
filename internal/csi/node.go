@@ -116,6 +116,12 @@ func (s *nodeServer) NodeGetCapabilities(context.Context, *csipb.NodeGetCapabili
 		rpc(csipb.NodeServiceCapability_RPC_STAGE_UNSTAGE_VOLUME),
 		rpc(csipb.NodeServiceCapability_RPC_EXPAND_VOLUME),
 		rpc(csipb.NodeServiceCapability_RPC_GET_VOLUME_STATS),
+		// GET_VOLUME_HEALTH is CSI v1.13's successor to the alpha
+		// `volume_condition` field that earlier releases carried on
+		// NodeGetVolumeStatsResponse: the same "this mounted volume is sick"
+		// signal, now its own RPC. Advertising it is what makes the CO ask;
+		// without it the driver's health monitor would talk to nobody.
+		rpc(csipb.NodeServiceCapability_RPC_GET_VOLUME_HEALTH),
 	}}, nil
 }
 
@@ -258,6 +264,30 @@ func (s *nodeServer) NodeExpandVolume(ctx context.Context, req *csipb.NodeExpand
 		return nil, nodeErr(err)
 	}
 	return &csipb.NodeExpandVolumeResponse{CapacityBytes: out.CapacityBytes}, nil
+}
+
+// NodeGetVolumeHealth reports the condition the node's health monitor last
+// observed for a volume. It answers from the monitor's recorded state rather
+// than probing inline: the probe is the thing that can hang, and an RPC that
+// hangs tells the CO nothing while also occupying one of its workers.
+func (s *nodeServer) NodeGetVolumeHealth(ctx context.Context, req *csipb.NodeGetVolumeHealthRequest) (resp *csipb.NodeGetVolumeHealthResponse, err error) {
+	start := time.Now()
+	defer func() { obs.ObserveCSI("NodeGetVolumeHealth", err, time.Since(start)) }()
+
+	if req.GetVolumeId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "volume id is required")
+	}
+	health := &csipb.VolumeHealth{VolumeId: req.GetVolumeId()}
+	if abnormal, message := s.n.Health().Condition(req.GetVolumeId()); abnormal {
+		health.HealthStatuses = []*csipb.VolumeHealth_VolumeHealthEntry{{
+			Status: csipb.VolumeHealthErrorType_INACCESSIBLE,
+			// A brief CamelCase reason, as the spec requires, with the detail
+			// in the message.
+			Reason:  "DataPathUnreachable",
+			Message: obs.Redact(message),
+		}}
+	}
+	return &csipb.NodeGetVolumeHealthResponse{VolumeHealth: health}, nil
 }
 
 func (s *nodeServer) NodeGetVolumeStats(ctx context.Context, req *csipb.NodeGetVolumeStatsRequest) (resp *csipb.NodeGetVolumeStatsResponse, err error) {
