@@ -1,0 +1,421 @@
+apiVersion: operators.coreos.com/v1alpha1
+kind: ClusterServiceVersion
+metadata:
+  name: truenas-csi-operator.v0.1.0
+  namespace: placeholder
+  annotations:
+    capabilities: Seamless Upgrades
+    categories: Storage
+    containerImage: ghcr.io/piwi3910/truenas-csi-operator:0.1.0
+    createdAt: "2026-09-08T00:00:00Z"
+    description: Provisions NFS and iSCSI PersistentVolumes on TrueNAS SCALE appliances, with drain-aware upgrades and credential rotation.
+    repository: https://github.com/piwi3910/truenas-csi
+    support: https://github.com/piwi3910/truenas-csi/issues
+    operators.operatorframework.io/builder: operator-sdk
+    operators.operatorframework.io/project_layout: go.kubebuilder.io/v4
+    # skipRange lets a cluster several releases behind upgrade in one hop.
+    # Walking every intermediate CSV would trigger one full node-plugin rollout
+    # per version, and each rollout takes a node's plugin offline in turn.
+    olm.skipRange: "<0.1.0"
+    alm-examples: |-
+      [
+        {
+          "apiVersion": "truenas.watteel.com/v1alpha1",
+          "kind": "TrueNASCSIDriver",
+          "metadata": {
+            "name": "truenas"
+          },
+          "spec": {
+            "namespace": "truenas-csi",
+            "logLevel": "info",
+            "backends": [
+              {
+                "name": "nas1",
+                "endpoint": "wss://nas1.example.com/api/current",
+                "username": "csi",
+                "apiKeySecretRef": {
+                  "name": "truenas-credentials",
+                  "key": "apiKey"
+                },
+                "pool": "tank",
+                "parentDataset": "tank/k8s",
+                "insecureSkipVerify": false
+              }
+            ],
+            "controller": {
+              "replicas": 2
+            },
+            "node": {
+              "kubeletDir": "/var/lib/kubelet"
+            },
+            "snapshotter": {
+              "enabled": true
+            },
+            "storageClasses": [
+              {
+                "name": "truenas-nfs",
+                "protocol": "nfs",
+                "backend": "nas1",
+                "reclaimPolicy": "Delete",
+                "allowVolumeExpansion": true,
+                "mountOptions": ["nfsvers=4.1", "hard"],
+                "nfs": {
+                  "version": "4",
+                  "networks": ["10.0.0.0/8"],
+                  "mode": "0770"
+                }
+              }
+            ]
+          }
+        }
+      ]
+spec:
+  displayName: TrueNAS CSI Driver
+  version: 0.1.0
+  maturity: alpha
+  minKubeVersion: 1.31.0
+  provider:
+    name: Pascal Watteel
+    url: https://github.com/piwi3910/truenas-csi
+  maintainers:
+    - name: Pascal Watteel
+      email: pascal@watteel.com
+  keywords:
+    - storage
+    - csi
+    - truenas
+    - zfs
+    - nfs
+    - iscsi
+  links:
+    - name: Source
+      url: https://github.com/piwi3910/truenas-csi
+    - name: Operator guide
+      url: https://github.com/piwi3910/truenas-csi/blob/main/docs/operator.md
+  # replaces is absent because 0.1.0 is the first release. Every later CSV names
+  # the release it replaces, which is what forms the upgrade graph inside a
+  # channel.
+  description: |
+    # TrueNAS CSI Driver
+
+    Provisions PersistentVolumes on TrueNAS SCALE appliances over NFS and iSCSI,
+    with snapshots, clones, volume expansion and raw block volumes. Configure it
+    with one cluster-scoped `TrueNASCSIDriver` resource; the operator renders the
+    project's Helm chart and reconciles the result, so an OLM install and a Helm
+    install produce the same objects.
+
+    ## Before you install
+
+    ### The node plugin requires privileged access
+
+    The node component of any CSI driver that attaches block storage has to be
+    privileged, and this one is no exception. Its DaemonSet runs with:
+
+    * **`hostPID`**, so the plugin can enter the host's mount namespace with
+      `nsenter` and run `iscsiadm` against the host's `iscsid`. An iSCSI session
+      belongs to the host's kernel, not to a container: a session opened inside a
+      container's namespace cannot be used to mount a filesystem the kubelet can
+      see.
+    * **`hostNetwork`**, because the iSCSI portal and the NFS export are reached
+      from the node's own address, and the initiator ACL on the appliance is
+      written in terms of node addresses and IQNs.
+    * **host path mounts** of `/dev` (to find the block device the LUN appears
+      as), `/etc/iscsi` and `/var/lib/iscsi` (the initiator's own configuration
+      and session state), `/lib/modules` and `/run/systemd`, and the kubelet root
+      directory (to place the staged mount where the kubelet expects it).
+    * **`privileged: true`** on the plugin container, because mounting a
+      filesystem and rescanning a SCSI bus both require it.
+
+    There is no unprivileged way to do this. If that access is unacceptable in
+    your cluster, do not install this driver.
+
+    Two consequences worth stating plainly:
+
+    * The node's iSCSI state is **shared** with anything else on the node that
+      uses iSCSI — Longhorn, for example. This driver therefore scopes every
+      `iscsiadm` call to one target and one portal: no `--logoutall`, no unscoped
+      deletes, no global session rescan, and it never rewrites `iscsid.conf`.
+    * A single shared iSCSI target exposes every LUN on it to every logged-in
+      node. Initiator ACLs are a property of the target, not of individual LUNs,
+      so per-volume isolation is not achievable in this model. The ACL defends
+      the cluster boundary — keeping non-cluster machines off the target — not
+      one node from another. Do not assume ReadWriteOnce is enforced below
+      Kubernetes.
+
+    **The controller and the operator are not privileged.** Both run as UID
+    65532, non-root, with `RuntimeDefault` seccomp and no host access at all. The
+    operator holds no TrueNAS credential of its own and never connects to an
+    appliance.
+
+    ### The endpoint must be `wss://`
+
+    TrueNAS 25.10 *revokes* an API key the moment it is presented over a
+    plaintext connection. A plaintext websocket endpoint does not merely fail to
+    connect — it destroys the credential, and an administrator has to issue a new
+    one by hand.
+    The CRD's schema rejects any other scheme at apply time, before anything can
+    dial the appliance.
+
+    Credentials are supplied only by reference to a Secret. There is no field
+    anywhere in the resource that holds an API key.
+
+    ### Snapshots
+
+    Snapshot support requires the cluster-wide external-snapshotter CRDs and
+    controller. The operator will **never** install them: they are a cluster
+    singleton, and two drivers installing them breaks snapshots for both.
+
+    ## What the operator does beyond installing
+
+    * **Drain-aware node rollout.** The DaemonSet is set to `OnDelete` and the
+      operator replaces plugin pods one node at a time, only when that node
+      reports no volume mid-stage, waiting for each node's plugin to become Ready
+      before moving on.
+    * **API key rotation.** When the referenced Secret changes, the controller is
+      restarted first and the node plugins only once it is healthy on the new
+      key.
+    * **Version-skew refusal.** An upgrade whose driver version is incompatible
+      with the pinned CSI sidecars is refused outright, with a `Degraded`
+      condition, rather than half-applied.
+    * **Health reporting.** Per-backend reachability and the driver's orphaned-
+      dataset count appear in `status`.
+
+    ## Upgrading
+
+    Upgrading the operator does not by itself change the driver. Changing
+    `spec.image.tag` does, and that change is rolled out node by node as above.
+
+  icon:
+    - base64data: ""
+      mediatype: image/svg+xml
+
+  installModes:
+    # The resource is cluster-scoped and it installs cluster-scoped objects
+    # (CSIDriver, ClusterRoles, StorageClasses), so AllNamespaces is the only
+    # honest mode. A CSI driver is a cluster-wide facility.
+    - type: OwnNamespace
+      supported: false
+    - type: SingleNamespace
+      supported: false
+    - type: MultiNamespace
+      supported: false
+    - type: AllNamespaces
+      supported: true
+
+  customresourcedefinitions:
+    owned:
+      - name: truenascsidrivers.truenas.watteel.com
+        version: v1alpha1
+        kind: TrueNASCSIDriver
+        displayName: TrueNAS CSI Driver
+        description: One installation of the TrueNAS CSI driver, including its appliances, StorageClasses and rollout policy.
+        resources:
+          - kind: DaemonSet
+            version: apps/v1
+          - kind: Deployment
+            version: apps/v1
+          - kind: CSIDriver
+            version: storage.k8s.io/v1
+          - kind: StorageClass
+            version: storage.k8s.io/v1
+          - kind: Secret
+            version: v1
+        specDescriptors:
+          - path: namespace
+            displayName: Namespace
+            description: Namespace the driver's workloads are installed into.
+            x-descriptors:
+              - urn:alm:descriptor:com.tectonic.ui:text
+          - path: backends[0].endpoint
+            displayName: Endpoint
+            description: >-
+              Websocket JSON-RPC endpoint of the appliance. Must be wss://.
+              TrueNAS revokes an API key presented over a plaintext connection,
+              so any other scheme is rejected here rather than at first use.
+            x-descriptors:
+              - urn:alm:descriptor:com.tectonic.ui:text
+          - path: backends[0].apiKeySecretRef
+            displayName: API key Secret
+            description: Secret key holding this appliance's API key. The key itself is never stored in this resource.
+            x-descriptors:
+              - urn:alm:descriptor:io.kubernetes:Secret
+          - path: backends[0].insecureSkipVerify
+            displayName: Skip TLS verification
+            description: >-
+              Disables certificate verification for this appliance. Exists
+              because the stock TrueNAS certificate is self-signed with
+              SAN=DNS:localhost and cannot be verified against a real address.
+              Never the default.
+            x-descriptors:
+              - urn:alm:descriptor:com.tectonic.ui:booleanSwitch
+          - path: image.tag
+            displayName: Driver version
+            description: Driver image tag. An upgrade to a version incompatible with the pinned CSI sidecars is refused.
+            x-descriptors:
+              - urn:alm:descriptor:com.tectonic.ui:text
+          - path: controller.replicas
+            displayName: Controller replicas
+            x-descriptors:
+              - urn:alm:descriptor:com.tectonic.ui:podCount
+          - path: node.kubeletDir
+            displayName: Kubelet root directory
+            description: k3s and microk8s do not use the default /var/lib/kubelet.
+            x-descriptors:
+              - urn:alm:descriptor:com.tectonic.ui:text
+        statusDescriptors:
+          - path: conditions
+            displayName: Conditions
+            x-descriptors:
+              - urn:alm:descriptor:io.kubernetes.conditions
+          - path: appliedVersion
+            displayName: Applied version
+            x-descriptors:
+              - urn:alm:descriptor:text
+          - path: backends
+            displayName: Backend health
+            description: Per-appliance reachability and orphaned-dataset count, as the driver reports them.
+          - path: rollout
+            displayName: Node rollout
+            description: Progress of the drain-aware node plugin rollout, and what it is waiting for.
+
+  install:
+    strategy: deployment
+    spec:
+      permissions:
+        - serviceAccountName: truenas-csi-operator
+          rules:
+            - apiGroups: ["coordination.k8s.io"]
+              resources: ["leases"]
+              verbs:
+                ["get", "list", "watch", "create", "update", "patch", "delete"]
+            - apiGroups: [""]
+              resources: ["events"]
+              verbs: ["create", "patch"]
+      clusterPermissions:
+        - serviceAccountName: truenas-csi-operator
+          rules:
+            - apiGroups: [""]
+              resources: ["events"]
+              verbs: ["create", "patch"]
+            - apiGroups: [""]
+              resources: ["namespaces"]
+              verbs: ["create", "get", "list", "patch", "update", "watch"]
+            - apiGroups: [""]
+              resources:
+                ["nodes", "persistentvolumeclaims", "persistentvolumes"]
+              verbs: ["get", "list", "watch"]
+            - apiGroups: [""]
+              resources: ["pods"]
+              verbs: ["delete", "get", "list", "watch"]
+            - apiGroups: [""]
+              resources: ["secrets", "serviceaccounts", "services"]
+              verbs:
+                ["create", "delete", "get", "list", "patch", "update", "watch"]
+            - apiGroups: ["apps"]
+              resources: ["daemonsets", "deployments"]
+              verbs:
+                ["create", "delete", "get", "list", "patch", "update", "watch"]
+            - apiGroups: ["coordination.k8s.io"]
+              resources: ["leases"]
+              verbs:
+                ["create", "delete", "get", "list", "patch", "update", "watch"]
+            # escalate and bind are required because the operator creates the
+            # driver's own ClusterRoles. This is a real privilege: treat the
+            # operator's namespace as sensitive.
+            - apiGroups: ["rbac.authorization.k8s.io"]
+              resources:
+                ["clusterrolebindings", "clusterroles", "rolebindings", "roles"]
+              verbs:
+                [
+                  "bind",
+                  "create",
+                  "delete",
+                  "escalate",
+                  "get",
+                  "list",
+                  "patch",
+                  "update",
+                  "watch",
+                ]
+            - apiGroups: ["snapshot.storage.k8s.io"]
+              resources: ["volumesnapshotclasses"]
+              verbs:
+                ["create", "delete", "get", "list", "patch", "update", "watch"]
+            - apiGroups: ["storage.k8s.io"]
+              resources:
+                ["csidrivers", "csistoragecapacities", "storageclasses"]
+              verbs:
+                ["create", "delete", "get", "list", "patch", "update", "watch"]
+            - apiGroups: ["storage.k8s.io"]
+              resources: ["csinodes", "volumeattachments"]
+              verbs: ["get", "list", "watch"]
+            - apiGroups: ["truenas.watteel.com"]
+              resources: ["truenascsidrivers"]
+              verbs:
+                ["create", "delete", "get", "list", "patch", "update", "watch"]
+            - apiGroups: ["truenas.watteel.com"]
+              resources: ["truenascsidrivers/finalizers"]
+              verbs: ["update"]
+            - apiGroups: ["truenas.watteel.com"]
+              resources: ["truenascsidrivers/status"]
+              verbs: ["get", "patch", "update"]
+      deployments:
+        - name: truenas-csi-operator
+          label:
+            app.kubernetes.io/name: truenas-csi-operator
+            app.kubernetes.io/component: manager
+          spec:
+            replicas: 2
+            selector:
+              matchLabels:
+                app.kubernetes.io/name: truenas-csi-operator
+                app.kubernetes.io/component: manager
+            template:
+              metadata:
+                labels:
+                  app.kubernetes.io/name: truenas-csi-operator
+                  app.kubernetes.io/component: manager
+              spec:
+                serviceAccountName: truenas-csi-operator
+                securityContext:
+                  runAsNonRoot: true
+                  runAsUser: 65532
+                  runAsGroup: 65532
+                  seccompProfile:
+                    type: RuntimeDefault
+                containers:
+                  - name: manager
+                    image: ghcr.io/piwi3910/truenas-csi-operator:0.1.0
+                    args:
+                      - --leader-elect
+                      - --health-probe-bind-address=:8081
+                      - --metrics-bind-address=:8080
+                    securityContext:
+                      allowPrivilegeEscalation: false
+                      readOnlyRootFilesystem: true
+                      capabilities:
+                        drop: ["ALL"]
+                    ports:
+                      - name: metrics
+                        containerPort: 8080
+                      - name: health
+                        containerPort: 8081
+                    livenessProbe:
+                      httpGet:
+                        path: /healthz
+                        port: health
+                      initialDelaySeconds: 15
+                      periodSeconds: 20
+                    readinessProbe:
+                      httpGet:
+                        path: /readyz
+                        port: health
+                      initialDelaySeconds: 5
+                      periodSeconds: 10
+                    resources:
+                      requests:
+                        cpu: 20m
+                        memory: 96Mi
+                      limits:
+                        memory: 384Mi
+                terminationGracePeriodSeconds: 10

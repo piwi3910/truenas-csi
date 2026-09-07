@@ -3,7 +3,7 @@ IMG          ?= ghcr.io/piwi3910/truenas-csi-operator:0.1.0
 BUNDLE_IMG   ?= ghcr.io/piwi3910/truenas-csi-operator-bundle:0.1.0
 ENVTEST_K8S  ?= 1.31.0
 
-.PHONY: all build test manifests generate fmt vet envtest bundle-validate docker-build clean
+.PHONY: all build test manifests generate fmt vet envtest bundle bundle-validate docker-build clean
 
 all: generate manifests fmt vet build test
 
@@ -24,6 +24,20 @@ manifests:
 		crd paths=./api/... output:crd:artifacts:config=config/crd/bases
 	$(GO) run sigs.k8s.io/controller-tools/cmd/controller-gen \
 		rbac:roleName=truenas-csi-operator paths=./internal/controller/... output:rbac:artifacts:config=config/rbac
+	# The repository's commit gate runs prettier over YAML, and controller-gen's
+	# output is not prettier-formatted. Normalise it here so `make manifests`
+	# leaves a tree the gate accepts.
+	@command -v npx >/dev/null 2>&1 \
+		&& npx --yes prettier --write config/crd/bases config/rbac/role.yaml >/dev/null \
+		|| echo "npx not available; run prettier over config/ before committing"
+	$(MAKE) bundle
+
+# bundle keeps the OLM bundle's copy of the CRD identical to the generated one.
+# A bundle whose CRD has drifted from the operator's own types installs a schema
+# the operator does not implement.
+bundle:
+	cp config/crd/bases/truenas.watteel.com_truenascsidrivers.yaml \
+		bundle/manifests/truenas.watteel.com_truenascsidrivers.yaml
 
 fmt:
 	gofmt -l -w .
