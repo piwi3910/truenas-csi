@@ -47,6 +47,7 @@ type Server struct {
 	mu       sync.Mutex
 	handlers map[string]Handler
 	calls    []string
+	conns    []func(any)
 
 	inFlight  atomic.Int64
 	peak      atomic.Int64
@@ -127,6 +128,10 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		_ = c.WriteJSON(v)
 	}
 
+	s.mu.Lock()
+	s.conns = append(s.conns, send)
+	s.mu.Unlock()
+
 	for {
 		_, data, err := c.ReadMessage()
 		if err != nil {
@@ -152,10 +157,20 @@ func (s *Server) dispatch(req request, send func(any)) {
 			break
 		}
 	}
-	defer s.inFlight.Add(-1)
+	// The in-flight window must close BEFORE the response is written. If it
+	// closed after, the client could receive the reply, release its own
+	// semaphore slot and issue a new call that this server counts while the
+	// finished one is still counted — inflating the observed peak by one and
+	// making a correct client look like it breached its cap.
+	var done sync.Once
+	finish := func(v any) {
+		done.Do(func() { s.inFlight.Add(-1) })
+		send(v)
+	}
+	defer done.Do(func() { s.inFlight.Add(-1) })
 
 	if s.opts.ConcurrencyLimit > 0 && int(cur) > s.opts.ConcurrencyLimit {
-		send(errResponse(req.ID, -32000, "", "too many concurrent calls"))
+		finish(errResponse(req.ID, -32000, "", "too many concurrent calls"))
 		return
 	}
 
@@ -176,12 +191,12 @@ func (s *Server) dispatch(req request, send func(any)) {
 		} else if s.opts.RejectAuth {
 			rt = "AUTH_ERR"
 		}
-		send(okResponse(req.ID, map[string]any{"response_type": rt}))
+		finish(okResponse(req.ID, map[string]any{"response_type": rt}))
 		return
 	}
 
 	if h == nil {
-		send(errResponse(req.ID, -32601, "", "method not found"))
+		finish(errResponse(req.ID, -32601, "", "method not found"))
 		return
 	}
 	v, err := h(req.Params)
@@ -192,14 +207,22 @@ func (s *Server) dispatch(req request, send func(any)) {
 		} else {
 			re = &RPCError{Code: -32001, ErrName: "EFAULT", Reason: err.Error()}
 		}
-		send(errResponse(req.ID, re.Code, re.ErrName, re.Reason))
+		finish(errResponse(req.ID, re.Code, re.ErrName, re.Reason))
 		return
 	}
-	send(okResponse(req.ID, v))
+	finish(okResponse(req.ID, v))
 }
 
-// Notify sends an id-less notification to every open connection is not supported;
-// tests that need one register a handler that returns the notification inline.
+// Notify pushes an id-less JSON-RPC notification to every open connection,
+// as the appliance does for collection_update job progress messages.
+func (s *Server) Notify(method string, params any) {
+	s.mu.Lock()
+	conns := append([]func(any){}, s.conns...)
+	s.mu.Unlock()
+	for _, send := range conns {
+		send(map[string]any{"jsonrpc": "2.0", "method": method, "params": params})
+	}
+}
 
 func okResponse(id *json.RawMessage, result any) map[string]any {
 	return map[string]any{"jsonrpc": "2.0", "id": id, "result": result}

@@ -2,3 +2,6 @@
 /dist/
 *.test
 coverage.out
+
+# agent worktrees, never tracked
+.claude/worktrees/
