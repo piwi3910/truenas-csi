@@ -1,0 +1,27 @@
+annotations:
+  operators.operatorframework.io.bundle.mediatype.v1: registry+v1
+  operators.operatorframework.io.bundle.manifests.v1: manifests/
+  operators.operatorframework.io.bundle.metadata.v1: metadata/
+  operators.operatorframework.io.bundle.package.v1: truenas-csi-operator
+
+  # Channels.
+  #
+  #   stable  — releases that have been run against a real TrueNAS appliance and
+  #             a real cluster. This is the default: an operator that manages
+  #             storage should not put anyone on an untested build by accident.
+  #   alpha   — pre-release builds. Subscribing to it is a deliberate choice.
+  #
+  # The upgrade graph within a channel is expressed by the CSV: each release
+  # names the release it `replaces`, and carries an `olm.skipRange` so a cluster
+  # several versions behind upgrades in one hop rather than walking every
+  # intermediate CSV — each of which would otherwise trigger its own driver
+  # rollout across every node.
+  operators.operatorframework.io.bundle.channels.v1: stable,alpha
+  operators.operatorframework.io.bundle.channel.default.v1: stable
+
+  operators.operatorframework.io.metrics.builder: operator-sdk
+  operators.operatorframework.io.metrics.mediatype.v1: metrics+v1
+  operators.operatorframework.io.metrics.project_layout: go.kubebuilder.io/v4
+
+  operators.operatorframework.io.test.mediatype.v1: scorecard+v1
+  operators.operatorframework.io.test.config.v1: tests/scorecard/

@@ -1,0 +1,6 @@
+namespace: truenas-csi-operator-system
+
+resources:
+  - ../crd
+  - ../rbac
+  - ../manager

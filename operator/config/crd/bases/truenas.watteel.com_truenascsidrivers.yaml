@@ -1,0 +1,694 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.22.0
+  name: truenascsidrivers.truenas.watteel.com
+spec:
+  group: truenas.watteel.com
+  names:
+    kind: TrueNASCSIDriver
+    listKind: TrueNASCSIDriverList
+    plural: truenascsidrivers
+    shortNames:
+      - tncsi
+      - truenascsi
+    singular: truenascsidriver
+  scope: Cluster
+  versions:
+    - additionalPrinterColumns:
+        - jsonPath: .spec.namespace
+          name: Namespace
+          type: string
+        - jsonPath: .status.appliedVersion
+          name: Version
+          type: string
+        - jsonPath: .status.conditions[?(@.type=="Ready")].status
+          name: Ready
+          type: string
+        - jsonPath: .status.conditions[?(@.type=="Ready")].reason
+          name: Reason
+          type: string
+        - jsonPath: .metadata.creationTimestamp
+          name: Age
+          type: date
+      name: v1alpha1
+      schema:
+        openAPIV3Schema:
+          description: |-
+            TrueNASCSIDriver installs and owns the lifecycle of one TrueNAS CSI driver.
+
+            The resource is cluster-scoped because most of what it owns is: the
+            CSIDriver object, the ClusterRoles and the StorageClasses have no namespace,
+            and a namespaced owner cannot own them.
+          properties:
+            apiVersion:
+              description: |-
+                APIVersion defines the versioned schema of this representation of an object.
+                Servers should convert recognized schemas to the latest internal value, and
+                may reject unrecognized values.
+                More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+              type: string
+            kind:
+              description: |-
+                Kind is a string value representing the REST resource this object represents.
+                Servers may infer this from the endpoint the client submits requests to.
+                Cannot be updated.
+                In CamelCase.
+                More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+              type: string
+            metadata:
+              type: object
+            spec:
+              description: |-
+                TrueNASCSIDriverSpec is a typed projection of the in-repo Helm chart's values.
+
+                The projection is deliberately narrower than values.yaml. Everything here is
+                validated by the API server at apply time, which is the entire reason for
+                preferring this resource over a raw values file: a wrong endpoint scheme, a
+                StorageClass naming a backend that does not exist, or a reserve set two ways
+                at once is rejected by `kubectl apply`, not discovered by the first PVC that
+                fails to bind an hour later.
+
+                Name uniqueness within backends and storageClasses is enforced by the
+                listType=map declarations below, not by a CEL rule.
+              properties:
+                backends:
+                  description: |-
+                    Backends are the TrueNAS appliances this driver provisions against. At
+                    least one is required: a driver with no backend cannot serve any volume.
+                  items:
+                    description: |-
+                      BackendSpec is one TrueNAS appliance. It mirrors internal/config.Backend,
+                      except that the API key is a reference rather than a value.
+                    properties:
+                      apiKeySecretRef:
+                        description:
+                          APIKeySecretRef points at the Secret key holding
+                          this appliance's API key.
+                        properties:
+                          key:
+                            default: apiKey
+                            description: Key within the Secret.
+                            maxLength: 253
+                            minLength: 1
+                            pattern: ^[-._a-zA-Z0-9]+$
+                            type: string
+                          name:
+                            description:
+                              Name of the Secret, which must live in the
+                              driver's namespace.
+                            maxLength: 253
+                            minLength: 1
+                            pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                            type: string
+                        required:
+                          - name
+                        type: object
+                      caCertSecretRef:
+                        description: |-
+                          CACertSecretRef names a Secret key holding the PEM bundle trusted for this
+                          appliance. A stock TrueNAS certificate is self-signed with
+                          SAN=DNS:localhost and cannot be verified against a real address, so either
+                          supply a certificate here or accept the risk below.
+                        properties:
+                          key:
+                            default: apiKey
+                            description: Key within the Secret.
+                            maxLength: 253
+                            minLength: 1
+                            pattern: ^[-._a-zA-Z0-9]+$
+                            type: string
+                          name:
+                            description:
+                              Name of the Secret, which must live in the
+                              driver's namespace.
+                            maxLength: 253
+                            minLength: 1
+                            pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                            type: string
+                        required:
+                          - name
+                        type: object
+                      endpoint:
+                        description: |-
+                          Endpoint is the appliance's websocket JSON-RPC endpoint. It must be
+                          wss://; see EndpointPattern for why that is enforced here.
+                        example: wss://nas1.example.com/api/current
+                        maxLength: 2048
+                        minLength: 8
+                        pattern: ^wss://[^\s/?#]+(?:/[^\s]*)?$
+                        type: string
+                      insecureSkipVerify:
+                        default: false
+                        description: |-
+                          InsecureSkipVerify disables certificate verification for this appliance.
+                          It exists because of the self-signed stock certificate, it is never the
+                          default, and the driver logs a loud warning whenever it is on.
+                        type: boolean
+                      name:
+                        description: |-
+                          Name selects this appliance from a StorageClass `backend` parameter, and
+                          is part of every volume ID this backend provisions. Renaming a backend
+                          orphans its volumes, so the name is effectively immutable in practice.
+                        maxLength: 63
+                        minLength: 1
+                        pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                        type: string
+                      parentDataset:
+                        description: |-
+                          ParentDataset is the dataset every volume is created under. It must not
+                          contain "..": the driver builds dataset paths from volume IDs, and a
+                          traversal component would let a volume escape its parent.
+                        maxLength: 255
+                        minLength: 1
+                        pattern: ^[A-Za-z0-9][-A-Za-z0-9_.:]*(/[-A-Za-z0-9_.:]+)*$
+                        type: string
+                        x-kubernetes-validations:
+                          - message: parentDataset must not contain ..
+                            rule: "!self.contains('..')"
+                      pool:
+                        description: Pool is the ZFS pool volumes are created in.
+                        maxLength: 255
+                        minLength: 1
+                        pattern: ^[A-Za-z0-9][-A-Za-z0-9_.:]*$
+                        type: string
+                      reservedBytes:
+                        anyOf:
+                          - type: integer
+                          - type: string
+                        description: |-
+                          ReservedBytes is capacity held back from the pool's reported free space so
+                          the driver cannot provision the pool to full. Mutually exclusive with
+                          ReservedPercent.
+                        pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                        x-kubernetes-int-or-string: true
+                      reservedPercent:
+                        description: |-
+                          ReservedPercent is the same reserve expressed as a percentage of pool
+                          capacity. Mutually exclusive with ReservedBytes.
+                        format: int32
+                        maximum: 99
+                        minimum: 0
+                        type: integer
+                      username:
+                        description: |-
+                          Username is the TrueNAS account the API key belongs to. It should be a
+                          least-privilege account, not root.
+                        maxLength: 253
+                        minLength: 1
+                        type: string
+                    required:
+                      - apiKeySecretRef
+                      - endpoint
+                      - name
+                      - parentDataset
+                      - pool
+                      - username
+                    type: object
+                    x-kubernetes-validations:
+                      - message: set at most one of reservedBytes and reservedPercent
+                        rule: "!(has(self.reservedBytes) && has(self.reservedPercent))"
+                  maxItems: 32
+                  minItems: 1
+                  type: array
+                  x-kubernetes-list-map-keys:
+                    - name
+                  x-kubernetes-list-type: map
+                controller:
+                  description: Controller configures the controller Deployment.
+                  properties:
+                    nodeSelector:
+                      additionalProperties:
+                        type: string
+                      description: NodeSelector for the controller pods.
+                      type: object
+                    replicas:
+                      default: 2
+                      description: |-
+                        Replicas of the controller. Two is the useful minimum: leader election
+                        makes the second a warm standby, so provisioning survives a node loss.
+                      format: int32
+                      maximum: 5
+                      minimum: 1
+                      type: integer
+                  type: object
+                image:
+                  description: Image pins the driver image.
+                  properties:
+                    pullPolicy:
+                      default: IfNotPresent
+                      description: PullPolicy for the driver image.
+                      enum:
+                        - Always
+                        - IfNotPresent
+                        - Never
+                      type: string
+                    pullSecrets:
+                      description:
+                        PullSecrets are image pull Secrets in the driver's
+                        namespace.
+                      items:
+                        type: string
+                      type: array
+                      x-kubernetes-list-type: atomic
+                    repository:
+                      default: ghcr.io/piwi3910/truenas-csi
+                      description: Repository is the driver image repository.
+                      minLength: 1
+                      type: string
+                    tag:
+                      description: |-
+                        Tag is the driver version. Empty means the chart's appVersion. The
+                        operator refuses to apply a tag whose version is incompatible with the
+                        CSI sidecars the chart pins; see the VersionSkew condition reason.
+                      maxLength: 128
+                      pattern: ^[A-Za-z0-9_][-A-Za-z0-9_.]*$
+                      type: string
+                  type: object
+                logLevel:
+                  default: info
+                  description: LogLevel for the driver.
+                  enum:
+                    - debug
+                    - info
+                    - warn
+                    - error
+                  type: string
+                namespace:
+                  default: truenas-csi
+                  description: |-
+                    Namespace the driver's workloads are installed into. The operator creates
+                    it if it does not exist.
+                  maxLength: 63
+                  minLength: 1
+                  pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                  type: string
+                node:
+                  description: Node configures the node DaemonSet.
+                  properties:
+                    kubeletDir:
+                      default: /var/lib/kubelet
+                      description: |-
+                        KubeletDir is the kubelet root directory. k3s and microk8s do not use the
+                        default, and a wrong value makes every mount fail in a way that looks like
+                        a driver bug.
+                      maxLength: 512
+                      pattern: ^/[^\s]*[^/\s]$
+                      type: string
+                    nodeSelector:
+                      additionalProperties:
+                        type: string
+                      description: |-
+                        NodeSelector restricts which nodes run the plugin. A node without the
+                        plugin cannot mount any volume of this driver at all, so leaving this
+                        empty is almost always right.
+                      type: object
+                    rolloutTimeoutSeconds:
+                      default: 600
+                      description: |-
+                        RolloutTimeoutSeconds bounds how long the operator waits for one node to
+                        report its plugin ready, and for that node to report no volume mid-stage,
+                        before it gives up and reports Degraded rather than rolling on regardless.
+                      format: int32
+                      maximum: 3600
+                      minimum: 30
+                      type: integer
+                  type: object
+                snapshotter:
+                  description: Snapshotter toggles the snapshot sidecar.
+                  properties:
+                    enabled:
+                      default: true
+                      description: |-
+                        Enabled deploys the csi-snapshotter sidecar and its RBAC. The
+                        external-snapshotter CRDs and the cluster-wide snapshot controller must
+                        already exist: they are a cluster singleton, and the operator will never
+                        install them, because two drivers installing them breaks snapshots for
+                        both.
+                      type: boolean
+                  type: object
+                storageClasses:
+                  description: |-
+                    StorageClasses the operator creates. Omit them and manage StorageClasses
+                    yourself; the driver works either way.
+                  items:
+                    description: StorageClassSpec is one StorageClass the operator creates.
+                    properties:
+                      allowVolumeExpansion:
+                        default: true
+                        description:
+                          AllowVolumeExpansion permits growing a PVC of this
+                          class.
+                        type: boolean
+                      backend:
+                        description: |-
+                          Backend names one of spec.backends. A CEL rule on the whole resource
+                          checks that it actually exists, so a typo is rejected at apply time rather
+                          than at the first PVC.
+                        maxLength: 63
+                        minLength: 1
+                        type: string
+                      isDefault:
+                        default: false
+                        description: IsDefault marks this the cluster's default StorageClass.
+                        type: boolean
+                      iscsi:
+                        description: ISCSI options, valid only when protocol is iscsi.
+                        properties:
+                          chap:
+                            default: true
+                            description: CHAP enables CHAP on the shared target.
+                            type: boolean
+                          fsType:
+                            default: ext4
+                            description: FSType laid down on the LUN.
+                            enum:
+                              - ext4
+                              - xfs
+                            type: string
+                          initiatorACL:
+                            default: true
+                            description: |-
+                              InitiatorACL restricts the shared target to the cluster's node IQNs.
+                              Turning it off exposes every LUN on the target to any initiator that can
+                              reach the portal.
+                            type: boolean
+                          multipath:
+                            default: false
+                            description: |-
+                              Multipath uses multipath when the node supports it, degrading to a single
+                              path with a warning when it does not.
+                            type: boolean
+                          portalID:
+                            description: |-
+                              PortalID reuses an existing TrueNAS portal instead of letting the driver
+                              create one. Zero means the driver manages the portal.
+                            format: int32
+                            minimum: 0
+                            type: integer
+                          sparse:
+                            default: true
+                            description: Sparse thin-provisions the zvol.
+                            type: boolean
+                        type: object
+                      mountOptions:
+                        description: MountOptions applied to every volume of this class.
+                        items:
+                          type: string
+                        type: array
+                        x-kubernetes-list-type: atomic
+                      name:
+                        description: Name of the StorageClass.
+                        maxLength: 253
+                        minLength: 1
+                        pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                        type: string
+                      nfs:
+                        description: NFS options, valid only when protocol is nfs.
+                        properties:
+                          gid:
+                            description: GID owning the dataset at creation.
+                            format: int64
+                            minimum: 0
+                            type: integer
+                          mode:
+                            default: "0770"
+                            description: |-
+                              Mode is the dataset's permission bits at creation. A fresh dataset is
+                              root:root 0755, so a non-root pod cannot write to it unless this is set.
+                            pattern: ^0[0-7]{3}$
+                            type: string
+                          networks:
+                            description: Networks allowed to mount the export, as CIDRs.
+                            items:
+                              type: string
+                            type: array
+                            x-kubernetes-list-type: atomic
+                          uid:
+                            description: UID owning the dataset at creation.
+                            format: int64
+                            minimum: 0
+                            type: integer
+                          version:
+                            default: "4"
+                            description: |-
+                              Version of NFS to export. 4 is preferred: NFSv3 locking is stateless and
+                              interacts badly with pod rescheduling.
+                            enum:
+                              - "3"
+                              - "4"
+                            type: string
+                        type: object
+                      parentDataset:
+                        description:
+                          ParentDataset overrides the backend's parent dataset
+                          for this class.
+                        maxLength: 255
+                        type: string
+                        x-kubernetes-validations:
+                          - message: parentDataset must not contain ..
+                            rule: "!self.contains('..')"
+                      pool:
+                        description:
+                          Pool overrides the backend's pool for volumes of
+                          this class.
+                        maxLength: 255
+                        type: string
+                      protocol:
+                        description: Protocol this class provisions with.
+                        enum:
+                          - nfs
+                          - iscsi
+                        type: string
+                      reclaimPolicy:
+                        default: Delete
+                        description: ReclaimPolicy for volumes of this class.
+                        enum:
+                          - Delete
+                          - Retain
+                        type: string
+                      volumeBindingMode:
+                        default: Immediate
+                        description: VolumeBindingMode for this class.
+                        enum:
+                          - Immediate
+                          - WaitForFirstConsumer
+                        type: string
+                    required:
+                      - backend
+                      - name
+                      - protocol
+                    type: object
+                    x-kubernetes-validations:
+                      - message: iscsi options are only valid when protocol is iscsi
+                        rule: self.protocol == 'iscsi' || !has(self.iscsi)
+                      - message: nfs options are only valid when protocol is nfs
+                        rule: self.protocol == 'nfs' || !has(self.nfs)
+                  maxItems: 32
+                  type: array
+                  x-kubernetes-list-map-keys:
+                    - name
+                  x-kubernetes-list-type: map
+                volumeSnapshotClass:
+                  description: VolumeSnapshotClass configures the VolumeSnapshotClass.
+                  properties:
+                    deletionPolicy:
+                      default: Delete
+                      description: |-
+                        DeletionPolicy decides whether deleting a VolumeSnapshot deletes the ZFS
+                        snapshot behind it.
+                      enum:
+                        - Delete
+                        - Retain
+                      type: string
+                    enabled:
+                      default: false
+                      description: |-
+                        Enabled creates the VolumeSnapshotClass. It needs the snapshot CRDs to
+                        exist, so it is off by default.
+                      type: boolean
+                    isDefault:
+                      default: false
+                      description: IsDefault marks it the cluster's default VolumeSnapshotClass.
+                      type: boolean
+                    name:
+                      description: Name of the VolumeSnapshotClass.
+                      maxLength: 253
+                      pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                      type: string
+                  type: object
+              required:
+                - backends
+              type: object
+              x-kubernetes-validations:
+                - message: every storageClass.backend must name a backend in spec.backends
+                  rule:
+                    "!has(self.storageClasses) || self.storageClasses.all(c, self.backends.exists(b,
+                    b.name == c.backend))"
+            status:
+              description: TrueNASCSIDriverStatus is the observed state of a TrueNASCSIDriver.
+              properties:
+                appliedVersion:
+                  description: AppliedVersion is the driver version currently applied.
+                  type: string
+                backends:
+                  description:
+                    Backends reports per-appliance reachability and orphan
+                    counts.
+                  items:
+                    description:
+                      BackendStatus reports what the operator last observed
+                      about one appliance.
+                    properties:
+                      lastProbeTime:
+                        description:
+                          LastProbeTime is when the operator last scraped
+                          the driver's metrics.
+                        format: date-time
+                        type: string
+                      message:
+                        description: Message explains a non-True Reachable.
+                        maxLength: 1024
+                        type: string
+                      name:
+                        description: Name of the backend.
+                        type: string
+                      orphanedVolumes:
+                        description: |-
+                          OrphanedVolumes is the count of driver-owned datasets with no matching
+                          PersistentVolume, as the driver's orphan reconciler reports it. The
+                          reconciler never deletes anything; this number is a prompt to investigate,
+                          not a failure.
+                        format: int32
+                        type: integer
+                      reachable:
+                        description: |-
+                          Reachable is what the driver's own truenas_csi_backend_up gauge said the
+                          last time the operator scraped it. Unknown until the controller is up.
+                        enum:
+                          - "True"
+                          - "False"
+                          - Unknown
+                        type: string
+                    required:
+                      - name
+                      - reachable
+                    type: object
+                  type: array
+                  x-kubernetes-list-map-keys:
+                    - name
+                  x-kubernetes-list-type: map
+                conditions:
+                  description: Conditions are Ready, Progressing and Degraded.
+                  items:
+                    description:
+                      Condition contains details for one aspect of the current
+                      state of this API Resource.
+                    properties:
+                      lastTransitionTime:
+                        description: |-
+                          lastTransitionTime is the last time the condition transitioned from one status to another.
+                          This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                        format: date-time
+                        type: string
+                      message:
+                        description: |-
+                          message is a human readable message indicating details about the transition.
+                          This may be an empty string.
+                        maxLength: 32768
+                        type: string
+                      observedGeneration:
+                        description: |-
+                          observedGeneration represents the .metadata.generation that the condition was set based upon.
+                          For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                          with respect to the current state of the instance.
+                        format: int64
+                        minimum: 0
+                        type: integer
+                      reason:
+                        description: |-
+                          reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                          Producers of specific condition types may define expected values and meanings for this field,
+                          and whether the values are considered a guaranteed API.
+                          The value should be a CamelCase string.
+                          This field may not be empty.
+                        maxLength: 1024
+                        minLength: 1
+                        pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                        type: string
+                      status:
+                        description: status of the condition, one of True, False, Unknown.
+                        enum:
+                          - "True"
+                          - "False"
+                          - Unknown
+                        type: string
+                      type:
+                        description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                        maxLength: 316
+                        pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                        type: string
+                    required:
+                      - lastTransitionTime
+                      - message
+                      - reason
+                      - status
+                      - type
+                    type: object
+                  type: array
+                  x-kubernetes-list-map-keys:
+                    - type
+                  x-kubernetes-list-type: map
+                credentialsRevision:
+                  description: |-
+                    CredentialsRevision fingerprints the referenced credential Secrets. When
+                    it changes, the operator restarts the driver's pods in order rather than
+                    leaving a stale key in a running process's memory.
+                  type: string
+                observedGeneration:
+                  description: |-
+                    ObservedGeneration is the .metadata.generation this status describes. A
+                    status whose observedGeneration lags the generation is stale, and every
+                    condition in it describes the previous spec.
+                  format: int64
+                  type: integer
+                rollout:
+                  description: Rollout reports the drain-aware node rollout.
+                  properties:
+                    currentNode:
+                      description: |-
+                        CurrentNode is the node the operator is rolling right now, if any. Only
+                        ever one: taking the plugin off a node with a volume mid-stage is how a
+                        storage upgrade takes workloads down, so nodes are rolled strictly one at
+                        a time and only when the node reports clear.
+                      type: string
+                    desiredRevision:
+                      description:
+                        DesiredRevision is the pod-template hash the node
+                        plugin should be at.
+                      type: string
+                    totalNodes:
+                      description: TotalNodes are the nodes the plugin should run on.
+                      format: int32
+                      type: integer
+                    updatedNodes:
+                      description:
+                        UpdatedNodes have the plugin at DesiredRevision and
+                        report it ready.
+                      format: int32
+                      type: integer
+                    waitingFor:
+                      description: |-
+                        WaitingFor explains why the rollout is not advancing, which is usually a
+                        node that is legitimately busy rather than anything broken.
+                      maxLength: 1024
+                      type: string
+                  type: object
+              type: object
+          type: object
+      served: true
+      storage: true
+      subresources:
+        status: {}
