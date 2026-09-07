@@ -234,6 +234,11 @@ type Node struct {
 	pre    *Preflight
 	exec   Executor
 
+	// reach is which appliances this node could reach at startup. It is nil when
+	// no probe ran, in which case no backend label is published at all rather
+	// than a guessed one.
+	reach *Reachability
+
 	// multipathWarn fires the single degradation warning per node start, not per
 	// volume: a node without multipath-tools would otherwise log on every attach.
 	multipathWarn sync.Once
@@ -250,13 +255,21 @@ func NewNode(nodeID string, p *Preflight, exec Executor) *Node {
 	}
 }
 
+// SetReachability records the startup backend reachability probe, whose result
+// joins the capability labels in NodeGetInfo's accessible topology.
+func (n *Node) SetReachability(r *Reachability) { n.reach = r }
+
 // GetInfo reports this node's identity, the capabilities the startup preflight
-// found, and how many volumes it will host.
+// found, which appliances it can reach, and how many volumes it will host.
 func (n *Node) GetInfo(_ context.Context) NodeInfo {
+	topo := n.pre.TopologyLabels()
+	for k, v := range n.reach.TopologyLabels() {
+		topo[k] = v
+	}
 	return NodeInfo{
 		NodeID:             n.nodeID,
 		MaxVolumesPerNode:  MaxVolumesPerNode,
-		AccessibleTopology: n.pre.TopologyLabels(),
+		AccessibleTopology: topo,
 	}
 }
 

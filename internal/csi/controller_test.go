@@ -303,6 +303,9 @@ func TestTopologyExcludesIncapableNode(t *testing.T) {
 		t.Fatal(err)
 	}
 	published := pf.TopologyLabels()
+	// The same node also publishes, per backend, whether it can reach it. This
+	// node can reach nas1.
+	published[node.BackendTopologyKey("nas1")] = "true"
 
 	for _, tc := range []struct {
 		name        string
@@ -316,7 +319,7 @@ func TestTopologyExcludesIncapableNode(t *testing.T) {
 			map[string]string{"protocol": "iscsi", "multipath": "true"}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			required := requiredTopology(tc.params["protocol"], tc.params)
+			required := requiredTopology("nas1", tc.params["protocol"], tc.params)
 			if len(required) != 1 {
 				t.Fatalf("want exactly one topology requirement, got %d", len(required))
 			}

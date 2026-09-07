@@ -126,6 +126,9 @@ func (c *controller) CreateVolume(ctx context.Context, req *csipb.CreateVolumeRe
 	if size <= 0 {
 		size = 1 << 30 // 1 GiB default, as CSI permits when no range is given
 	}
+	if err := c.requireRoomOutsideReserve(ctx, id.Backend, size); err != nil {
+		return nil, err
+	}
 	cr := backend.CreateRequest{ID: id, CapacityBytes: size, Params: req.GetParameters()}
 	if src := req.GetVolumeContentSource(); src != nil {
 		if s := src.GetSnapshot(); s != nil {
@@ -188,7 +191,7 @@ func (c *controller) CreateVolume(ctx context.Context, req *csipb.CreateVolumeRe
 		VolumeId:           vol.ID.String(),
 		CapacityBytes:      vol.CapacityBytes,
 		VolumeContext:      vctx,
-		AccessibleTopology: requiredTopology(id.Protocol, req.GetParameters()),
+		AccessibleTopology: requiredTopology(id.Backend, id.Protocol, req.GetParameters()),
 	}
 	if cr.SourceSnapshot != "" {
 		out.ContentSource = &csipb.VolumeContentSource{Type: &csipb.VolumeContentSource_Snapshot{
@@ -505,9 +508,15 @@ func snapshotNameOf(id string) string {
 // Publishing capability labels from the node is only half of topology: without
 // the matching requirement here, every node looks equally able and the pod is
 // scheduled somewhere that then fails to mount.
-func requiredTopology(protocol string, params map[string]string) []*csipb.Topology {
+func requiredTopology(backendName, protocol string, params map[string]string) []*csipb.Topology {
 	segments := map[string]string{
 		node.TopologyKey(node.Capability(protocol)): "true",
+	}
+	// Tooling is not enough: a node can have every binary this volume needs and
+	// no route to the appliance it lives on. Requiring the backend's own
+	// reachability label keeps the scheduler off those nodes.
+	if backendName != "" {
+		segments[node.BackendTopologyKey(backendName)] = "true"
 	}
 	if fs := params["fsType"]; fs != "" && fs != "ext4" {
 		segments[node.TopologyKey(node.Capability(fs))] = "true"

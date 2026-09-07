@@ -45,7 +45,60 @@ func (c *controller) GetCapacity(ctx context.Context, req *csipb.GetCapacityRequ
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	return &csipb.GetCapacityResponse{AvailableCapacity: p.Free.Parsed}, nil
+	return &csipb.GetCapacityResponse{
+		AvailableCapacity: usableCapacity(p.Free.Parsed, b.Reserve(p.Size.Parsed)),
+	}, nil
+}
+
+// usableCapacity is the free space this driver may hand out: the pool's free
+// space less the operator's reservation, clamped at zero.
+//
+// The clamp is not cosmetic. A pool already inside its reserve would otherwise
+// report a NEGATIVE capacity, which the external-provisioner treats as an
+// enormous unsigned figure and happily schedules against.
+func usableCapacity(poolFree, reserve int64) int64 {
+	if avail := poolFree - reserve; avail > 0 {
+		return avail
+	}
+	return 0
+}
+
+// requireRoomOutsideReserve refuses a volume that would eat into the operator's
+// pool reservation.
+//
+// Reporting a reduced capacity is not enough on its own: the scheduler consults
+// CSIStorageCapacity opportunistically, a claim can be made before the figure
+// refreshes, and nothing stops a user creating a PVC larger than the reported
+// capacity. Without this check the reserve is a suggestion, and a full pool is
+// exactly the failure the reserve exists to prevent.
+//
+// A backend with no reservation configured is not queried at all, so the common
+// case costs no extra appliance round trip.
+func (c *controller) requireRoomOutsideReserve(ctx context.Context, backendName string, size int64) error {
+	b, err := c.reg.Backend(backendName)
+	if err != nil {
+		return toStatus(err)
+	}
+	if b.ReservedBytes <= 0 && b.ReservedPercent <= 0 {
+		return nil
+	}
+	cl, err := c.reg.Client(ctx, backendName)
+	if err != nil {
+		return toStatus(err)
+	}
+	p, err := cl.PoolQuery(ctx, b.Pool)
+	if err != nil {
+		return toStatus(err)
+	}
+	reserve := b.Reserve(p.Size.Parsed)
+	usable := usableCapacity(p.Free.Parsed, reserve)
+	if size > usable {
+		return status.Errorf(codes.ResourceExhausted,
+			"pool %q on backend %q has %d bytes free and reserves %d of them, leaving %d usable; "+
+				"the request for %d bytes would eat into the reserve",
+			b.Pool, backendName, p.Free.Parsed, reserve, usable, size)
+	}
+	return nil
 }
 
 // ListVolumes returns only volumes this driver owns, paginated by dataset id.

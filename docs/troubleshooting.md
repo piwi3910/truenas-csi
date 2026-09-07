@@ -358,6 +358,25 @@ done
 kubectl rollout restart daemonset/<release>-node -n <namespace>
 ```
 
+**The same trap applies to the per-backend reachability labels.** The node plugin also
+probes, at startup, whether it can reach each configured appliance's data path (NFS 2049
+or iSCSI 3260) and publishes `csi.truenas.watteel.com/backend-<name>` as `true` or
+`false`. Those values are immutable in exactly the same way: once a node has registered
+with `backend-nas1=false`, fixing its route to nas1 — a VLAN, a firewall rule, a new
+interface — does **not** let the driver report `true`. Registration fails permanently
+with the same collision, and then _every_ volume on that node stops mounting, not only
+the ones on nas1. Adding a backend to an existing installation is safe; renaming one
+leaves its old label on every node forever.
+
+Clear the backend labels the same way, one per configured backend:
+
+```
+for n in $(kubectl get nodes -o name | cut -d/ -f2); do
+  kubectl label node "$n" "csi.truenas.watteel.com/backend-nas1-"
+done
+kubectl rollout restart daemonset/<release>-node -n <namespace>
+```
+
 Do **not** delete `CSINode` objects to force this. `kubectl delete csinode` also removes
 every _other_ CSI driver's registration on those nodes — Longhorn included — and those
 drivers only re-register when their own node plugins restart.
