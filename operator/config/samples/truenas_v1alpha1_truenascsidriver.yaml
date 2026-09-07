@@ -1,0 +1,62 @@
+# A minimal, working TrueNASCSIDriver.
+#
+# The API key is NOT here. Create the Secret first, in the namespace the driver
+# is installed into:
+#
+#   kubectl create namespace truenas-csi
+#   kubectl -n truenas-csi create secret generic truenas-credentials \
+#     --from-literal=apiKey='1-...'
+#
+# The endpoint must be wss://. TrueNAS revokes an API key presented over
+# plaintext, so the API server rejects anything else at apply time.
+apiVersion: truenas.watteel.com/v1alpha1
+kind: TrueNASCSIDriver
+metadata:
+  name: truenas
+spec:
+  namespace: truenas-csi
+  logLevel: info
+  backends:
+    - name: nas1
+      endpoint: wss://nas1.example.com/api/current
+      username: csi
+      apiKeySecretRef:
+        name: truenas-credentials
+        key: apiKey
+      pool: tank
+      parentDataset: tank/k8s
+      # The stock TrueNAS certificate is self-signed with SAN=DNS:localhost and
+      # cannot be verified against a real address. Supply your own CA here, or
+      # accept the risk with insecureSkipVerify: true.
+      # caCertSecretRef:
+      #   name: truenas-ca
+      #   key: ca.crt
+      insecureSkipVerify: false
+      # Hold capacity back so the driver cannot provision the pool to full.
+      # reservedPercent: 10
+  controller:
+    replicas: 2
+  node:
+    # k3s and microk8s do not use the default kubelet root.
+    kubeletDir: /var/lib/kubelet
+  snapshotter:
+    # Requires the cluster-wide external-snapshotter CRDs and controller, which
+    # the operator will never install: they are a cluster singleton.
+    enabled: true
+  volumeSnapshotClass:
+    enabled: false
+  storageClasses:
+    - name: truenas-nfs
+      protocol: nfs
+      backend: nas1
+      isDefault: false
+      reclaimPolicy: Delete
+      allowVolumeExpansion: true
+      mountOptions:
+        - nfsvers=4.1
+        - hard
+      nfs:
+        version: "4"
+        networks:
+          - 10.0.0.0/8
+        mode: "0770"

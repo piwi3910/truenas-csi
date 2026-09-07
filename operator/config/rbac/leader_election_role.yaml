@@ -1,0 +1,28 @@
+# Leader election is namespaced to the operator's own namespace: the lease is
+# the operator's, not the cluster's.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: truenas-csi-operator-leader-election
+  namespace: truenas-csi-operator-system
+rules:
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: truenas-csi-operator-leader-election
+  namespace: truenas-csi-operator-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: truenas-csi-operator-leader-election
+subjects:
+  - kind: ServiceAccount
+    name: truenas-csi-operator
+    namespace: truenas-csi-operator-system

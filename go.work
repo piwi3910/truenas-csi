@@ -1,0 +1,15 @@
+// The operator is a separate module so that controller-runtime, the Helm SDK
+// and their transitive dependency trees never enter the driver's build. The
+// driver ships in a container that mounts a node's block devices; every
+// dependency it does not have is one that cannot be a vulnerability there.
+//
+// This workspace ties the two together for local development, so an edit to the
+// driver's types is seen by the operator without a replace directive or a
+// tagged release. CI builds each module on its own with GOWORK=off, because
+// that is what `go install` and the release build actually do.
+go 1.26.0
+
+use (
+	.
+	./operator
+)
