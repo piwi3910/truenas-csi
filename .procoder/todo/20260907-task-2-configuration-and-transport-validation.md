@@ -1,6 +1,6 @@
 # Task 2: Configuration and transport validation
 
-Status: open
+Status: closed
 Created: 2026-09-07
 
 ## Description
@@ -31,13 +31,24 @@ Tests introduced or exercised: TestRejectsPlaintextEndpoint, TestValidateRequire
 
 ## Acceptance criteria
 
-- [ ] Write `TestRejectsPlaintextEndpoint` in `internal/config/config_test.go`, table-driven over `"http://nas/api/current"`, `"ws://nas/api/current"`, `"https://nas"`, each expected to return `ErrInsecureTransport`, and `"wss://nas/api/current"` expected to pass. Run `go test ./internal/config/` — expect FAIL with "undefined: Validate".
-- [ ] Write `TestValidateRequiresBackendFields` asserting a backend missing `Pool` or `ParentDataset` fails with a message naming the field.
-- [ ] Implement `Backend`, `Config`, and `Load` reading YAML from a path.
-- [ ] Implement `Validate`: reject any endpoint whose scheme is not `wss`, reject empty `Backends`, reject a backend with an empty `Name`, `Endpoint`, `Username`, `APIKey`, `Pool` or `ParentDataset`.
-- [ ] Implement `String()` on `Backend` that renders `APIKey` as `[redacted]`, and add `TestBackendStringRedactsKey` asserting the literal key text is absent from the output.
-- [ ] Run `go test ./internal/config/` — expect PASS.
-- [ ] Commit: "config: backend configuration with wss-only transport validation".
+- [x] Write `TestRejectsPlaintextEndpoint` in `internal/config/config_test.go`, table-driven over `"http://nas/api/current"`, `"ws://nas/api/current"`, `"https://nas"`, each expected to return `ErrInsecureTransport`, and `"wss://nas/api/current"` expected to pass. Run `go test ./internal/config/` — expect FAIL with "undefined: Validate".
+- [x] Write `TestValidateRequiresBackendFields` asserting a backend missing `Pool` or `ParentDataset` fails with a message naming the field.
+- [x] Implement `Backend`, `Config`, and `Load` reading YAML from a path.
+- [x] Implement `Validate`: reject any endpoint whose scheme is not `wss`, reject empty `Backends`, reject a backend with an empty `Name`, `Endpoint`, `Username`, `APIKey`, `Pool` or `ParentDataset`.
+- [x] Implement `String()` on `Backend` that renders `APIKey` as `[redacted]`, and add `TestBackendStringRedactsKey` asserting the literal key text is absent from the output.
+- [x] Run `go test ./internal/config/` — expect PASS.
+- [x] Commit: "config: backend configuration with wss-only transport validation".
 
 ## Evidence
 
+- Red first: `go test ./internal/config/` failed with "undefined: Backend" before any source.
+- `TestRejectsPlaintextEndpoint` covers http, ws, https, uppercase HTTP, scheme-less and
+  empty (all rejected with ErrInsecureTransport) and wss/WSS (accepted).
+- `TestValidateRequiresBackendFields` asserts each missing field is named in the error.
+- `TestBackendStringRedactsKey` uses a real 66-char key shape and asserts it never appears.
+- `TestLoadAppliesDefaultsAndValidates` round-trips YAML, checks defaults, and asserts
+  Load rejects an http endpoint.
+- Mutation check: replacing the scheme guard with `if false` made 5 assertions fail;
+  source restored from snapshot and tests pass again.
+- `go test ./internal/config/` ok; `gofmt -l` clean; `go vet ./...` clean;
+  `procoder check` 0 blocking.
