@@ -177,6 +177,12 @@ parameters:
 
 ---
 
+> **Install the node packages before installing the driver.** The driver publishes each
+> node capability as a topology label, and Kubernetes makes topology labels immutable.
+> Adding `xfsprogs` or `open-iscsi` to a node the driver has already registered makes its
+> node plugin fail to re-register until the labels are cleared by hand — see
+> [troubleshooting](docs/troubleshooting.md).
+
 ## StorageClass parameters
 
 A parameter left empty means "use the default"; that is not an error.

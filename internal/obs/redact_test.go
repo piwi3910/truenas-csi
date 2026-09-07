@@ -9,11 +9,10 @@ import (
 	"testing"
 )
 
-// testAPIKey is the sample TrueNAS API key from the plan. It is a fixture, never a live
-// credential, and it is assembled from fragments so that secret scanners do not flag the
-// test file itself.
-const testAPIKey = "8-jX9B9ugcrf" + "TfOjY2YdZb01" + "sAuq0RZKAAZp" +
-	"2k24xvrYI67h" + "v3pb8exkJiF8" + "BiAhxz"
+// testAPIKey is shaped like a TrueNAS API key (id, dash, 64 characters) but is
+// obviously synthetic. A real credential must never become a test fixture: it
+// ends up in git history, where it lives forever.
+const testAPIKey = "9-TestFixtureNotARealApiKey000000000000000000000000000000000000000"
 
 const testCHAP = "Ch4pS3cr3t" + "V4lu3"
 

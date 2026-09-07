@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 )
 
 // stageNFS mounts the export at the staging path, once. It is safe to call
@@ -40,8 +41,13 @@ func (n *Node) stageNFS(ctx context.Context, req StageRequest) error {
 		return fmt.Errorf("create staging path %s: %w", req.StagingPath, err)
 	}
 
-	opts := []string{"vers=" + nfsVersion(req.PublishContext)}
-	opts = append(opts, req.VolumeCapability.MountFlags...)
+	// The StorageClass may already pin a version through mountOptions. Adding
+	// our own vers= alongside an explicit nfsvers= makes mount refuse the pair,
+	// so the caller's choice wins.
+	opts := append([]string(nil), req.VolumeCapability.MountFlags...)
+	if !hasNFSVersionOption(opts) {
+		opts = append([]string{"vers=" + nfsVersion(req.PublishContext)}, opts...)
+	}
 	if req.VolumeCapability.Readonly {
 		opts = append(opts, "ro")
 	}
@@ -57,4 +63,15 @@ func nfsVersion(pc map[string]string) string {
 		return v
 	}
 	return DefaultNFSVersion
+}
+
+// hasNFSVersionOption reports whether the caller already pinned an NFS version.
+func hasNFSVersionOption(opts []string) bool {
+	for _, o := range opts {
+		k := strings.TrimSpace(strings.SplitN(o, "=", 2)[0])
+		if k == "vers" || k == "nfsvers" {
+			return true
+		}
+	}
+	return false
 }

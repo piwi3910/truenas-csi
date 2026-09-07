@@ -326,3 +326,41 @@ middleware to guard the NFS path would let a shrink through.
 Growing a mounted volume is supported and does not require an unmount, a re-login or a pod
 restart: the controller updates the size and the node rescans the device and grows the
 filesystem in place.
+
+## Node plugin never registers: "detected topology value collision"
+
+**Symptom.** Pods stay in `ContainerCreating` with
+`driver name csi.truenas.watteel.com not found in the list of registered CSI drivers`,
+and the `node-driver-registrar` container logs:
+
+```
+RegisterPlugin error -- plugin registration failed with err: error updating Node object
+with CSI driver node info: detected topology value collision: driver reported
+"csi.truenas.watteel.com/iscsi":"true" but existing label is
+"csi.truenas.watteel.com/iscsi":"false"
+```
+
+**Cause.** The driver publishes each node capability as a topology label, and Kubernetes
+treats topology labels as immutable. Once a node has been labelled `iscsi=false`, the
+driver cannot later report `iscsi=true` — so installing `open-iscsi` (or `xfsprogs`, or
+`multipath-tools`) on a node that the driver has already registered makes registration
+fail permanently rather than simply picking up the new capability.
+
+**Fix.** Remove the driver's labels from the affected nodes and let the node plugin
+re-register:
+
+```
+for n in $(kubectl get nodes -o name | cut -d/ -f2); do
+  for cap in nfs iscsi ext4 xfs multipath; do
+    kubectl label node "$n" "csi.truenas.watteel.com/$cap-"
+  done
+done
+kubectl rollout restart daemonset/<release>-node -n <namespace>
+```
+
+Do **not** delete `CSINode` objects to force this. `kubectl delete csinode` also removes
+every _other_ CSI driver's registration on those nodes — Longhorn included — and those
+drivers only re-register when their own node plugins restart.
+
+**Prevention.** Install the node packages listed in the README on every node _before_
+installing the driver, so a node's capability set does not change afterwards.

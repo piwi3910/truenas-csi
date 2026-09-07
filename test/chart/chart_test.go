@@ -232,10 +232,16 @@ func TestChartRendersBothWorkloads(t *testing.T) {
 	if got := nameOf(csiDriver); got != driverName {
 		t.Errorf("CSIDriver name = %q, want %q (this name is written into every PV and is immutable)", got, driverName)
 	}
-	for _, field := range []string{"attachRequired", "podInfoOnMount", "storageCapacity"} {
+	for _, field := range []string{"podInfoOnMount", "storageCapacity"} {
 		if v, ok := boolOf(dig(csiDriver, "spec", field)); !ok || !v {
 			t.Errorf("CSIDriver spec.%s = %v, want true", field, dig(csiDriver, "spec", field))
 		}
+	}
+	// This driver has no appliance-side attach step: everything happens when the
+	// node stages the volume. Declaring attachRequired would make Kubernetes wait
+	// for a VolumeAttachment that nothing ever creates.
+	if v, ok := boolOf(dig(csiDriver, "spec", "attachRequired")); !ok || v {
+		t.Errorf("CSIDriver spec.attachRequired = %v, want false", dig(csiDriver, "spec", "attachRequired"))
 	}
 	if got := str(dig(csiDriver, "spec", "fsGroupPolicy")); got != "File" {
 		t.Errorf("CSIDriver spec.fsGroupPolicy = %q, want File", got)
@@ -266,8 +272,16 @@ func TestChartRendersBothWorkloads(t *testing.T) {
 			t.Errorf("controller container %q does not drop ALL capabilities, got %v", name, drops)
 		}
 	}
-	if !strings.Contains(strings.Join(strings_(dig(ctrl["truenas-csi"], "args")), " "), "-leader-election=true") {
-		t.Errorf("controller is not started with leader election: %v", dig(ctrl["truenas-csi"], "args"))
+	// Leader election belongs to the CSI sidecars, which elect among themselves
+	// and only let the winner issue RPCs. The driver defines no such flag, and
+	// passing it crash-loops every replica at startup.
+	driverArgs := strings.Join(strings_(dig(ctrl["truenas-csi"], "args")), " ")
+	if strings.Contains(driverArgs, "leader-election") {
+		t.Errorf("the driver container must not be passed a leader-election flag: %s", driverArgs)
+	}
+	provisionerArgs := strings.Join(strings_(dig(ctrl["csi-provisioner"], "args")), " ")
+	if !strings.Contains(provisionerArgs, "--leader-election=true") {
+		t.Errorf("csi-provisioner is not started with leader election: %s", provisionerArgs)
 	}
 
 	ds := findOne(t, docs, "DaemonSet", "-node")

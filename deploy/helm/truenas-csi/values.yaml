@@ -125,7 +125,9 @@ snapshotter:
   install: false
 
 csidriver:
-  attachRequired: true
+  # This driver has no appliance-side attach step: everything happens when the
+  # node stages the volume, so no VolumeAttachment is needed.
+  attachRequired: false
   podInfoOnMount: true
   storageCapacity: true
   fsGroupPolicy: File

@@ -34,7 +34,7 @@ Tests introduced or exercised: TestNoSecretsInOutput, TestMetricsAndLogAttributi
 
 ## Acceptance criteria
 
-- [x] Write `TestNoSecretsInOutput`: register the API key `8-jX9B9ugcrfTfOjY2YdZb01sAuq0RZKAAZp2k24xvrYI67hv3pb8exkJiF8BiAhxz` and a CHAP secret, drive a full `CreateVolume` and a failing `CreateVolume` against the fake with logs captured to a buffer, and assert neither literal string appears in the buffer, in the returned gRPC error text, or in any metric label. Run `go test ./internal/obs/` — expect FAIL with "undefined: Redact".
+- [x] Write `TestNoSecretsInOutput`: register the API key `9-TTTTTTTTestFixtureNotARealKey00000000000000000000000000000000000` and a CHAP secret, drive a full `CreateVolume` and a failing `CreateVolume` against the fake with logs captured to a buffer, and assert neither literal string appears in the buffer, in the returned gRPC error text, or in any metric label. Run `go test ./internal/obs/` — expect FAIL with "undefined: Redact".
 - [x] Write `TestMetricsAndLogAttribution` asserting that after one `CreateVolume` the `truenas_csi_calls_total` counter has one sample with `method="CreateVolume"` and `error="false"`, that a middleware counter also incremented, and that every log record emitted during the call carries a `volume_id` attribute.
 - [x] Write `TestRedactHandlesSubstrings` asserting a registered secret is masked even when embedded in a longer string, and that an empty registration never masks everything.
 - [x] Implement `Redact` over a copy-on-write set of registered secrets, replacing each with `[redacted]`, and wire it into the logger and into gRPC error construction.

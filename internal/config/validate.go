@@ -21,13 +21,22 @@ func (c *Config) Validate() error {
 	if len(c.Backends) == 0 {
 		return errors.New("no backends configured: at least one TrueNAS appliance is required")
 	}
-	if c.NodeID == "" {
-		return errors.New("nodeID must be set")
-	}
 	for name, b := range c.Backends {
 		if err := b.validate(); err != nil {
 			return fmt.Errorf("backend %q: %w", name, err)
 		}
+	}
+	return nil
+}
+
+// ValidateNode adds the checks that only the node plugin needs. nodeID names a
+// Kubernetes node, so a controller has none and must not be made to invent one.
+func (c *Config) ValidateNode() error {
+	if err := c.Validate(); err != nil {
+		return err
+	}
+	if c.NodeID == "" {
+		return errors.New("nodeID must be set when running as the node plugin")
 	}
 	return nil
 }

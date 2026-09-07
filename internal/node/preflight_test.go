@@ -231,3 +231,28 @@ func containsSubstr(hay []string, needle string) bool {
 	}
 	return false
 }
+
+// TestResolveHostBinaryUsesTheHostRoot pins the fix for a real cluster failure:
+// Go resolves a command's path before the chroot applies, so a bare name is
+// looked up in the container's PATH and reported as "executable file not
+// found" even though the host has it.
+func TestResolveHostBinaryUsesTheHostRoot(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "usr", "sbin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "usr", "sbin", "mount"),
+		[]byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got, err := resolveHostBinary(root, "mount")
+	if err != nil {
+		t.Fatalf("mount is present under the host root but was not found: %v", err)
+	}
+	if got != "/usr/sbin/mount" {
+		t.Fatalf("resolved to %q, want the post-chroot path /usr/sbin/mount", got)
+	}
+	if _, err := resolveHostBinary(root, "definitely-absent"); err == nil {
+		t.Fatal("a missing binary must be reported, not silently executed")
+	}
+}

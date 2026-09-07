@@ -281,3 +281,25 @@ func TestNodeGetInfoReportsTopology(t *testing.T) {
 		t.Fatalf("topology: %v", info.AccessibleTopology)
 	}
 }
+
+// TestNFSMountOptionsDoNotConflict pins a failure seen on a real cluster: the
+// StorageClass pinned nfsvers=4.1 through mountOptions while the driver added
+// vers=4, and mount refused the conflicting pair.
+func TestNFSMountOptionsDoNotConflict(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		flags    []string
+		wantVers bool
+	}{
+		{"driver supplies the version when the class does not", []string{"hard"}, true},
+		{"class pinned nfsvers", []string{"nfsvers=4.1", "hard"}, false},
+		{"class pinned vers", []string{"vers=3"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := hasNFSVersionOption(tc.flags); got == tc.wantVers {
+				t.Fatalf("hasNFSVersionOption(%v) = %v; the driver would %s add its own vers=",
+					tc.flags, got, map[bool]string{true: "wrongly", false: "fail to"}[got])
+			}
+		})
+	}
+}

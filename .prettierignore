@@ -1,2 +1,5 @@
 # procoder regenerates these on every run and its output is not prettier-formatted
 .procoder/state/
+
+# Helm templates are Go templates, not parseable YAML
+deploy/helm/*/templates/

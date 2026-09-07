@@ -63,19 +63,27 @@ func TestValidateRequiresBackendFields(t *testing.T) {
 	}
 }
 
-func TestValidateRequiresBackendsAndNodeID(t *testing.T) {
+func TestValidateRequiresBackendsAndNodeIDOnlyForNode(t *testing.T) {
 	if err := (&Config{Backends: map[string]Backend{}, NodeID: "n1"}).Validate(); err == nil {
 		t.Error("empty backends: want error")
 	}
+	// A controller has no node identity, so Validate must not demand one;
+	// only the node plugin does, through ValidateNode.
 	c := &Config{Backends: map[string]Backend{"nas1": validBackend()}}
-	if err := c.Validate(); err == nil {
-		t.Error("empty nodeID: want error")
+	if err := c.Validate(); err != nil {
+		t.Errorf("a controller must not require nodeID: %v", err)
+	}
+	if err := c.ValidateNode(); err == nil {
+		t.Error("the node plugin must require nodeID")
 	}
 }
 
 func TestBackendStringRedactsKey(t *testing.T) {
 	b := validBackend()
-	b.APIKey = "8-jX9B9ugcrfTfOjY2YdZb01sAuq0RZKAAZp2k24xvrYI67hv3pb8exkJiF8BiAhxz"
+	// Shaped like a real key (id, dash, 64 characters) but obviously synthetic.
+	// A real credential must never become a test fixture: it ends up in git
+	// history, where it lives forever.
+	b.APIKey = "9-TestFixtureNotARealApiKey000000000000000000000000000000000000000"
 	s := b.String()
 	if strings.Contains(s, b.APIKey) {
 		t.Fatalf("String() leaked the api key: %s", s)

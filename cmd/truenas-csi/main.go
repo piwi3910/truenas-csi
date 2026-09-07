@@ -101,7 +101,10 @@ func run(mode, endpoint, configPath, nodeID, hostRoot string) error {
 		obs.MarkReady()
 
 	case "node":
-		pf, err := node.Detect(ctx, hostRoot, nil)
+		if err := cfg.ValidateNode(); err != nil {
+			return err
+		}
+		pf, err := node.Detect(ctx, hostRoot, node.HostModprobe(hostRoot))
 		if err != nil {
 			return fmt.Errorf("node capability preflight: %w", err)
 		}

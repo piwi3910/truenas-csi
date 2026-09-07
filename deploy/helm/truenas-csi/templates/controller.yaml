@@ -74,8 +74,6 @@ spec:
             - -endpoint=$(CSI_ENDPOINT)
             # Credentials come from the mounted Secret, never from an argument.
             - -config=/etc/truenas-csi/config.yaml
-            - -leader-election={{ .Values.controller.leaderElection }}
-            - -leader-election-namespace=$(POD_NAMESPACE)
           env:
             - name: CSI_ENDPOINT
               value: unix:///csi/csi.sock
@@ -135,6 +133,12 @@ spec:
             - name: ADDRESS
               value: unix:///csi/csi.sock
             - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            # csi-provisioner reads NAMESPACE, not POD_NAMESPACE, when it owns
+            # CSIStorageCapacity objects; without it the sidecar exits at start.
+            - name: NAMESPACE
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
@@ -279,4 +283,4 @@ spec:
         - name: config
           secret:
             secretName: {{ include "truenas-csi.secretName" . }}
-            defaultMode: 0400
+            defaultMode: 0440

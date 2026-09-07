@@ -25,8 +25,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -213,12 +211,16 @@ func HostExec(root string) Executor {
 }
 
 func (h hostExec) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
-	full := append([]string{"--mount=" + filepath.Join(h.root, "proc", "1", "ns", "mnt"), "--", name}, args...)
-	out, err := exec.CommandContext(ctx, "nsenter", full...).CombinedOutput()
-	if err != nil {
-		return out, fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+	return h.run(ctx, name, args...)
+}
+
+// HostModprobe loads a kernel module using the host's own modprobe.
+func HostModprobe(root string) ModprobeFunc {
+	e := hostExec{root: root}
+	return func(ctx context.Context, module string) error {
+		_, err := e.run(ctx, "/sbin/modprobe", module)
+		return err
 	}
-	return out, nil
 }
 
 // Node is the node plugin's data path. One instance lives for the lifetime of the

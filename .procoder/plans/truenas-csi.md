@@ -768,7 +768,7 @@ Interfaces produced:
 Steps:
 
 - [ ] Write `TestNoSecretsInOutput`: register the API key
-      `8-jX9B9ugcrfTfOjY2YdZb01sAuq0RZKAAZp2k24xvrYI67hv3pb8exkJiF8BiAhxz` and a CHAP
+      `9-TTTTTTTTestFixtureNotARealKey00000000000000000000000000000000000` and a CHAP
       secret, drive a full `CreateVolume` and a failing `CreateVolume` against the fake with
       logs captured to a buffer, and assert neither literal string appears in the buffer, in
       the returned gRPC error text, or in any metric label. Run `go test ./internal/obs/` —

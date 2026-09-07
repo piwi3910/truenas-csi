@@ -69,6 +69,10 @@ spec:
           # iSCSI stack both require full privilege; this is the standard CSI
           # node-plugin bargain, and the reason node RBAC is read-only.
           securityContext:
+            # The node plugin mounts filesystems and drives the host's iSCSI
+            # stack, so it must be root. The base image defaults to a nonroot
+            # user, which cannot mount and cannot even read the config Secret.
+            runAsUser: 0
             privileged: true
             allowPrivilegeEscalation: true
             capabilities:
@@ -112,7 +116,13 @@ spec:
               mountPath: /run/systemd
             - name: host-root
               mountPath: /host
-              mountPropagation: HostToContainer
+              # Bidirectional, not HostToContainer: the plugin runs the host's
+              # mount binaries chrooted into /host, so every path it touches
+              # resolves inside THIS mount. With HostToContainer the mounts it
+              # makes stay in the container's namespace and never reach the
+              # host, which makes a volume look mounted while the pod is really
+              # reading and writing a local directory.
+              mountPropagation: Bidirectional
             - name: config
               mountPath: /etc/truenas-csi
               readOnly: true
@@ -216,4 +226,4 @@ spec:
         - name: config
           secret:
             secretName: {{ include "truenas-csi.secretName" . }}
-            defaultMode: 0400
+            defaultMode: 0440
