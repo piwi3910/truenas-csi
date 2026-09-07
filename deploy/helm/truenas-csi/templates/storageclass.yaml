@@ -1,0 +1,54 @@
+{{- /*
+Example StorageClasses, both disabled by default: the right pool, dataset and
+network are site-specific, and a wrong default here would provision into
+someone's live data.
+
+Every parameter the driver understands, with the value it assumes when unset:
+
+  backend        which named appliance from `backends`      (required)
+  protocol       nfs | iscsi                                (required)
+  pool           ZFS pool                                   (backend default)
+  parentDataset  dataset every volume is created under      (backend default)
+  fsType         ext4 | xfs, block protocols only           ext4
+  sparse         thin-provision the zvol                    true
+  nfsVersion     3 | 4                                      4
+  networks       comma-separated CIDRs allowed to mount     (none)
+  mode           dataset permissions at creation            0770
+  uid            owning uid at creation                     0
+  gid            owning gid at creation                     0
+  portalID       reuse this portal instead of creating one  (create)
+  chap           CHAP on the shared target                  true
+  initiatorACL   restrict the target to cluster node IQNs   true
+  multipath      use multipath when the node supports it    false
+
+A parameter left empty means "use the default"; it is not an error.
+*/ -}}
+{{- range $name, $class := .Values.storageClasses }}
+{{- if $class.enabled }}
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: {{ $class.name }}
+  labels:
+    {{- include "truenas-csi.labels" $ | nindent 4 }}
+  {{- if $class.isDefault }}
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "true"
+  {{- end }}
+provisioner: {{ include "truenas-csi.driverName" $ }}
+reclaimPolicy: {{ $class.reclaimPolicy }}
+# ZFS cannot shrink a dataset, so expansion is one-way; the resizer is
+# configured accordingly.
+allowVolumeExpansion: {{ $class.allowVolumeExpansion }}
+volumeBindingMode: {{ $class.volumeBindingMode }}
+{{- with $class.mountOptions }}
+mountOptions:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+parameters:
+  {{- range $key, $value := $class.parameters }}
+  {{ $key }}: {{ $value | quote }}
+  {{- end }}
+{{- end }}
+{{- end }}

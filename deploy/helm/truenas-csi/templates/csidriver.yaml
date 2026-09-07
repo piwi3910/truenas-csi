@@ -1,0 +1,23 @@
+apiVersion: storage.k8s.io/v1
+kind: CSIDriver
+metadata:
+  # Immutable, and deliberately not derived from the release name: this string
+  # is written into every PersistentVolume the driver creates.
+  name: {{ include "truenas-csi.driverName" . }}
+  labels:
+    {{- include "truenas-csi.labels" . | nindent 4 }}
+spec:
+  # An iSCSI LUN must be attached before a pod can use it, and the attachment is
+  # the controller's business, not the kubelet's.
+  attachRequired: {{ .Values.csidriver.attachRequired }}
+  # Pod metadata reaches NodePublishVolume, which is what makes per-workload
+  # diagnostics possible.
+  podInfoOnMount: {{ .Values.csidriver.podInfoOnMount }}
+  # The scheduler consults CSIStorageCapacity so a pod is not placed on a
+  # topology whose pool is full.
+  storageCapacity: {{ .Values.csidriver.storageCapacity }}
+  # File: apply fsGroup only when the volume's access mode allows it. Chowning
+  # a shared NFS export recursively on every mount would be both slow and wrong.
+  fsGroupPolicy: {{ .Values.csidriver.fsGroupPolicy }}
+  volumeLifecycleModes:
+    - Persistent

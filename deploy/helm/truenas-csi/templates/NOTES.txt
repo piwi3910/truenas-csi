@@ -1,0 +1,70 @@
+truenas-csi {{ .Chart.AppVersion }} installed as {{ .Release.Name }} in namespace {{ .Release.Namespace }}.
+
+Driver name: {{ include "truenas-csi.driverName" . }}
+  This name is recorded in every PersistentVolume this driver creates. It never
+  changes, whatever the release is called.
+
+Watch it come up:
+
+  kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "truenas-csi.fullname" . }}-controller
+  kubectl -n {{ .Release.Namespace }} rollout status ds/{{ include "truenas-csi.fullname" . }}-node
+
+{{- if not .Values.backends }}
+{{- if not .Values.existingSecret }}
+
+WARNING: no backends are configured. Set `backends` in values, or point
+`existingSecret` at a Secret holding config.yaml, or the controller will exit at
+startup with "no backends configured".
+{{- end }}
+{{- end }}
+
+{{- if not .Values.snapshotter.install }}
+
+PREREQUISITE — snapshots:
+  This chart does NOT install the VolumeSnapshot CRDs or the snapshot
+  controller, and `snapshotter.install` is false.
+
+  The snapshot CRDs and the external-snapshotter controller are a cluster-wide
+  singleton owned by the cluster, not by any one CSI driver. Two drivers
+  installing them fight over the CRD version and break snapshots for every
+  driver in the cluster. Install external-snapshotter once, yourself:
+
+    https://github.com/kubernetes-csi/external-snapshotter
+
+  Until it exists, VolumeSnapshot objects will not be served and the
+  csi-snapshotter sidecar will log that it cannot find the CRDs. Everything
+  else — provisioning, attaching, mounting, expansion — works without it.
+{{- end }}
+
+PREREQUISITE — node packages:
+  The node plugin uses the host's storage tooling and advertises only the
+  capabilities it can actually deliver. Missing packages, per protocol:
+
+    iSCSI      open-iscsi        (iscsiadm, iscsid, iscsi_tcp)
+    NFS        nfs-common        (mount.nfs)
+    XFS        xfsprogs          (mkfs.xfs, xfs_growfs)
+    SMB        cifs-utils        (mount.cifs)
+    NVMe-oF    nvme-cli          (nvme, nvme_tcp)
+    multipath  multipath-tools   (multipath, multipathd, dm_multipath)
+
+  A StorageClass asking for something a node cannot do fails at
+  NodeStageVolume with a message naming the missing package, rather than
+  degrading silently. Multipath is the exception: it falls back to a single
+  path and logs a warning.
+
+  Check what each node found:
+
+    kubectl -n {{ .Release.Namespace }} logs ds/{{ include "truenas-csi.fullname" . }}-node -c truenas-csi | grep capability
+
+{{- if not (or .Values.storageClasses.nfs.enabled .Values.storageClasses.iscsi.enabled) }}
+
+No StorageClass was created. Enable one of the examples with
+`storageClasses.nfs.enabled=true` or `storageClasses.iscsi.enabled=true`, after
+setting its pool and parentDataset — the defaults are examples, not safe values.
+{{- end }}
+
+SECURITY NOTE — iSCSI:
+  All volumes on a backend share one iSCSI target, and initiator ACLs are a
+  property of the target, not of individual LUNs. Every node logged into the
+  target can therefore see every LUN on it. ReadWriteOnce is enforced by
+  Kubernetes, not below it. See docs/security.md.

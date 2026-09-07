@@ -1,0 +1,219 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "truenas-csi.fullname" . }}-node
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "truenas-csi.labels" . | nindent 4 }}
+    app.kubernetes.io/component: node
+spec:
+  selector:
+    matchLabels:
+      {{- include "truenas-csi.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: node
+  updateStrategy:
+    {{- toYaml .Values.node.updateStrategy | nindent 4 }}
+  template:
+    metadata:
+      labels:
+        {{- include "truenas-csi.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: node
+        {{- with .Values.node.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- with .Values.node.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "truenas-csi.nodeServiceAccountName" . }}
+      {{- include "truenas-csi.imagePullSecrets" . | indent 6 }}
+      {{- with .Values.node.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      # hostPID lets the plugin enter the host mount namespace with nsenter, so
+      # iscsiadm talks to the host's iscsid and shares its /etc/iscsi and
+      # /var/lib/iscsi state. That state is shared with Longhorn, so every
+      # iscsiadm call the driver makes is scoped to one target and one portal.
+      hostPID: true
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      {{- with .Values.node.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # A node without the plugin cannot mount any volume, so the DaemonSet runs
+      # everywhere, control-plane and tainted nodes included.
+      {{- with .Values.node.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: truenas-csi
+          image: {{ include "truenas-csi.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - -mode=node
+            - -endpoint=$(CSI_ENDPOINT)
+            - -config=/etc/truenas-csi/config.yaml
+            - -node-id=$(KUBE_NODE_NAME)
+          env:
+            - name: CSI_ENDPOINT
+              value: unix:///csi/csi.sock
+            - name: KUBE_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          # Mounting into the kubelet's directory tree and driving the host's
+          # iSCSI stack both require full privilege; this is the standard CSI
+          # node-plugin bargain, and the reason node RBAC is read-only.
+          securityContext:
+            privileged: true
+            allowPrivilegeEscalation: true
+            capabilities:
+              add:
+                - SYS_ADMIN
+          ports:
+            - name: metrics
+              containerPort: 9090
+              hostPort: 0
+            - name: healthz
+              containerPort: 9808
+              hostPort: 0
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: healthz
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.node.resources | nindent 12 }}
+          volumeMounts:
+            - name: plugin-dir
+              mountPath: /csi
+            - name: pods-mount-dir
+              mountPath: {{ .Values.node.kubeletDir }}
+              # Bidirectional: mounts the plugin makes below the kubelet root
+              # must propagate back to the host, or the kubelet never sees them.
+              mountPropagation: Bidirectional
+            - name: device-dir
+              mountPath: /dev
+            - name: iscsi-config-dir
+              mountPath: /etc/iscsi
+            - name: iscsi-state-dir
+              mountPath: /var/lib/iscsi
+            - name: modules-dir
+              mountPath: /lib/modules
+              readOnly: true
+            - name: run-systemd
+              mountPath: /run/systemd
+            - name: host-root
+              mountPath: /host
+              mountPropagation: HostToContainer
+            - name: config
+              mountPath: /etc/truenas-csi
+              readOnly: true
+        - name: node-driver-registrar
+          image: {{ .Values.sidecars.registrar.image }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - --csi-address=$(ADDRESS)
+            - --kubelet-registration-path=$(DRIVER_REG_SOCK_PATH)
+            {{- with .Values.sidecars.registrar.extraArgs }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          env:
+            - name: ADDRESS
+              value: /csi/csi.sock
+            - name: DRIVER_REG_SOCK_PATH
+              value: {{ .Values.node.kubeletDir }}/plugins/{{ include "truenas-csi.driverName" . }}/csi.sock
+            - name: KUBE_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            {{- toYaml .Values.node.sidecarResources | nindent 12 }}
+          volumeMounts:
+            - name: plugin-dir
+              mountPath: /csi
+            - name: registration-dir
+              mountPath: /registration
+        - name: liveness-probe
+          image: {{ .Values.sidecars.livenessprobe.image }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - --csi-address=$(ADDRESS)
+            - --health-port=9808
+            {{- with .Values.sidecars.livenessprobe.extraArgs }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          env:
+            - name: ADDRESS
+              value: /csi/csi.sock
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            {{- toYaml .Values.node.sidecarResources | nindent 12 }}
+          volumeMounts:
+            - name: plugin-dir
+              mountPath: /csi
+      volumes:
+        - name: plugin-dir
+          hostPath:
+            path: {{ .Values.node.kubeletDir }}/plugins/{{ include "truenas-csi.driverName" . }}
+            type: DirectoryOrCreate
+        - name: registration-dir
+          hostPath:
+            path: {{ .Values.node.kubeletDir }}/plugins_registry
+            type: Directory
+        - name: pods-mount-dir
+          hostPath:
+            path: {{ .Values.node.kubeletDir }}
+            type: Directory
+        - name: device-dir
+          hostPath:
+            path: {{ .Values.node.hostPaths.dev }}
+            type: Directory
+        # Shared with the host's iscsid and with Longhorn. Never rewritten
+        # wholesale: per-node records only.
+        - name: iscsi-config-dir
+          hostPath:
+            path: {{ .Values.node.hostPaths.etcISCSI }}
+            type: DirectoryOrCreate
+        - name: iscsi-state-dir
+          hostPath:
+            path: {{ .Values.node.hostPaths.varISCSI }}
+            type: DirectoryOrCreate
+        - name: modules-dir
+          hostPath:
+            path: {{ .Values.node.hostPaths.modules }}
+            type: Directory
+        # Needed to reach the host's systemd-run for iscsiadm invocations that
+        # must outlive the pod.
+        - name: run-systemd
+          hostPath:
+            path: {{ .Values.node.hostPaths.systemdRun }}
+            type: DirectoryOrCreate
+        # The capability preflight probes host binaries by absolute path in the
+        # host mount namespace.
+        - name: host-root
+          hostPath:
+            path: /
+            type: Directory
+        - name: config
+          secret:
+            secretName: {{ include "truenas-csi.secretName" . }}
+            defaultMode: 0400
