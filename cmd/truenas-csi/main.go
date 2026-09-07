@@ -7,9 +7,12 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
+	"sort"
 	"syscall"
 	"time"
 
@@ -22,6 +25,7 @@ import (
 	"github.com/piwi3910/truenas-csi/internal/driver"
 	"github.com/piwi3910/truenas-csi/internal/node"
 	"github.com/piwi3910/truenas-csi/internal/obs"
+	"github.com/piwi3910/truenas-csi/internal/podmon"
 	"github.com/piwi3910/truenas-csi/internal/reconcile"
 	"github.com/piwi3910/truenas-csi/internal/server"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -29,11 +33,13 @@ import (
 
 func main() {
 	var (
-		mode        = flag.String("mode", "", "which plugin to run: controller or node")
-		endpoint    = flag.String("endpoint", "unix:///csi/csi.sock", "CSI socket endpoint")
-		configPath  = flag.String("config", "/etc/truenas-csi/config.yaml", "path to the driver configuration")
-		nodeID      = flag.String("node-id", "", "node name (overrides the configuration)")
-		hostRoot    = flag.String("host-root", "/host", "path where the host filesystem is mounted")
+		mode       = flag.String("mode", "", "which plugin to run: controller or node")
+		endpoint   = flag.String("endpoint", "unix:///csi/csi.sock", "CSI socket endpoint")
+		configPath = flag.String("config", "/etc/truenas-csi/config.yaml", "path to the driver configuration")
+		nodeID     = flag.String("node-id", "", "node name (overrides the configuration)")
+		hostRoot   = flag.String("host-root", "/host", "path where the host filesystem is mounted")
+		podmonAddr = flag.String("podmon-addr", "", "address for the ValidateVolumeHostConnectivity extension "+
+			"(a driver extension, not CSI); empty disables it. Either a TCP address or unix:///path/to.sock")
 		showVersion = flag.Bool("version", false, "print version and exit")
 	)
 	flag.Parse()
@@ -46,7 +52,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "-mode must be %q or %q, got %q\n", "controller", "node", *mode)
 		os.Exit(1)
 	}
-	if err := run(*mode, *endpoint, *configPath, *nodeID, *hostRoot); err != nil {
+	if err := run(*mode, *endpoint, *configPath, *nodeID, *hostRoot, *podmonAddr); err != nil {
 		slog.Error("driver exited", "error", obs.Redact(err.Error()))
 		os.Exit(1)
 	}
@@ -70,7 +76,7 @@ func logLevel(name string) slog.Level {
 	}
 }
 
-func run(mode, endpoint, configPath, nodeID, hostRoot string) error {
+func run(mode, endpoint, configPath, nodeID, hostRoot, podmonAddr string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -93,6 +99,7 @@ func run(mode, endpoint, configPath, nodeID, hostRoot string) error {
 		ctrl csipb.ControllerServer
 		nd   csipb.NodeServer
 		reg  *backend.Registry
+		pm   *podmon.Service
 	)
 
 	switch mode {
@@ -103,6 +110,7 @@ func run(mode, endpoint, configPath, nodeID, hostRoot string) error {
 		}
 		defer reg.Close()
 		ctrl = csi.NewController(reg, cfg)
+		pm = podmon.New(cfg.NodeID, applianceName(cfg), applianceAddr(cfg))
 
 		// The orphan reconciler reports appliance objects with no
 		// PersistentVolume. It never deletes; an apparent orphan is more often
@@ -140,7 +148,31 @@ func run(mode, endpoint, configPath, nodeID, hostRoot string) error {
 			"interval", node.DefaultHealthInterval.String(),
 			"timeout", node.DefaultHealthTimeout.String())
 		nd = csi.NewNode(nn)
+
+		// The connectivity extension answers from the node plugin's own state
+		// and its own bounded probes. It is given a lookup function, not the
+		// driver's client or its socket, so that it keeps answering when the
+		// driver it lives beside has stalled -- which is the only reason to run
+		// a second health checker at all.
+		pm = podmon.New(cfg.NodeID, applianceName(cfg), applianceAddr(cfg))
+		pm.Volumes = func(id string) (podmon.VolumeRef, bool) {
+			t, ok := nn.Health().Target(id)
+			if !ok {
+				return podmon.VolumeRef{}, false
+			}
+			return podmon.VolumeRef{VolumeID: t.VolumeID, Protocol: t.Protocol, Path: t.Path}, true
+		}
 		obs.MarkReady()
+	}
+
+	if podmonAddr != "" && pm != nil {
+		go func() {
+			slog.Info("serving the ValidateVolumeHostConnectivity extension "+
+				"(a driver extension, not CSI)", "address", podmonAddr, "path", podmon.ValidatePath)
+			if err := podmon.Serve(ctx, podmonAddr, pm); err != nil {
+				slog.Warn("podmon extension listener stopped", "error", obs.Redact(err.Error()))
+			}
+		}()
 	}
 
 	srv, err := server.New(endpoint, csi.NewIdentity(func() bool { return true }), ctrl, nd)
@@ -163,4 +195,35 @@ func serveHTTP(cfg *config.Config) {
 	if err := s.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		slog.Warn("metrics/health listener stopped", "error", err.Error())
 	}
+}
+
+// applianceName and applianceAddr pick the appliance the podmon extension
+// probes. A multi-backend driver has no single data path, so the first backend
+// by name is used: the extension reports node-level reachability, and every
+// volume it is asked about is checked individually anyway.
+func applianceName(cfg *config.Config) string {
+	names := make([]string, 0, len(cfg.Backends))
+	for name := range cfg.Backends {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	if len(names) == 0 {
+		return ""
+	}
+	return names[0]
+}
+
+func applianceAddr(cfg *config.Config) string {
+	name := applianceName(cfg)
+	if name == "" {
+		return ""
+	}
+	u, err := url.Parse(cfg.Backends[name].Endpoint)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	if u.Port() != "" {
+		return u.Host
+	}
+	return net.JoinHostPort(u.Hostname(), "443")
 }

@@ -38,7 +38,7 @@ backends:
 `), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	err := run("controller", "unix:///tmp/never-created.sock", path, "worker-21", "/host")
+	err := run("controller", "unix:///tmp/never-created.sock", path, "worker-21", "/host", "")
 	if err == nil {
 		t.Fatal("a plaintext endpoint must stop the driver starting")
 	}
@@ -53,7 +53,7 @@ backends:
 
 func TestRunRejectsMissingConfig(t *testing.T) {
 	if err := run("controller", "unix:///tmp/x.sock",
-		filepath.Join(t.TempDir(), "absent.yaml"), "n", "/host"); err == nil {
+		filepath.Join(t.TempDir(), "absent.yaml"), "n", "/host", ""); err == nil {
 		t.Fatal("a missing config file must be fatal")
 	}
 }
@@ -84,6 +84,22 @@ func TestMetricsAndHealthAreServed(t *testing.T) {
 	for _, want := range []string{"/metrics", "/healthz", "/readyz", "go serveHTTP"} {
 		if !strings.Contains(string(src), want) {
 			t.Errorf("main.go does not serve %s", want)
+		}
+	}
+}
+
+// TestPodmonIsWiredIntoTheNode is the same guard as the reconciler's: the
+// podmon extension is worthless if the shipped binary never starts a listener
+// for it, and a package with green tests proves nothing about that.
+func TestPodmonIsWiredIntoTheNode(t *testing.T) {
+	src, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"podmon.New", "podmon.Serve", "podmon-addr"} {
+		if !strings.Contains(string(src), want) {
+			t.Errorf("main.go never references %s: the podmon extension would never "+
+				"be reachable in a running node plugin", want)
 		}
 	}
 }

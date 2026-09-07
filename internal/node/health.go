@@ -384,3 +384,13 @@ func dataAddrOf(pc map[string]string) string {
 	}
 	return ""
 }
+
+// Target returns what the monitor knows about one volume, so another service in
+// the process — the podmon extension — can resolve a volume id to a path
+// without touching the mount table or the driver's own RPC surface.
+func (m *HealthMonitor) Target(volumeID string) (HealthTarget, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	t, ok := m.targets[volumeID]
+	return t, ok
+}

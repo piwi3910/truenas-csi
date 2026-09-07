@@ -316,6 +316,37 @@ it is reporting about. Only volumes this driver staged are watched — the monit
 reads `/proc/mounts`, so another storage system's mounts can never be reported as this
 driver's.
 
+### `ValidateVolumeHostConnectivity` — a driver extension, not CSI
+
+Off by default; enable with `podmon.enabled=true`. The driver then serves one JSON-over-HTTP
+route on a listener of its own (`127.0.0.1:9820` by default, or a UNIX socket via
+`-podmon-addr=unix:///csi/podmon.sock`), alongside — never on — the CSI socket:
+
+```
+POST /podmon/v1/validate-volume-host-connectivity
+{"nodeId": "worker-21", "volumeIds": ["nas1/nfs/tank/k8s/pvc-a"], "ioSampleWindow": 60000000000}
+
+{"nodeId": "worker-21", "connected": true, "iosInProgress": true, "messages": []}
+```
+
+**The CSI specification defines no such call.** Dell's CSM for Resiliency defines one in its
+own proto and its podmon sidecar calls it; this is the same question and the same shape of
+answer, served as this driver's own extension with no generated stubs, so a sidecar, an
+operator or `curl` can ask. No CO will ever call it.
+
+The point of a second health checker is that it survives the first one stalling, so it
+shares nothing that a stalled driver could hold: its own listener, its own `http.Server`,
+its own bounded probes (a TCP dial to the appliance, a `statfs` per volume) on its own
+deadlines, and never a call through the driver's middleware client or CSI socket. An
+optional probe of the driver itself is advisory only — it runs concurrently under its own
+timeout, and a driver that never answers costs one line in `messages` instead of the whole
+response. `TestPodmonAnswersWhileDriverStalled` pins that with a driver fake that never
+responds.
+
+`iosInProgress` is evidence, not proof: it reports whether the volume's mount point was
+modified within the sample window, so "no I/O observed" means no evidence of activity, not
+a guarantee of idleness. Weigh it alongside `connected` rather than acting on it alone.
+
 ## Data safety
 
 The pool this driver was built against holds live, irreplaceable data, and that shaped the
