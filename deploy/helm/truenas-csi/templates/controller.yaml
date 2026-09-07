@@ -74,6 +74,12 @@ spec:
             - -endpoint=$(CSI_ENDPOINT)
             # Credentials come from the mounted Secret, never from an argument.
             - -config=/etc/truenas-csi/config.yaml
+            {{- if .Values.podmon.enabled }}
+            # The ValidateVolumeHostConnectivity extension. Not CSI: a driver
+            # extension on a listener of its own, so a stalled driver cannot
+            # take the health answer down with it.
+            - -podmon-addr={{ .Values.podmon.bindAddress }}:{{ .Values.podmon.port }}
+            {{- end }}
           env:
             - name: CSI_ENDPOINT
               value: unix:///csi/csi.sock
@@ -86,6 +92,10 @@ spec:
               containerPort: 9090
             - name: healthz
               containerPort: 9808
+            {{- if .Values.podmon.enabled }}
+            - name: podmon
+              containerPort: {{ .Values.podmon.port }}
+            {{- end }}
           livenessProbe:
             httpGet:
               path: /healthz

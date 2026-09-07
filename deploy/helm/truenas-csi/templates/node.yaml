@@ -58,6 +58,13 @@ spec:
             - -endpoint=$(CSI_ENDPOINT)
             - -config=/etc/truenas-csi/config.yaml
             - -node-id=$(KUBE_NODE_NAME)
+            {{- if .Values.podmon.enabled }}
+            # The ValidateVolumeHostConnectivity extension. Not CSI: a driver
+            # extension on a listener of its own, so a sidecar or an operator
+            # can still ask this node whether it can reach the appliance while
+            # the driver's own goroutines are stuck on a hung mount.
+            - -podmon-addr={{ .Values.podmon.bindAddress }}:{{ .Values.podmon.port }}
+            {{- end }}
           env:
             - name: CSI_ENDPOINT
               value: unix:///csi/csi.sock
@@ -85,6 +92,14 @@ spec:
             - name: healthz
               containerPort: 9808
               hostPort: 0
+            {{- if .Values.podmon.enabled }}
+            # hostNetwork is on for this DaemonSet, so this port is the host's
+            # port too: bindAddress stays on the loopback address unless an
+            # operator deliberately exposes the extension to the node network.
+            - name: podmon
+              containerPort: {{ .Values.podmon.port }}
+              hostPort: 0
+            {{- end }}
           livenessProbe:
             httpGet:
               path: /healthz

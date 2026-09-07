@@ -427,3 +427,74 @@ design more than any other requirement:
 - [docs/security.md](docs/security.md) — least-privilege TrueNAS roles, TLS trust, the
   accepted shared-target risk, and the data-safety model.
 - [docs/troubleshooting.md](docs/troubleshooting.md) — failure modes and their signatures.
+
+## Observability
+
+Prometheus metrics on `metricsAddr` (default `:9090`) and health on `healthAddr` (default
+`:9808`), plus a gRPC probe for the liveness sidecar. The exported series are
+`truenas_csi_calls_total`, `truenas_csi_call_duration_seconds`,
+`truenas_csi_middleware_calls_total`, `truenas_csi_middleware_duration_seconds`,
+`truenas_csi_backend_up` and `truenas_csi_orphaned_volumes`. Label values are bounded to
+method and backend names — a volume ID or a credential never becomes a label. Volume IDs
+appear in log lines instead, so a failing volume can be traced end to end.
+
+### Connectivity health monitoring
+
+The node plugin polls the data path of every volume it has staged (every 10s, each probe
+bounded to 3s) and the data address of every backend behind them. The probe runs under a
+deadline in a goroutine of its own: the failure being detected — a hung NFS mount or an
+iSCSI session whose portal is gone — is exactly the failure that makes `statfs(2)` never
+return, so a monitor that waited for it would report nothing at all.
+
+Two more series come out of it:
+
+- `truenas_csi_volume_health{volume_id_hash,protocol}` — 1 when the volume's data path
+  answered its last check, 0 when it did not. The label is the first 12 hex characters of
+  the volume ID's SHA-256, never the ID itself: one series per PVC ever staged would grow
+  without bound. The full ID is in the log line next to the transition.
+- `truenas_csi_node_backend_reachable{backend}` — 1 when this node's bounded TCP probe of
+  the appliance's data address succeeded. Distinct from `truenas_csi_backend_up`, which
+  describes the controller's middleware websocket: a node can lose NFS while the API
+  connection is perfectly healthy.
+
+A transition is logged exactly once in each direction (`volume data path is unreachable`
+at ERROR, `volume data path recovered` at INFO) — never once per poll. Unhealthy volumes
+are also reported to Kubernetes through the CSI volume-health surface: the driver
+advertises the `GET_VOLUME_HEALTH` node capability and answers `NodeGetVolumeHealth` with
+an `INACCESSIBLE` condition and the underlying error. (CSI v1.13 replaced the earlier
+alpha `volume_condition` field on `NodeGetVolumeStats` with this RPC; it is the same
+signal.) The RPC answers from the monitor's recorded state, so it cannot hang on the mount
+it is reporting about. Only volumes this driver staged are watched — the monitor never
+reads `/proc/mounts`, so another storage system's mounts can never be reported as this
+driver's.
+
+### `ValidateVolumeHostConnectivity` — a driver extension, not CSI
+
+Off by default; enable with `podmon.enabled=true`. The driver then serves one JSON-over-HTTP
+route on a listener of its own (`127.0.0.1:9820` by default, or a UNIX socket via
+`-podmon-addr=unix:///csi/podmon.sock`), alongside — never on — the CSI socket:
+
+```
+POST /podmon/v1/validate-volume-host-connectivity
+{"nodeId": "worker-21", "volumeIds": ["nas1/nfs/tank/k8s/pvc-a"], "ioSampleWindow": 60000000000}
+
+{"nodeId": "worker-21", "connected": true, "iosInProgress": true, "messages": []}
+```
+
+**The CSI specification defines no such call.** Dell's CSM for Resiliency defines one in its
+own proto and its podmon sidecar calls it; this is the same question and the same shape of
+answer, served as this driver's own extension with no generated stubs, so a sidecar, an
+operator or `curl` can ask. No CO will ever call it.
+
+The point of a second health checker is that it survives the first one stalling, so it
+shares nothing that a stalled driver could hold: its own listener, its own `http.Server`,
+its own bounded probes (a TCP dial to the appliance, a `statfs` per volume) on its own
+deadlines, and never a call through the driver's middleware client or CSI socket. An
+optional probe of the driver itself is advisory only — it runs concurrently under its own
+timeout, and a driver that never answers costs one line in `messages` instead of the whole
+response. `TestPodmonAnswersWhileDriverStalled` pins that with a driver fake that never
+responds.
+
+`iosInProgress` is evidence, not proof: it reports whether the volume's mount point was
+modified within the sample window, so "no I/O observed" means no evidence of activity, not
+a guarantee of idleness. Weigh it alongside `connected` rather than acting on it alone.

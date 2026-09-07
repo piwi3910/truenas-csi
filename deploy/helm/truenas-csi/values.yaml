@@ -224,6 +224,29 @@ storageClasses:
       # multipath-tools.
       multipath: "false"
 
+# podmon exposes the driver's ValidateVolumeHostConnectivity extension on a
+# listener of its own, alongside the CSI socket.
+#
+# It is a DRIVER EXTENSION, NOT CSI: the CSI specification defines no such call.
+# It answers, for this node, "can I still reach the appliance, and has any I/O
+# been seen on these volumes lately?" as JSON over HTTP:
+#
+#   POST http://<bindAddress>:<port>/podmon/v1/validate-volume-host-connectivity
+#   {"nodeId": "worker-21", "volumeIds": ["nas1/nfs/tank/k8s/pvc-a"]}
+#
+# It runs its own bounded probes on its own timers and shares nothing with the
+# driver's middleware client, so it keeps answering when the driver has stalled
+# on a hung mount — which is the only reason to run a second health checker.
+#
+# Off by default: it opens an extra listener, and that is an operator's
+# decision. bindAddress stays on the loopback address unless you deliberately
+# expose it — the node DaemonSet runs with hostNetwork, so 0.0.0.0 here means
+# every pod and every host on the node's network can query it.
+podmon:
+  enabled: false
+  port: 9820
+  bindAddress: "127.0.0.1"
+
 # Sidecar images, pinned by digest-bearing tag. Change these only together with
 # a documented compatibility check against the Kubernetes minimum (1.31).
 sidecars:

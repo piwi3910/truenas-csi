@@ -22,7 +22,8 @@ import (
 // CO uses to decide the volume is gone rather than the node broken.
 var ErrVolumePathNotFound = errors.New("volume path is not present on this node")
 
-// Stats reports byte and inode usage for a staged or published volume path.
+// Stats reports byte and inode usage for a staged or published volume path,
+// together with the volume's health condition as the monitor last observed it.
 func (n *Node) Stats(_ context.Context, req StatsRequest) (StatsResponse, error) {
 	if req.VolumePath == "" {
 		return StatsResponse{}, fmt.Errorf("%w: no volume path", ErrInvalidRequest)
@@ -53,7 +54,12 @@ func (n *Node) Stats(_ context.Context, req StatsRequest) (StatsResponse, error)
 	inodesFree := st.Ffree
 	inodesUsed := inodesTotal - inodesFree
 
-	return StatsResponse{Usage: []Usage{
+	abnormal, message := false, ""
+	if n.health != nil {
+		abnormal, message = n.health.Condition(req.VolumeID)
+	}
+
+	return StatsResponse{Abnormal: abnormal, Message: message, Usage: []Usage{
 		{
 			Unit:      UnitBytes,
 			Total:     int64(total),

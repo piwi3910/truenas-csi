@@ -5,3 +5,6 @@ coverage.out
 
 # agent worktrees, never tracked
 .claude/worktrees/
+
+# a bare `go build ./cmd/...` drops the executable here
+/truenas-csi
