@@ -270,6 +270,8 @@ func (n *Node) Stage(ctx context.Context, req StageRequest) error {
 	switch protocolOf(req.PublishContext) {
 	case ProtocolNFS:
 		return n.stageNFS(ctx, req)
+	case ProtocolISCSI:
+		return n.stageISCSI(ctx, req)
 	default:
 		return fmt.Errorf("%w: publish context names no supported protocol", ErrInvalidRequest)
 	}
@@ -287,7 +289,7 @@ func (n *Node) Unstage(ctx context.Context, req UnstageRequest) error {
 	if err := n.unmountIfMounted(ctx, req.StagingPath); err != nil {
 		return err
 	}
-	return nil
+	return n.unstageISCSI(ctx, req)
 }
 
 // Publish makes a staged volume visible at the pod's target path: a bind mount of
@@ -298,6 +300,10 @@ func (n *Node) Publish(ctx context.Context, req PublishRequest) error {
 		return fmt.Errorf("%w: no target path", ErrInvalidRequest)
 	}
 	ctx = obs.WithVolume(ctx, req.VolumeID)
+
+	if req.VolumeCapability.Block {
+		return n.publishBlock(ctx, req)
+	}
 
 	mounted, err := n.isMounted(req.TargetPath)
 	if err != nil {
