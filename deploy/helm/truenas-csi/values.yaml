@@ -1,0 +1,223 @@
+# Default values for truenas-csi.
+
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  repository: ghcr.io/pwatteel/truenas-csi
+  # tag defaults to the chart's appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+# Driver-level settings. These end up in the mounted config Secret, not in
+# container arguments, so nothing here can leak through `ps` or a pod spec.
+logLevel: info
+metricsAddr: ":9090"
+healthAddr: ":9808"
+
+# backends maps a StorageClass `backend` parameter to one TrueNAS appliance.
+# Every field mirrors internal/config.Backend. The whole map is rendered into a
+# Secret and mounted at /etc/truenas-csi/config.yaml — credentials never appear
+# in a container argument or a plaintext environment variable.
+#
+# backends:
+#   nas1:
+#     # name defaults to the map key when omitted.
+#     name: nas1
+#     # Must be wss://. TrueNAS revokes an API key presented over plaintext.
+#     endpoint: wss://nas1.example.com/api/current
+#     username: csi
+#     apiKey: "1-abcdef..."
+#     pool: tank
+#     parentDataset: tank/k8s
+#     # PEM bundle trusted for this appliance. The stock TrueNAS certificate is
+#     # self-signed with SAN=DNS:localhost and cannot be verified against a real
+#     # address, so either supply your own certificate here or accept the risk
+#     # below.
+#     caCert: ""
+#     insecureSkipVerify: false
+backends: {}
+
+# existingSecret names a Secret you manage yourself holding key `config.yaml`.
+# When set, the chart renders no Secret of its own and `backends` is ignored,
+# so credentials can live in an external secret store instead of in values.
+existingSecret: ""
+
+controller:
+  replicas: 2
+  # Leader election makes the second replica a warm standby rather than a
+  # second writer.
+  leaderElection: true
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
+  affinity: {}
+  priorityClassName: ""
+  # Spread the replicas so a single node failure cannot take both.
+  topologySpreadConstraints: []
+  resources:
+    requests:
+      cpu: 20m
+      memory: 64Mi
+    limits:
+      memory: 256Mi
+  sidecarResources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      memory: 128Mi
+
+node:
+  # kubeletDir is the kubelet root. k3s and microk8s do not use the default.
+  kubeletDir: /var/lib/kubelet
+  # Host paths shared with the rest of the node's storage stack. Longhorn owns
+  # the same iSCSI state, so these are read and written cooperatively; see
+  # docs/security.md.
+  hostPaths:
+    etcISCSI: /etc/iscsi
+    varISCSI: /var/lib/iscsi
+    dev: /dev
+    modules: /lib/modules
+    systemdRun: /run/systemd
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  # Run on every node, including control-plane and cordoned nodes: a node
+  # without the plugin cannot mount any volume at all.
+  tolerations:
+    - operator: Exists
+  priorityClassName: ""
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+  resources:
+    requests:
+      cpu: 20m
+      memory: 64Mi
+    limits:
+      memory: 256Mi
+  sidecarResources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      memory: 128Mi
+
+snapshotter:
+  # enabled deploys the csi-snapshotter sidecar and its RBAC. Requires the
+  # snapshot CRDs and the cluster-wide snapshot controller to already exist.
+  enabled: true
+  # install is deliberately false and should stay false.
+  #
+  # The VolumeSnapshot CRDs and the snapshot controller are a cluster-wide
+  # singleton owned by the cluster, not by any one CSI driver. Two drivers
+  # installing them fight over the CRD version and break snapshots for both.
+  # Install external-snapshotter once, cluster-wide, before enabling snapshots
+  # here.
+  install: false
+
+csidriver:
+  attachRequired: true
+  podInfoOnMount: true
+  storageCapacity: true
+  fsGroupPolicy: File
+
+rbac:
+  create: true
+
+serviceAccounts:
+  controller:
+    create: true
+    name: ""
+    annotations: {}
+  node:
+    create: true
+    name: ""
+    annotations: {}
+
+# Optional example StorageClasses. Both are off by default: the right pool,
+# dataset and network for a cluster are site-specific.
+storageClasses:
+  nfs:
+    enabled: false
+    name: truenas-nfs
+    isDefault: false
+    reclaimPolicy: Delete
+    allowVolumeExpansion: true
+    volumeBindingMode: Immediate
+    mountOptions:
+      - nfsvers=4.1
+      - hard
+    parameters:
+      backend: nas1
+      protocol: nfs
+      pool: tank
+      parentDataset: tank/k8s
+      # NFSv4 is preferred: NFSv3 locking is stateless and interacts badly with
+      # pod rescheduling.
+      nfsVersion: "4"
+      # Comma-separated CIDRs allowed to mount the export.
+      networks: 10.0.0.0/8
+      # A fresh dataset is root:root 0755, so a non-root pod cannot write to it
+      # unless the driver sets ownership at provision time.
+      mode: "0770"
+      uid: "0"
+      gid: "0"
+  iscsi:
+    enabled: false
+    name: truenas-iscsi
+    isDefault: false
+    reclaimPolicy: Delete
+    allowVolumeExpansion: true
+    volumeBindingMode: Immediate
+    mountOptions: []
+    parameters:
+      backend: nas1
+      protocol: iscsi
+      pool: tank
+      parentDataset: tank/k8s
+      fsType: ext4
+      sparse: "true"
+      # portalID reuses an existing portal instead of letting the driver create
+      # one. Leave empty to have the driver manage the portal.
+      portalID: ""
+      # CHAP is on by default; the driver generates the credentials and stores
+      # them on TrueNAS.
+      chap: "true"
+      # initiatorACL restricts the shared target to the cluster's node IQNs.
+      # Turning it off exposes every LUN on the target to any initiator that can
+      # reach the portal.
+      initiatorACL: "true"
+      # Multipath degrades to single path with a warning when the node lacks
+      # multipath-tools.
+      multipath: "false"
+
+# Sidecar images, pinned by digest-bearing tag. Change these only together with
+# a documented compatibility check against the Kubernetes minimum (1.31).
+sidecars:
+  provisioner:
+    image: registry.k8s.io/sig-storage/csi-provisioner:v5.1.0
+    extraArgs: []
+  attacher:
+    image: registry.k8s.io/sig-storage/csi-attacher:v4.7.0
+    extraArgs: []
+  resizer:
+    image: registry.k8s.io/sig-storage/csi-resizer:v1.12.0
+    extraArgs: []
+  snapshotter:
+    image: registry.k8s.io/sig-storage/csi-snapshotter:v8.1.0
+    extraArgs: []
+  livenessprobe:
+    image: registry.k8s.io/sig-storage/livenessprobe:v2.14.0
+    extraArgs: []
+  registrar:
+    image: registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.12.0
+    extraArgs: []

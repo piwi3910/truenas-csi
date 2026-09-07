@@ -1,0 +1,20 @@
+apiVersion: v2
+name: truenas-csi
+description: CSI driver provisioning NFS and iSCSI volumes on TrueNAS SCALE appliances
+type: application
+# version is the chart version; appVersion tracks the default driver image tag.
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.31.0-0"
+home: https://github.com/pwatteel/truenas-csi
+sources:
+  - https://github.com/pwatteel/truenas-csi
+keywords:
+  - csi
+  - truenas
+  - zfs
+  - nfs
+  - iscsi
+maintainers:
+  - name: Pascal Watteel
+    url: https://github.com/pwatteel
