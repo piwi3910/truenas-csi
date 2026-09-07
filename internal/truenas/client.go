@@ -5,7 +5,6 @@ package truenas
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -53,7 +52,12 @@ type response struct {
 }
 
 // Client is a connection to one TrueNAS appliance. It is safe for concurrent use.
+//
+// It is the SCALE implementation of API: the typed calls come from the embedded
+// Ops, which routes them straight back through this type's Call/CallJSON.
 type Client struct {
+	Ops
+
 	backend config.Backend
 	tlsConf *tls.Config
 	sem     *semaphore.Weighted
@@ -74,10 +78,10 @@ type Client struct {
 
 // Dial connects to the appliance and authenticates once.
 func Dial(ctx context.Context, b config.Backend) (*Client, error) {
-	if err := configValidateEndpoint(b); err != nil {
+	if err := ValidateBackend(b); err != nil {
 		return nil, err
 	}
-	tc, err := tlsConfig(b)
+	tc, err := TLSConfig(b)
 	if err != nil {
 		return nil, err
 	}
@@ -88,33 +92,11 @@ func Dial(ctx context.Context, b config.Backend) (*Client, error) {
 		notif:   make(chan Notification, 64),
 		waiters: map[int64]chan *response{},
 	}
+	c.Ops.Transport = c
 	if err := c.ensureConn(ctx); err != nil {
 		return nil, err
 	}
 	return c, nil
-}
-
-// configValidateEndpoint refuses a plaintext endpoint before opening a socket.
-// A single plaintext connection makes TrueNAS revoke the API key outright.
-func configValidateEndpoint(b config.Backend) error {
-	cfg := &config.Config{Backends: map[string]config.Backend{b.Name: b}, NodeID: "x"}
-	return cfg.Validate()
-}
-
-func tlsConfig(b config.Backend) (*tls.Config, error) {
-	tc := &tls.Config{MinVersion: tls.VersionTLS12}
-	if b.InsecureSkipVerify {
-		tc.InsecureSkipVerify = true
-		return tc, nil
-	}
-	if len(b.CACert) > 0 {
-		pool := x509.NewCertPool()
-		if !pool.AppendCertsFromPEM(b.CACert) {
-			return nil, errors.New("caCert is not a valid PEM certificate")
-		}
-		tc.RootCAs = pool
-	}
-	return tc, nil
 }
 
 // Notifications yields id-less server messages such as job progress updates.

@@ -14,7 +14,38 @@ import (
 // transport"), so a misconfigured scheme does not merely fail to connect — it
 // destroys the credential and requires an operator to issue a new one by hand.
 var ErrInsecureTransport = errors.New(
-	"endpoint must use wss:// — TrueNAS revokes API keys presented over insecure transport")
+	"endpoint must use wss:// (scale) or https:// (core) — " +
+		"TrueNAS revokes API keys presented over insecure transport")
+
+// ErrUnknownFlavour means a backend named an API dialect this driver has no
+// client for. It is a closed set on purpose: a typo must fail at startup rather
+// than silently fall back to SCALE and dial a CORE appliance over a websocket
+// that does not exist there.
+var ErrUnknownFlavour = errors.New(`flavour must be "scale" or "core"`)
+
+// Flavour names an appliance's API dialect.
+const (
+	FlavourSCALE = "scale"
+	FlavourCORE  = "core"
+)
+
+// schemeForFlavour is the ONLY scheme each flavour may use. Both are encrypted;
+// neither is negotiable, for the same credential-revocation reason.
+var schemeForFlavour = map[string]string{
+	FlavourSCALE: "wss",
+	FlavourCORE:  "https",
+}
+
+// NormalisedFlavour is the flavour the rest of the driver sees: lower-cased,
+// trimmed, and defaulted to SCALE when unset. An unknown value is returned as
+// given so validate() can name it in the error.
+func (b Backend) NormalisedFlavour() string {
+	f := strings.ToLower(strings.TrimSpace(b.Flavour))
+	if f == "" {
+		return FlavourSCALE
+	}
+	return f
+}
 
 // Validate checks the configuration before anything opens a connection.
 func (c *Config) Validate() error {
@@ -42,7 +73,12 @@ func (c *Config) ValidateNode() error {
 }
 
 func (b Backend) validate() error {
-	if err := validateEndpoint(b.Endpoint); err != nil {
+	flavour := b.NormalisedFlavour()
+	scheme, ok := schemeForFlavour[flavour]
+	if !ok {
+		return fmt.Errorf("flavour %q is not supported: %w", b.Flavour, ErrUnknownFlavour)
+	}
+	if err := validateEndpoint(b.Endpoint, scheme); err != nil {
 		return err
 	}
 	for _, f := range []struct {
@@ -63,7 +99,7 @@ func (b Backend) validate() error {
 	return nil
 }
 
-func validateEndpoint(endpoint string) error {
+func validateEndpoint(endpoint, wantScheme string) error {
 	if strings.TrimSpace(endpoint) == "" {
 		return fmt.Errorf("endpoint must be set: %w", ErrInsecureTransport)
 	}
@@ -71,8 +107,9 @@ func validateEndpoint(endpoint string) error {
 	if err != nil {
 		return fmt.Errorf("endpoint %q is not a valid URL: %w", endpoint, ErrInsecureTransport)
 	}
-	if !strings.EqualFold(u.Scheme, "wss") {
-		return fmt.Errorf("endpoint %q uses scheme %q: %w", endpoint, u.Scheme, ErrInsecureTransport)
+	if !strings.EqualFold(u.Scheme, wantScheme) {
+		return fmt.Errorf("endpoint %q uses scheme %q, want %q: %w",
+			endpoint, u.Scheme, wantScheme, ErrInsecureTransport)
 	}
 	if u.Host == "" {
 		return fmt.Errorf("endpoint %q has no host: %w", endpoint, ErrInsecureTransport)

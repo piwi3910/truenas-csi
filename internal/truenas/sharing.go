@@ -13,7 +13,7 @@ type NFSShareSpec struct {
 }
 
 // NFSShareCreate exports a dataset over NFS.
-func (c *Client) NFSShareCreate(ctx context.Context, spec NFSShareSpec) (*NFSShare, error) {
+func (c *Ops) NFSShareCreate(ctx context.Context, spec NFSShareSpec) (*NFSShare, error) {
 	p := map[string]any{"path": spec.Path, "comment": spec.Comment, "ro": spec.ReadOnly}
 	if len(spec.Networks) > 0 {
 		p["networks"] = spec.Networks
@@ -32,7 +32,7 @@ func (c *Client) NFSShareCreate(ctx context.Context, spec NFSShareSpec) (*NFSSha
 }
 
 // NFSShareByPath finds the export for a path, or (nil, nil) when there is none.
-func (c *Client) NFSShareByPath(ctx context.Context, path string) (*NFSShare, error) {
+func (c *Ops) NFSShareByPath(ctx context.Context, path string) (*NFSShare, error) {
 	var out []NFSShare
 	err := c.CallJSON(ctx, &out, "sharing.nfs.query",
 		[]any{[]any{"path", "=", path}}, map[string]any{})
@@ -49,7 +49,7 @@ func (c *Client) NFSShareByPath(ctx context.Context, path string) (*NFSShare, er
 }
 
 // NFSShareDelete removes an export; already absent is success.
-func (c *Client) NFSShareDelete(ctx context.Context, id int) error {
+func (c *Ops) NFSShareDelete(ctx context.Context, id int) error {
 	err := c.CallJSON(ctx, nil, "sharing.nfs.delete", id)
 	if err != nil && IsNotFound(err) {
 		return nil

@@ -23,7 +23,7 @@ type jobState struct {
 // filesystem.setperm. Everything else (dataset create/update/delete, snapshot
 // create/clone/delete, the iscsi and sharing calls) is synchronous, which is why
 // there is no general async machinery here.
-func (c *Client) waitForJob(ctx context.Context, id int) error {
+func (c *Ops) waitForJob(ctx context.Context, id int) error {
 	ctx, cancel := context.WithTimeout(ctx, jobTimeout)
 	defer cancel()
 
@@ -61,7 +61,7 @@ func (c *Client) waitForJob(ctx context.Context, id int) error {
 //
 // This is the ONLY job-based call the driver makes: it returns an integer job id
 // which must be polled through core.get_jobs.
-func (c *Client) SetPerm(ctx context.Context, path, mode string, uid, gid int) error {
+func (c *Ops) SetPerm(ctx context.Context, path, mode string, uid, gid int) error {
 	var jobID int
 	err := c.CallJSON(ctx, &jobID, "filesystem.setperm", map[string]any{
 		"path": path, "mode": mode, "uid": uid, "gid": gid,

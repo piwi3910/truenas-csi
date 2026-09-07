@@ -47,13 +47,13 @@ func init() { backend.Register(Protocol, New) }
 
 // iscsiBackend provisions iSCSI volumes on one appliance.
 type iscsiBackend struct {
-	c      *truenas.Client
+	c      truenas.API
 	pool   string
 	parent string
 }
 
 // New builds the backend for one appliance. It matches backend.Factory.
-func New(c *truenas.Client, pool, parent string) backend.Backend {
+func New(c truenas.API, pool, parent string) backend.Backend {
 	return &iscsiBackend{c: c, pool: pool, parent: parent}
 }
 
@@ -391,7 +391,7 @@ var zvolReleaseTimeout = 30 * time.Second
 // appliance, where the very next attempt succeeds. Retrying is correct here
 // precisely because the object is ours and already unpublished; giving up would
 // leak a zvol on every iSCSI volume deletion.
-func deleteZvolWhenReleased(ctx context.Context, c *truenas.Client, dsPath string) error {
+func deleteZvolWhenReleased(ctx context.Context, c truenas.API, dsPath string) error {
 	deadline := time.Now().Add(zvolReleaseTimeout)
 	delay := 200 * time.Millisecond
 	for {

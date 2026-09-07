@@ -26,7 +26,11 @@ healthAddr: ":9808"
 #   nas1:
 #     # name defaults to the map key when omitted.
 #     name: nas1
-#     # Must be wss://. TrueNAS revokes an API key presented over plaintext.
+#     # "scale" (default, JSON-RPC websocket) or "core" (legacy REST v2).
+#     # CORE support is UNVERIFIED against real CORE hardware — see the README.
+#     flavour: scale
+#     # Must be wss:// for scale, https:// for core. TrueNAS revokes an API key
+#     # presented over plaintext, so the scheme is enforced at startup.
 #     endpoint: wss://nas1.example.com/api/current
 #     username: csi
 #     apiKey: "1-abcdef..."

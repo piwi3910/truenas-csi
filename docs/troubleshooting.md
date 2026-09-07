@@ -298,6 +298,54 @@ the API key. See [security.md](security.md#tls-trust).
 
 ---
 
+## A `flavour: core` backend misbehaves — CORE support is UNVERIFIED
+
+**Symptom.** Anything at all, on a backend configured with `flavour: core`: a call that
+returns nothing, an operation that fails with a 404 or 422 the message does not explain, a
+dataset that appears created but is not found afterwards.
+
+**Cause.** TrueNAS CORE support has **never been run against a real CORE appliance.** No
+CORE hardware was available. The REST v2 routing, verbs and payload shapes were written
+from the documented convention and are exercised only against an in-process fake
+(`internal/truenas/core/fake`). Everything above the transport is literally the same code
+the SCALE path runs, and a parity test asserts both clients behave identically — so a bug
+here is almost certainly in the **transport**: a path, a verb, a body shape, or how CORE
+reports absence.
+
+**What to check first, in this order.**
+
+1. **The endpoint and scheme.** CORE needs `https://<nas>` or `https://<nas>/api/v2.0`
+   (both are accepted; the driver appends the API root when it is missing). `http://` is
+   refused at startup, deliberately — see the API-key entry at the top of this file.
+2. **The flavour is right.** A CORE appliance with the default `flavour: scale` will try to
+   open a websocket at `/api/current` and fail to connect; a SCALE appliance with
+   `flavour: core` will fail at config validation because its endpoint is `wss://`.
+3. **The API key.** CORE takes it as `Authorization: Bearer <key>`. Confirm it by hand
+   before blaming the driver:
+   ```sh
+   curl -k -H "Authorization: Bearer $KEY" https://<nas>/api/v2.0/pool/dataset | head
+   ```
+   A 401 there is a credentials problem, not a driver problem — and note the driver
+   presents a rejected key exactly **once**, then fails every later call locally, so the log
+   shows one 401 and many terminal errors, not a retry storm.
+4. **The exact request.** Compare what the driver sends against the appliance. The paths are
+   mechanical: `pool.dataset.create` → `POST /api/v2.0/pool/dataset`,
+   `pool.dataset.update <id>` → `PUT /api/v2.0/pool/dataset/id/<url-escaped id>`,
+   `pool.snapshot.delete <id>` → `DELETE /api/v2.0/pool/snapshot/id/<url-escaped id>`,
+   `iscsi.global.config` → `GET /api/v2.0/iscsi/global`, `filesystem.setperm` →
+   `POST /api/v2.0/filesystem/setperm` returning a job id polled through
+   `GET /api/v2.0/core/get_jobs`. If the appliance answers a different path, the mapping in
+   `internal/truenas/core/route.go` is what needs correcting — nothing else.
+5. **Query filtering.** The driver filters query results **client-side** rather than trusting
+   CORE's query parameters, so an ignored filter cannot return the wrong object. A query
+   returning nothing when the object exists means the field name or its value differs on
+   CORE, not that the filter was dropped.
+
+**Fix.** Report the failing operation with the request and the appliance's raw response.
+Until CORE is validated on real hardware, run it against a scratch pool only.
+
+---
+
 ## A StorageClass names a backend that does not exist
 
 **Symptom.** Provisioning fails immediately with `InvalidArgument`, naming the backend and

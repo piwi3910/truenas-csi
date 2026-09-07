@@ -27,7 +27,7 @@ func (s stubBackend) PublishContext(context.Context, volume.ID) (map[string]stri
 }
 
 func init() {
-	Register("stub", func(*truenas.Client, string, string) Backend { return stubBackend{"stub"} })
+	Register("stub", func(truenas.API, string, string) Backend { return stubBackend{"stub"} })
 }
 
 func cfgWith(t *testing.T, endpoints map[string]string) *config.Config {

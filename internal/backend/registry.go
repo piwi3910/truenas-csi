@@ -8,6 +8,7 @@ import (
 	"github.com/piwi3910/truenas-csi/internal/config"
 	"github.com/piwi3910/truenas-csi/internal/obs"
 	"github.com/piwi3910/truenas-csi/internal/truenas"
+	"github.com/piwi3910/truenas-csi/internal/truenas/core"
 )
 
 // Registry holds one connection per configured appliance.
@@ -18,7 +19,7 @@ type Registry struct {
 	cfg *config.Config
 
 	mu      sync.Mutex
-	clients map[string]*truenas.Client
+	clients map[string]truenas.API
 	dialing map[string]*sync.Mutex
 }
 
@@ -27,12 +28,24 @@ func NewRegistry(_ context.Context, cfg *config.Config) (*Registry, error) {
 	if cfg == nil || len(cfg.Backends) == 0 {
 		return nil, fmt.Errorf("no backends configured")
 	}
-	r := &Registry{cfg: cfg, clients: map[string]*truenas.Client{}, dialing: map[string]*sync.Mutex{}}
+	r := &Registry{cfg: cfg, clients: map[string]truenas.API{}, dialing: map[string]*sync.Mutex{}}
 	for name := range cfg.Backends {
 		r.dialing[name] = &sync.Mutex{}
 		obs.SetBackendUp(name, false)
 	}
 	return r, nil
+}
+
+// dial opens the client the backend's flavour calls for.
+//
+// This is the ONLY place in the driver that knows a CORE appliance exists.
+// Everything above it holds a truenas.API and cannot tell the two apart, which
+// is what keeps CORE from leaking flavour checks through the provisioning code.
+func dial(ctx context.Context, b config.Backend) (truenas.API, error) {
+	if b.NormalisedFlavour() == config.FlavourCORE {
+		return core.Dial(ctx, b)
+	}
+	return truenas.Dial(ctx, b)
 }
 
 // Names lists the configured appliances.
@@ -57,7 +70,7 @@ func (r *Registry) Backend(name string) (config.Backend, error) {
 //
 // Each appliance has its own dial lock so a slow or dead one blocks only calls
 // destined for it.
-func (r *Registry) Client(ctx context.Context, name string) (*truenas.Client, error) {
+func (r *Registry) Client(ctx context.Context, name string) (truenas.API, error) {
 	cfgB, err := r.Backend(name)
 	if err != nil {
 		return nil, err
@@ -81,7 +94,7 @@ func (r *Registry) Client(ctx context.Context, name string) (*truenas.Client, er
 	}
 	r.mu.Unlock()
 
-	c, err := truenas.Dial(ctx, cfgB)
+	c, err := dial(ctx, cfgB)
 	if err != nil {
 		obs.SetBackendUp(name, false)
 		return nil, fmt.Errorf("backend %q: %w", name, err)

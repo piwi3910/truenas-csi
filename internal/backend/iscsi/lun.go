@@ -68,7 +68,7 @@ func reservations(targetID int) map[int]bool {
 // Caching it would be faster and wrong: a controller restart would begin again
 // at 0 and map a new volume onto a LUN another volume already occupies, which
 // the initiator sees as the old device's contents changing underneath it.
-func allocateLUN(ctx context.Context, c *truenas.Client, targetID int) (int, error) {
+func allocateLUN(ctx context.Context, c truenas.API, targetID int) (int, error) {
 	l := lunLock(targetID)
 	l.Lock()
 	defer l.Unlock()

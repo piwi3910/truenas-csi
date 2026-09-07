@@ -78,7 +78,7 @@ func (r *Registry) DeleteSnapshot(ctx context.Context, id string) error {
 }
 
 // dependentClones finds datasets whose origin is this snapshot.
-func (r *Registry) dependentClones(ctx context.Context, c *truenas.Client, snapID string) ([]string, error) {
+func (r *Registry) dependentClones(ctx context.Context, c truenas.API, snapID string) ([]string, error) {
 	pool := snapID
 	if i := strings.Index(pool, "/"); i > 0 {
 		pool = pool[:i]

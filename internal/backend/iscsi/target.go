@@ -114,7 +114,7 @@ type rawInitiator struct {
 // An operator who set portalID has already configured the network layout; the
 // driver uses that id and issues no create at all, because binding a second
 // listener behind their back is not the driver's call to make.
-func ensurePortal(ctx context.Context, c *truenas.Client, p Params) (int, error) {
+func ensurePortal(ctx context.Context, c truenas.API, p Params) (int, error) {
 	if p.PortalID > 0 {
 		return p.PortalID, nil
 	}
@@ -140,7 +140,7 @@ func ensurePortal(ctx context.Context, c *truenas.Client, p Params) (int, error)
 	return po.ID, nil
 }
 
-func findPortal(ctx context.Context, c *truenas.Client) (int, error) {
+func findPortal(ctx context.Context, c truenas.API) (int, error) {
 	portals, err := listPortals(ctx, c)
 	if err != nil {
 		return 0, err
@@ -153,7 +153,7 @@ func findPortal(ctx context.Context, c *truenas.Client) (int, error) {
 	return 0, nil
 }
 
-func listPortals(ctx context.Context, c *truenas.Client) ([]rawPortal, error) {
+func listPortals(ctx context.Context, c truenas.API) ([]rawPortal, error) {
 	var out []rawPortal
 	if err := c.CallJSON(ctx, &out, "iscsi.portal.query"); err != nil {
 		return nil, fmt.Errorf("querying iSCSI portals: %w", err)
@@ -165,7 +165,7 @@ func listPortals(ctx context.Context, c *truenas.Client) ([]rawPortal, error) {
 // creating it on first use. The secret is generated here and stored only on the
 // appliance: the node plugin reads it back from iscsi.auth, so no Kubernetes
 // Secret carries it and no operator has to invent one.
-func ensureCHAP(ctx context.Context, c *truenas.Client, target string) (*rawAuth, error) {
+func ensureCHAP(ctx context.Context, c truenas.API, target string) (*rawAuth, error) {
 	user := chapUser(target)
 	if a, err := findAuth(ctx, c, user); err != nil || a != nil {
 		return a, err
@@ -195,7 +195,7 @@ func ensureCHAP(ctx context.Context, c *truenas.Client, target string) (*rawAuth
 	return &created, nil
 }
 
-func findAuth(ctx context.Context, c *truenas.Client, user string) (*rawAuth, error) {
+func findAuth(ctx context.Context, c truenas.API, user string) (*rawAuth, error) {
 	var out []rawAuth
 	if err := c.CallJSON(ctx, &out, "iscsi.auth.query",
 		[]any{[]any{"user", "=", user}}, map[string]any{}); err != nil {
@@ -211,7 +211,7 @@ func findAuth(ctx context.Context, c *truenas.Client, user string) (*rawAuth, er
 	return &out[0], nil
 }
 
-func nextAuthTag(ctx context.Context, c *truenas.Client) (int, error) {
+func nextAuthTag(ctx context.Context, c truenas.API) (int, error) {
 	var out []rawAuth
 	if err := c.CallJSON(ctx, &out, "iscsi.auth.query"); err != nil && !truenas.IsNotFound(err) {
 		return 0, fmt.Errorf("querying CHAP credentials: %w", err)
@@ -254,7 +254,7 @@ func generateSecret() (string, error) {
 // never created: on TrueNAS an initiator group with no members denies every
 // initiator, so writing one when no node IQNs are known would take the whole
 // backend offline rather than leave it open.
-func ensureInitiatorGroup(ctx context.Context, c *truenas.Client, p Params) (int, error) {
+func ensureInitiatorGroup(ctx context.Context, c truenas.API, p Params) (int, error) {
 	if !p.InitiatorACL || len(p.NodeIQNs) == 0 {
 		return 0, nil
 	}
@@ -301,7 +301,7 @@ func missingIQNs(have, want []string) []string {
 	return out
 }
 
-func findInitiatorGroup(ctx context.Context, c *truenas.Client) (*rawInitiator, error) {
+func findInitiatorGroup(ctx context.Context, c truenas.API) (*rawInitiator, error) {
 	var out []rawInitiator
 	if err := c.CallJSON(ctx, &out, "iscsi.initiator.query",
 		[]any{[]any{"comment", "=", initiatorComment}}, map[string]any{}); err != nil {
@@ -322,7 +322,7 @@ func findInitiatorGroup(ctx context.Context, c *truenas.Client) (*rawInitiator, 
 // Every step is query-then-act and a create that loses a race is resolved by
 // re-querying, because CreateVolume is retried freely and two controllers'
 // worth of retries must converge on one target rather than fail.
-func ensureTarget(ctx context.Context, c *truenas.Client, p Params) (int, string, error) {
+func ensureTarget(ctx context.Context, c truenas.API, p Params) (int, string, error) {
 	name := targetName(p.Pool, p.Parent)
 
 	l := targetLock(name)
@@ -390,7 +390,7 @@ func ensureTarget(ctx context.Context, c *truenas.Client, p Params) (int, string
 
 // targetIQN is <basename>:<target name>, which is the form an initiator logs in
 // with. The basename comes from the appliance, never from a guess.
-func targetIQN(ctx context.Context, c *truenas.Client, name string) (string, error) {
+func targetIQN(ctx context.Context, c truenas.API, name string) (string, error) {
 	g, err := c.ISCSIGlobalConfig(ctx)
 	if err != nil {
 		return "", fmt.Errorf("reading iSCSI global config: %w", err)
@@ -399,7 +399,7 @@ func targetIQN(ctx context.Context, c *truenas.Client, name string) (string, err
 }
 
 // portalAddress renders "<ip>:<port>" for the portal the target is bound to.
-func portalAddress(ctx context.Context, c *truenas.Client, portalID int) (string, error) {
+func portalAddress(ctx context.Context, c truenas.API, portalID int) (string, error) {
 	portals, err := listPortals(ctx, c)
 	if err != nil {
 		return "", err
@@ -433,7 +433,7 @@ func portalAddress(ctx context.Context, c *truenas.Client, portalID int) (string
 }
 
 // queryTarget reads the target with its groups, which the typed client omits.
-func queryTarget(ctx context.Context, c *truenas.Client, name string) (*rawTarget, error) {
+func queryTarget(ctx context.Context, c truenas.API, name string) (*rawTarget, error) {
 	var out []rawTarget
 	if err := c.CallJSON(ctx, &out, "iscsi.target.query",
 		[]any{[]any{"name", "=", name}}, map[string]any{}); err != nil {

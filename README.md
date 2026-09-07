@@ -2,8 +2,10 @@
 
 A Container Storage Interface driver for **TrueNAS SCALE 25.10 and newer**. It provisions
 ZFS-backed PersistentVolumes on a TrueNAS appliance and speaks the API TrueNAS actually
-supports today: **JSON-RPC 2.0 over a `wss://` websocket** at `/api/current`. There is no
-REST client and no dual-transport abstraction — the legacy REST API is deprecated upstream.
+supports today: **JSON-RPC 2.0 over a `wss://` websocket** at `/api/current`. A backend may
+instead be marked `flavour: core` to speak TrueNAS CORE's legacy REST v2 API — see
+[TrueNAS CORE](#truenas-core-implemented-but-unverified) below, and note that that path is
+UNVERIFIED against real CORE hardware.
 
 Driver name: `csi.truenas.watteel.com` (immutable once PersistentVolumes exist — changing
 it orphans every PV). Go module: `github.com/piwi3910/truenas-csi`. Licence: Apache 2.0.
@@ -36,13 +38,52 @@ _connection_ failures are retried with backoff.
 
 ---
 
+## TrueNAS CORE: implemented, but UNVERIFIED
+
+A backend may set `flavour: core` to talk to a TrueNAS CORE appliance over its legacy
+**REST v2 API** (`https://<nas>/api/v2.0`, `Authorization: Bearer <apikey>`) instead of
+SCALE's JSON-RPC websocket. `flavour: scale` is the default and is unchanged.
+
+**This path has never run against a real CORE appliance.** No CORE hardware was available.
+The request routing and payload shapes follow the documented REST v2 conventions and are
+exercised only against a recorded in-process fake
+(`internal/truenas/core/fake`). Everything above the transport — dataset, snapshot, share
+and iSCSI logic — is the SAME code SCALE uses, and a parity test drives both clients
+through identical operations and asserts identical results, so the two cannot drift in
+behaviour. What is unproven is narrower but real: whether a CORE box answers these paths,
+verbs and payloads the way the documentation says.
+
+Treat CORE as **experimental**. Run it against a scratch pool first, and read the CORE
+section of [docs/troubleshooting.md](docs/troubleshooting.md) before reporting a bug.
+
+```yaml
+backends:
+  nas-core:
+    flavour: core
+    endpoint: https://nas-core.example.com/api/v2.0 # https:// only — see below
+    username: root
+    apiKey: "1-abcdef..."
+    pool: tank
+    parentDataset: tank/k8s
+```
+
+**HTTPS is as mandatory for CORE as `wss://` is for SCALE.** The credential-revocation rule
+is a property of the API key, not of the transport, so the driver refuses a `http://`
+endpoint at config validation for exactly the same reason — and a 401 from CORE is
+terminal and never retried, so a rejected key is presented once and only once.
+
+The flavour is validated as a closed set: anything other than `scale` or `core` fails at
+startup rather than silently defaulting.
+
+---
+
 ## Requirements
 
 | Component    | Requirement                                                                               |
 | ------------ | ----------------------------------------------------------------------------------------- |
 | Kubernetes   | 1.31 or newer (validated on k3s 1.34)                                                     |
-| TrueNAS      | SCALE 25.10 or newer. TrueNAS CORE is not supported                                       |
-| Transport    | `wss://` to the appliance's `/api/current` endpoint                                       |
+| TrueNAS      | SCALE 25.10 or newer. CORE via `flavour: core` is experimental and UNVERIFIED             |
+| Transport    | `wss://` to `/api/current` (SCALE), or `https://` to `/api/v2.0` (CORE)                   |
 | Credentials  | A TrueNAS account with the documented 14 roles — see [docs/security.md](docs/security.md) |
 | Architecture | arm64 is the primary and validated architecture; amd64 images are built too               |
 | Snapshots    | The external-snapshotter CRDs and controller, installed cluster-wide (see below)          |

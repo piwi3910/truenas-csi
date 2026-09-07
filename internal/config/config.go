@@ -17,6 +17,16 @@ type Backend struct {
 	Pool          string `yaml:"pool"`
 	ParentDataset string `yaml:"parentDataset"`
 
+	// Flavour selects which TrueNAS API this appliance speaks: "scale"
+	// (default) for the JSON-RPC websocket middleware, or "core" for the
+	// legacy REST v2 API. It also decides which transport is demanded of the
+	// endpoint — wss:// for SCALE, https:// for CORE.
+	//
+	// CORE support is implemented against the documented REST shapes and
+	// exercised only against a recorded fake; it is UNVERIFIED on real CORE
+	// hardware. See README.md and docs/troubleshooting.md.
+	Flavour string `yaml:"flavour"`
+
 	// CACert, when set, is the only certificate trusted for this appliance.
 	CACert []byte `yaml:"caCert"`
 	// InsecureSkipVerify disables certificate verification. A stock TrueNAS
@@ -31,8 +41,8 @@ func (b Backend) String() string {
 	if b.APIKey == "" {
 		key = "[unset]"
 	}
-	return fmt.Sprintf("Backend{Name:%s Endpoint:%s Username:%s APIKey:%s Pool:%s ParentDataset:%s InsecureSkipVerify:%t}",
-		b.Name, b.Endpoint, b.Username, key, b.Pool, b.ParentDataset, b.InsecureSkipVerify)
+	return fmt.Sprintf("Backend{Name:%s Flavour:%s Endpoint:%s Username:%s APIKey:%s Pool:%s ParentDataset:%s InsecureSkipVerify:%t}",
+		b.Name, b.NormalisedFlavour(), b.Endpoint, b.Username, key, b.Pool, b.ParentDataset, b.InsecureSkipVerify)
 }
 
 // Config is the whole driver configuration.
