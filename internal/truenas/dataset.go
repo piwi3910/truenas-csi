@@ -149,6 +149,23 @@ func (c *Client) SnapshotCreate(ctx context.Context, dataset, name string) (*Sna
 	return &s, nil
 }
 
+// SnapshotCreateRecursive snapshots a dataset and every dataset beneath it in
+// one call.
+//
+// This is the only crash-consistent primitive ZFS offers across several
+// datasets: the recursive snapshot is taken in a single transaction group, so
+// every child is captured at the same instant. Looping over the children with
+// SnapshotCreate would produce as many transaction groups as datasets and
+// therefore no consistency guarantee at all.
+func (c *Client) SnapshotCreateRecursive(ctx context.Context, dataset, name string) (*Snapshot, error) {
+	var s Snapshot
+	if err := c.CallJSON(ctx, &s, "pool.snapshot.create",
+		map[string]any{"dataset": dataset, "name": name, "recursive": true}); err != nil {
+		return nil, err
+	}
+	return &s, nil
+}
+
 // SnapshotQuery returns a snapshot, or (nil, nil) when absent.
 func (c *Client) SnapshotQuery(ctx context.Context, id string) (*Snapshot, error) {
 	var out []Snapshot

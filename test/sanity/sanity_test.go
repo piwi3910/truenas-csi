@@ -269,7 +269,8 @@ func TestCSISanity(t *testing.T) {
 	delete(pf.Missing, node.CapExt4)
 
 	srv, err := server.New("unix://"+sock, csi.NewIdentity(nil),
-		csi.NewController(reg, cfg), csi.NewNode(node.NewNode(cfg.NodeID, pf, exec)))
+		csi.NewController(reg, cfg), csi.NewGroupController(reg, cfg),
+		csi.NewNode(node.NewNode(cfg.NodeID, pf, exec)))
 	if err != nil {
 		t.Fatal(err)
 	}

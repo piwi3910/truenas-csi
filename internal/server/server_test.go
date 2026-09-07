@@ -44,7 +44,7 @@ func dial(t *testing.T, path string) *grpc.ClientConn {
 
 func TestServerServesIdentityOverUnixSocket(t *testing.T) {
 	sock := sockPath(t)
-	s, err := New("unix://"+sock, csi.NewIdentity(nil), nil, nil)
+	s, err := New("unix://"+sock, csi.NewIdentity(nil), nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func TestServerRemovesStaleSocket(t *testing.T) {
 	if err := os.WriteFile(sock, []byte("stale"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	s, err := New("unix://"+sock, csi.NewIdentity(nil), nil, nil)
+	s, err := New("unix://"+sock, csi.NewIdentity(nil), nil, nil, nil)
 	if err != nil {
 		t.Fatalf("a leftover socket file must not stop the plugin starting: %v", err)
 	}
@@ -102,7 +102,7 @@ func (b *blockingController) CreateVolume(context.Context, *csipb.CreateVolumeRe
 func TestGracefulShutdownDrainsInFlight(t *testing.T) {
 	sock := sockPath(t)
 	bc := &blockingController{entered: make(chan struct{}), release: make(chan struct{})}
-	s, err := New("unix://"+sock, csi.NewIdentity(nil), bc, nil)
+	s, err := New("unix://"+sock, csi.NewIdentity(nil), bc, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +160,7 @@ func TestUnaryInterceptorRecordsMetricsAndRedacts(t *testing.T) {
 	obs.Register(secret)
 
 	sock := sockPath(t)
-	s, err := New("unix://"+sock, csi.NewIdentity(nil), &erroringController{secret: secret}, nil)
+	s, err := New("unix://"+sock, csi.NewIdentity(nil), &erroringController{secret: secret}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

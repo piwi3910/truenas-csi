@@ -26,8 +26,8 @@ type Server struct {
 	lis      net.Listener
 }
 
-// New builds a server. Any of the three services may be nil.
-func New(endpoint string, id csipb.IdentityServer, ctrl csipb.ControllerServer, nd csipb.NodeServer) (*Server, error) {
+// New builds a server. Any of the four services may be nil.
+func New(endpoint string, id csipb.IdentityServer, ctrl csipb.ControllerServer, gc csipb.GroupControllerServer, nd csipb.NodeServer) (*Server, error) {
 	path := strings.TrimPrefix(endpoint, "unix://")
 	if path == "" {
 		return nil, fmt.Errorf("endpoint must be a unix socket path, got %q", endpoint)
@@ -47,6 +47,9 @@ func New(endpoint string, id csipb.IdentityServer, ctrl csipb.ControllerServer, 
 	}
 	if ctrl != nil {
 		csipb.RegisterControllerServer(g, ctrl)
+	}
+	if gc != nil {
+		csipb.RegisterGroupControllerServer(g, gc)
 	}
 	if nd != nil {
 		csipb.RegisterNodeServer(g, nd)

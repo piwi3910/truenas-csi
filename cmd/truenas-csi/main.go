@@ -93,6 +93,7 @@ func run(mode, endpoint, configPath, nodeID, hostRoot string) error {
 		ctrl csipb.ControllerServer
 		nd   csipb.NodeServer
 		reg  *backend.Registry
+		gc   csipb.GroupControllerServer
 	)
 
 	switch mode {
@@ -103,6 +104,9 @@ func run(mode, endpoint, configPath, nodeID, hostRoot string) error {
 		}
 		defer reg.Close()
 		ctrl = csi.NewController(reg, cfg)
+		// Group snapshots are a controller-side capability: the node plugin has
+		// no part in them.
+		gc = csi.NewGroupController(reg, cfg)
 
 		// The orphan reconciler reports appliance objects with no
 		// PersistentVolume. It never deletes; an apparent orphan is more often
@@ -133,7 +137,7 @@ func run(mode, endpoint, configPath, nodeID, hostRoot string) error {
 		obs.MarkReady()
 	}
 
-	srv, err := server.New(endpoint, csi.NewIdentity(func() bool { return true }), ctrl, nd)
+	srv, err := server.New(endpoint, csi.NewIdentity(func() bool { return true }), ctrl, gc, nd)
 	if err != nil {
 		return err
 	}
