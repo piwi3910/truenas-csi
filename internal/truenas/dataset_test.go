@@ -147,3 +147,41 @@ func TestSetPermTimesOut(t *testing.T) {
 		t.Fatalf("took %s to give up", time.Since(start))
 	}
 }
+
+// TestSizeFieldAcceptsBothShapes pins a difference the live appliance revealed:
+// pool.query returns plain integers for size and free, while
+// pool.dataset.query wraps them in {"parsed": N}. Handling only the wrapper
+// made every pool report 0 bytes free, which would make the scheduler treat a
+// healthy 44 TB pool as full and leave every claim Pending.
+func TestSizeFieldAcceptsBothShapes(t *testing.T) {
+	var wrapped struct {
+		Free sizeField `json:"free"`
+	}
+	if err := json.Unmarshal([]byte(`{"free":{"parsed":44861949222912}}`), &wrapped); err != nil {
+		t.Fatal(err)
+	}
+	if wrapped.Free.Parsed != 44861949222912 {
+		t.Errorf("wrapped shape decoded as %d", wrapped.Free.Parsed)
+	}
+
+	var plain struct {
+		Free sizeField `json:"free"`
+	}
+	if err := json.Unmarshal([]byte(`{"free":44861949222912}`), &plain); err != nil {
+		t.Fatal(err)
+	}
+	if plain.Free.Parsed != 44861949222912 {
+		t.Errorf("plain integer shape decoded as %d — pool.query returns this form",
+			plain.Free.Parsed)
+	}
+
+	var null struct {
+		Free sizeField `json:"free"`
+	}
+	if err := json.Unmarshal([]byte(`{"free":null}`), &null); err != nil {
+		t.Fatal(err)
+	}
+	if null.Free.Parsed != 0 {
+		t.Errorf("null should decode as 0, got %d", null.Free.Parsed)
+	}
+}

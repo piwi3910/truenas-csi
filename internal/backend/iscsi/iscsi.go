@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pwatteel/truenas-csi/internal/backend"
 	"github.com/pwatteel/truenas-csi/internal/obs"
@@ -372,11 +373,57 @@ func (b *iscsiBackend) Delete(ctx context.Context, id volume.ID) error {
 	if ds == nil {
 		return nil // already gone: DeleteVolume is idempotent by contract
 	}
-	if err := b.c.DatasetDelete(ctx, dsPath, true, true); err != nil {
+	if err := deleteZvolWhenReleased(ctx, b.c, dsPath); err != nil {
 		return fmt.Errorf("deleting zvol %s: %w", dsPath, err)
 	}
 	obs.Logger(ctx).Info("deleted iSCSI volume", "dataset", dsPath)
 	return nil
+}
+
+// zvolReleaseTimeout bounds how long a delete waits for the kernel to let go.
+var zvolReleaseTimeout = 30 * time.Second
+
+// deleteZvolWhenReleased retries a zvol delete while the appliance reports EBUSY.
+//
+// Removing an extent does not immediately release the underlying zvol: the
+// kernel target keeps the device open for a moment afterwards, and a delete
+// issued in that window fails with "dataset is busy". Observed against a real
+// appliance, where the very next attempt succeeds. Retrying is correct here
+// precisely because the object is ours and already unpublished; giving up would
+// leak a zvol on every iSCSI volume deletion.
+func deleteZvolWhenReleased(ctx context.Context, c *truenas.Client, dsPath string) error {
+	deadline := time.Now().Add(zvolReleaseTimeout)
+	delay := 200 * time.Millisecond
+	for {
+		err := c.DatasetDelete(ctx, dsPath, true, true)
+		if err == nil {
+			return nil
+		}
+		if !isBusy(err) || time.Now().After(deadline) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(delay):
+		}
+		if delay < 2*time.Second {
+			delay *= 2
+		}
+	}
+}
+
+// isBusy reports whether the appliance refused because the dataset is still in
+// use. errname is unreliable, so the reason text is consulted as well.
+func isBusy(err error) bool {
+	var ce *truenas.CallError
+	if errors.As(err, &ce) {
+		if ce.ErrName == "EBUSY" || strings.Contains(ce.Reason, "dataset is busy") {
+			return true
+		}
+	}
+	return strings.Contains(err.Error(), "EBUSY") ||
+		strings.Contains(err.Error(), "dataset is busy")
 }
 
 // verifyOwned adapts the middleware's dataset to the ownership guard, which

@@ -54,6 +54,22 @@ func readStageRecord(stagingPath string) map[string]string {
 	return pc
 }
 
+// mergeCtx combines the volume context with the publish context.
+//
+// This driver has no ControllerPublishVolume step, so everything the node needs
+// travels in the volume context; the publish context is still honoured when a
+// CO supplies one, and wins on conflict because it is the fresher value.
+func mergeCtx(volumeCtx, publishCtx map[string]string) map[string]string {
+	out := make(map[string]string, len(volumeCtx)+len(publishCtx))
+	for k, v := range volumeCtx {
+		out[k] = v
+	}
+	for k, v := range publishCtx {
+		out[k] = v
+	}
+	return out
+}
+
 func capOf(c *csipb.VolumeCapability) node.VolumeCapability {
 	out := node.VolumeCapability{}
 	if c == nil {
@@ -125,7 +141,7 @@ func (s *nodeServer) NodeStageVolume(ctx context.Context, req *csipb.NodeStageVo
 	if err := s.n.Stage(ctx, node.StageRequest{
 		VolumeID:         req.GetVolumeId(),
 		StagingPath:      req.GetStagingTargetPath(),
-		PublishContext:   req.GetPublishContext(),
+		PublishContext:   mergeCtx(req.GetVolumeContext(), req.GetPublishContext()),
 		VolumeCapability: capOf(req.GetVolumeCapability()),
 		Secrets:          req.GetSecrets(),
 	}); err != nil {
@@ -133,7 +149,8 @@ func (s *nodeServer) NodeStageVolume(ctx context.Context, req *csipb.NodeStageVo
 	}
 	// Remember how to detach. A failure here is not fatal to the mount, but it
 	// does mean unstage may not be able to log out, so it is logged loudly.
-	if err := writeStageRecord(req.GetStagingTargetPath(), req.GetPublishContext()); err != nil {
+	if err := writeStageRecord(req.GetStagingTargetPath(),
+		mergeCtx(req.GetVolumeContext(), req.GetPublishContext())); err != nil {
 		obs.Logger(ctx).Warn("could not record publish context for unstage; "+
 			"the iscsi session may have to be cleaned up by hand",
 			"error", obs.Redact(err.Error()))
@@ -168,8 +185,11 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csipb.NodePubli
 	if req.GetVolumeId() == "" || req.GetTargetPath() == "" {
 		return nil, status.Error(codes.InvalidArgument, "volume id and target path are required")
 	}
+	if req.GetVolumeCapability() == nil {
+		return nil, status.Error(codes.InvalidArgument, "volume capability is required")
+	}
 	ctx = obs.WithVolume(ctx, req.GetVolumeId())
-	pc := req.GetPublishContext()
+	pc := mergeCtx(req.GetVolumeContext(), req.GetPublishContext())
 	if len(pc) == 0 {
 		pc = readStageRecord(req.GetStagingTargetPath())
 	}
@@ -182,6 +202,12 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csipb.NodePubli
 		Readonly:         req.GetReadonly(),
 	}); err != nil {
 		return nil, nodeErr(err)
+	}
+	// Also record it against the target path: NodeExpandVolume is called with
+	// the published volume path and may carry no staging path at all.
+	if err := writeStageRecord(req.GetTargetPath(), pc); err != nil {
+		obs.Logger(ctx).Warn("could not record publish context at the target path",
+			"error", obs.Redact(err.Error()))
 	}
 	return &csipb.NodePublishVolumeResponse{}, nil
 }
@@ -199,6 +225,7 @@ func (s *nodeServer) NodeUnpublishVolume(ctx context.Context, req *csipb.NodeUnp
 	}); err != nil {
 		return nil, nodeErr(err)
 	}
+	_ = os.Remove(stageRecordPath(req.GetTargetPath()))
 	return &csipb.NodeUnpublishVolumeResponse{}, nil
 }
 
@@ -210,8 +237,15 @@ func (s *nodeServer) NodeExpandVolume(ctx context.Context, req *csipb.NodeExpand
 		return nil, status.Error(codes.InvalidArgument, "volume id and volume path are required")
 	}
 	ctx = obs.WithVolume(ctx, req.GetVolumeId())
+	if _, statErr := os.Stat(req.GetVolumePath()); statErr != nil {
+		return nil, status.Errorf(codes.NotFound,
+			"volume path %s does not exist on this node", req.GetVolumePath())
+	}
 	staging := req.GetStagingTargetPath()
 	pc := readStageRecord(staging)
+	if len(pc) == 0 {
+		pc = readStageRecord(req.GetVolumePath())
+	}
 	out, err := s.n.Expand(ctx, node.ExpandRequest{
 		VolumeID:         req.GetVolumeId(),
 		VolumePath:       req.GetVolumePath(),
@@ -232,6 +266,10 @@ func (s *nodeServer) NodeGetVolumeStats(ctx context.Context, req *csipb.NodeGetV
 
 	if req.GetVolumeId() == "" || req.GetVolumePath() == "" {
 		return nil, status.Error(codes.InvalidArgument, "volume id and volume path are required")
+	}
+	if _, statErr := os.Stat(req.GetVolumePath()); statErr != nil {
+		return nil, status.Errorf(codes.NotFound,
+			"volume path %s does not exist on this node", req.GetVolumePath())
 	}
 	out, err := s.n.Stats(ctx, node.StatsRequest{
 		VolumeID: req.GetVolumeId(), VolumePath: req.GetVolumePath()})

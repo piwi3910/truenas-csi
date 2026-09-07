@@ -2,7 +2,9 @@ package csi
 
 import (
 	"context"
+	"errors"
 	"sort"
+	"strings"
 	"time"
 
 	csipb "github.com/container-storage-interface/spec/lib/go/csi"
@@ -11,6 +13,7 @@ import (
 	"github.com/pwatteel/truenas-csi/internal/volume"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // GetCapacity reports the real free space of the pool behind a StorageClass, so
@@ -92,11 +95,18 @@ func (c *controller) ListVolumes(ctx context.Context, req *csipb.ListVolumesRequ
 	sort.Slice(all, func(i, j int) bool { return all[i].id < all[j].id })
 
 	startIdx := 0
-	if t := req.GetStartingToken(); t != "" {
-		startIdx = sort.SearchStrings(idsOf(all), t)
-		if startIdx >= len(all) || all[startIdx].id != t {
-			return nil, status.Errorf(codes.Aborted, "invalid starting_token %q", t)
+	if tok := req.GetStartingToken(); tok != "" {
+		found := -1
+		for i, e := range all {
+			if e.id == tok {
+				found = i
+				break
+			}
 		}
+		if found < 0 {
+			return nil, status.Errorf(codes.Aborted, "invalid starting_token %q", tok)
+		}
+		startIdx = found
 	}
 	max := int(req.GetMaxEntries())
 	if max <= 0 || startIdx+max > len(all) {
@@ -121,10 +131,117 @@ type volEntry struct {
 	size int64
 }
 
-func idsOf(es []volEntry) []string {
-	out := make([]string, len(es))
-	for i, e := range es {
-		out[i] = e.id
+// ListSnapshots enumerates snapshots, honouring the spec's optional filters.
+//
+// Advertising LIST_SNAPSHOTS without implementing it makes the external
+// snapshotter's periodic reconciliation fail, so this is not optional once the
+// capability is claimed.
+func (c *controller) ListSnapshots(ctx context.Context, req *csipb.ListSnapshotsRequest) (resp *csipb.ListSnapshotsResponse, err error) {
+	start := time.Now()
+	defer func() { obs.ObserveCSI("ListSnapshots", err, time.Since(start)) }()
+
+	// A specific snapshot was asked for: return it, or nothing.
+	if id := req.GetSnapshotId(); id != "" {
+		backendName, zfsID, parseErr := backend.SnapshotSource(id)
+		if parseErr != nil {
+			return &csipb.ListSnapshotsResponse{}, nil // unknown id: empty, not an error
+		}
+		cl, clErr := c.reg.Client(ctx, backendName)
+		if clErr != nil {
+			return &csipb.ListSnapshotsResponse{}, nil
+		}
+		snap, qErr := cl.SnapshotQuery(ctx, zfsID)
+		if qErr != nil || snap == nil {
+			return &csipb.ListSnapshotsResponse{}, nil
+		}
+		return &csipb.ListSnapshotsResponse{Entries: []*csipb.ListSnapshotsResponse_Entry{
+			{Snapshot: snapshotPB(id, snap.Dataset, backendName)}}}, nil
 	}
-	return out
+
+	var all []*csipb.Snapshot
+	names := c.reg.Names()
+	sort.Strings(names)
+	for _, name := range names {
+		snaps, listErr := c.reg.ListSnapshots(ctx, name)
+		if listErr != nil {
+			obs.Logger(ctx).Warn("skipping backend while listing snapshots", "backend", name)
+			continue
+		}
+		for _, s := range snaps {
+			all = append(all, snapshotPB(s.ID, s.SourceVolumeID, name))
+		}
+	}
+
+	// Filter by source volume when asked.
+	if src := req.GetSourceVolumeId(); src != "" {
+		id, parseErr := volume.ParseID(src)
+		if parseErr != nil {
+			return &csipb.ListSnapshotsResponse{}, nil
+		}
+		want := id.DatasetPath()
+		var kept []*csipb.Snapshot
+		for _, s := range all {
+			if s.GetSourceVolumeId() == want || s.GetSourceVolumeId() == src {
+				kept = append(kept, s)
+			}
+		}
+		all = kept
+	}
+
+	sort.Slice(all, func(i, j int) bool { return all[i].GetSnapshotId() < all[j].GetSnapshotId() })
+
+	startIdx := 0
+	if tok := req.GetStartingToken(); tok != "" {
+		found := -1
+		for i, s := range all {
+			if s.GetSnapshotId() == tok {
+				found = i
+				break
+			}
+		}
+		if found < 0 {
+			return nil, status.Errorf(codes.Aborted, "invalid starting_token %q", tok)
+		}
+		startIdx = found
+	}
+	max := int(req.GetMaxEntries())
+	if max <= 0 || startIdx+max > len(all) {
+		max = len(all) - startIdx
+	}
+
+	out := &csipb.ListSnapshotsResponse{}
+	for _, s := range all[startIdx : startIdx+max] {
+		out.Entries = append(out.Entries, &csipb.ListSnapshotsResponse_Entry{Snapshot: s})
+	}
+	if next := startIdx + max; next < len(all) {
+		out.NextToken = all[next].GetSnapshotId()
+	}
+	return out, nil
+}
+
+type backendPaths struct{ pool, parent string }
+
+// csiRegistryBackend is set by NewController so snapshotPB can resolve a
+// dataset path back to a volume id without threading the registry through.
+var csiRegistryBackend = func(string) (backendPaths, error) {
+	return backendPaths{}, errNoRegistry
+}
+
+var errNoRegistry = errors.New("no registry bound")
+
+// snapshotPB builds the wire form, mapping the ZFS source dataset back to a
+// driver volume id so the CO can correlate it with a PersistentVolume.
+func snapshotPB(id, sourceDataset, backendName string) *csipb.Snapshot {
+	source := sourceDataset
+	if b, err := csiRegistryBackend(backendName); err == nil {
+		prefix := b.pool + "/" + b.parent + "/"
+		if strings.HasPrefix(sourceDataset, prefix) {
+			source = (volume.ID{Backend: backendName, Protocol: "nfs", Pool: b.pool,
+				Parent: b.parent, Name: strings.TrimPrefix(sourceDataset, prefix)}).String()
+		}
+	}
+	return &csipb.Snapshot{
+		SnapshotId: id, SourceVolumeId: source,
+		CreationTime: timestamppb.New(time.Unix(0, 0)), ReadyToUse: true,
+	}
 }

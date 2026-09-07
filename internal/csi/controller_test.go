@@ -95,6 +95,16 @@ func params() map[string]string {
 	return map[string]string{"backend": "nas1", "protocol": "counting"}
 }
 
+// testCaps is the minimum a spec-conformant CreateVolume request must carry.
+func testCaps() []*csipb.VolumeCapability {
+	return []*csipb.VolumeCapability{{
+		AccessType: &csipb.VolumeCapability_Mount{
+			Mount: &csipb.VolumeCapability_MountVolume{FsType: "ext4"}},
+		AccessMode: &csipb.VolumeCapability_AccessMode{
+			Mode: csipb.VolumeCapability_AccessMode_SINGLE_NODE_WRITER},
+	}}
+}
+
 // TestConcurrentCreateIsIdempotent is the property CSI actually demands: the
 // orchestrator retries forever, so fifty identical calls must yield one dataset.
 func TestConcurrentCreateIsIdempotent(t *testing.T) {
@@ -110,9 +120,9 @@ func TestConcurrentCreateIsIdempotent(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			resp, err := c.CreateVolume(context.Background(), &csipb.CreateVolumeRequest{
-				Name:          "pvc-same",
-				Parameters:    params(),
-				CapacityRange: &csipb.CapacityRange{RequiredBytes: 1 << 30},
+				Name:               "pvc-same",
+				Parameters:         params(),
+				VolumeCapabilities: testCaps(), CapacityRange: &csipb.CapacityRange{RequiredBytes: 1 << 30},
 			})
 			mu.Lock()
 			defer mu.Unlock()
@@ -160,7 +170,7 @@ func TestConcurrentCreateDelete(t *testing.T) {
 			defer wg.Done()
 			_, _ = c.CreateVolume(context.Background(), &csipb.CreateVolumeRequest{
 				Name: "pvc-race", Parameters: params(),
-				CapacityRange: &csipb.CapacityRange{RequiredBytes: 1 << 30}})
+				VolumeCapabilities: testCaps(), CapacityRange: &csipb.CapacityRange{RequiredBytes: 1 << 30}})
 		}()
 		go func() {
 			defer wg.Done()
@@ -213,7 +223,7 @@ func TestCreateVolumeRejectsUnconfinedID(t *testing.T) {
 	for _, name := range []string{"../../Home", "../Home", "..", ".", "a/b"} {
 		_, err := c.CreateVolume(context.Background(), &csipb.CreateVolumeRequest{
 			Name: name, Parameters: params(),
-			CapacityRange: &csipb.CapacityRange{RequiredBytes: 1 << 30}})
+			VolumeCapabilities: testCaps(), CapacityRange: &csipb.CapacityRange{RequiredBytes: 1 << 30}})
 		if status.Code(err) != codes.InvalidArgument {
 			t.Errorf("name %q: want InvalidArgument, got %v", name, err)
 		}
@@ -235,7 +245,7 @@ func TestCreateVolumeRejectsMismatchedPool(t *testing.T) {
 	p["pool"] = "OtherPool"
 	_, err := c.CreateVolume(context.Background(), &csipb.CreateVolumeRequest{
 		Name: "pvc-1", Parameters: p,
-		CapacityRange: &csipb.CapacityRange{RequiredBytes: 1 << 30}})
+		VolumeCapabilities: testCaps(), CapacityRange: &csipb.CapacityRange{RequiredBytes: 1 << 30}})
 	if status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("a storage class must not redirect the driver to another pool, got %v", err)
 	}
@@ -243,7 +253,13 @@ func TestCreateVolumeRejectsMismatchedPool(t *testing.T) {
 
 func TestValidateVolumeCapabilitiesRejectsRWXOnISCSI(t *testing.T) {
 	shared = newCounting()
-	c, _ := ctlWith(t)
+	c, s := ctlWith(t)
+	// The call now confirms the volume exists before judging its capabilities,
+	// so the fake must answer for it.
+	s.HandleValue("pool.dataset.query", []any{map[string]any{
+		"id": "Pool0/k8s/pvc-1", "type": "VOLUME",
+		"volsize": map[string]any{"parsed": 1 << 30},
+	}})
 	resp, err := c.ValidateVolumeCapabilities(context.Background(), &csipb.ValidateVolumeCapabilitiesRequest{
 		VolumeId: "nas1/iscsi/Pool0/k8s/pvc-1",
 		VolumeCapabilities: []*csipb.VolumeCapability{{

@@ -25,6 +25,13 @@ type controller struct {
 
 // NewController builds the Controller service.
 func NewController(reg *backend.Registry, cfg *config.Config) csipb.ControllerServer {
+	csiRegistryBackend = func(name string) (backendPaths, error) {
+		b, err := reg.Backend(name)
+		if err != nil {
+			return backendPaths{}, err
+		}
+		return backendPaths{pool: b.Pool, parent: b.ParentDataset}, nil
+	}
 	return &controller{reg: reg, cfg: cfg, locks: NewVolumeLocks()}
 }
 
@@ -35,7 +42,6 @@ func (c *controller) ControllerGetCapabilities(context.Context, *csipb.Controlle
 	}
 	return &csipb.ControllerGetCapabilitiesResponse{Capabilities: []*csipb.ControllerServiceCapability{
 		rpc(csipb.ControllerServiceCapability_RPC_CREATE_DELETE_VOLUME),
-		rpc(csipb.ControllerServiceCapability_RPC_PUBLISH_UNPUBLISH_VOLUME),
 		rpc(csipb.ControllerServiceCapability_RPC_CREATE_DELETE_SNAPSHOT),
 		rpc(csipb.ControllerServiceCapability_RPC_LIST_SNAPSHOTS),
 		rpc(csipb.ControllerServiceCapability_RPC_LIST_VOLUMES),
@@ -95,6 +101,9 @@ func (c *controller) CreateVolume(ctx context.Context, req *csipb.CreateVolumeRe
 	if req.GetName() == "" {
 		return nil, status.Error(codes.InvalidArgument, "volume name is required")
 	}
+	if len(req.GetVolumeCapabilities()) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "volume capabilities are required")
+	}
 	id, err := c.resolveID(req.GetName(), req.GetParameters())
 	if err != nil {
 		return nil, err
@@ -119,10 +128,41 @@ func (c *controller) CreateVolume(ctx context.Context, req *csipb.CreateVolumeRe
 	cr := backend.CreateRequest{ID: id, CapacityBytes: size, Params: req.GetParameters()}
 	if src := req.GetVolumeContentSource(); src != nil {
 		if s := src.GetSnapshot(); s != nil {
-			cr.SourceSnapshot = s.GetSnapshotId()
+			if err := c.requireSnapshotExists(ctx, s.GetSnapshotId()); err != nil {
+				return nil, err
+			}
+			srcBackend, zfsID, sErr := backend.SnapshotSource(s.GetSnapshotId())
+			if sErr != nil {
+				return nil, status.Errorf(codes.NotFound, "snapshot %q not found", s.GetSnapshotId())
+			}
+			if srcBackend != id.Backend {
+				return nil, status.Errorf(codes.InvalidArgument,
+					"snapshot %q lives on backend %q but the volume would be created on %q",
+					s.GetSnapshotId(), srcBackend, id.Backend)
+			}
+			// The backend talks to ZFS, which knows nothing of the backend
+			// prefix the CSI id carries.
+			cr.SourceSnapshot = zfsID
 		} else if v := src.GetVolume(); v != nil {
-			return nil, status.Error(codes.Unimplemented,
-				"cloning directly from a volume is not supported; snapshot it first")
+			// Cloning a volume is a snapshot plus a clone. The intermediate
+			// snapshot is named after the new volume so a retry finds it again
+			// rather than making a second one.
+			srcID, perr := volume.ParseID(v.GetVolumeId())
+			if perr != nil {
+				return nil, status.Errorf(codes.NotFound, "source volume %q not found", v.GetVolumeId())
+			}
+			if err := c.requireVolumeExists(ctx, srcID); err != nil {
+				return nil, err
+			}
+			snap, serr := c.reg.CreateSnapshot(ctx, srcID, "csi-clone-"+sanitiseSnapshotName(req.GetName()))
+			if serr != nil {
+				return nil, toStatus(serr)
+			}
+			_, zfsID, sErr := backend.SnapshotSource(snap.ID)
+			if sErr != nil {
+				return nil, toStatus(sErr)
+			}
+			cr.SourceSnapshot = zfsID
 		}
 	}
 
@@ -132,10 +172,21 @@ func (c *controller) CreateVolume(ctx context.Context, req *csipb.CreateVolumeRe
 	}
 	obs.Logger(ctx).Info("volume created", "capacity", vol.CapacityBytes, "protocol", id.Protocol)
 
+	// Without a ControllerPublishVolume step the node receives everything it
+	// needs through the volume context, so the publish context is merged in here.
+	vctx := map[string]string{}
+	for k, v := range vol.Context {
+		vctx[k] = v
+	}
+	if pc, pcErr := b.PublishContext(ctx, vol.ID); pcErr == nil {
+		for k, v := range pc {
+			vctx[k] = v
+		}
+	}
 	out := &csipb.Volume{
 		VolumeId:      vol.ID.String(),
 		CapacityBytes: vol.CapacityBytes,
-		VolumeContext: vol.Context,
+		VolumeContext: vctx,
 	}
 	if cr.SourceSnapshot != "" {
 		out.ContentSource = &csipb.VolumeContentSource{Type: &csipb.VolumeContentSource_Snapshot{
@@ -188,6 +239,12 @@ func (c *controller) ControllerExpandVolume(ctx context.Context, req *csipb.Cont
 	start := time.Now()
 	defer func() { obs.ObserveCSI("ControllerExpandVolume", err, time.Since(start)) }()
 
+	if req.GetVolumeId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "volume id is required")
+	}
+	if req.GetCapacityRange() == nil {
+		return nil, status.Error(codes.InvalidArgument, "capacity range is required")
+	}
 	id, err := volume.ParseID(req.GetVolumeId())
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "unknown volume %q", req.GetVolumeId())
@@ -239,9 +296,18 @@ func (c *controller) ControllerUnpublishVolume(context.Context, *csipb.Controlle
 }
 
 func (c *controller) ValidateVolumeCapabilities(ctx context.Context, req *csipb.ValidateVolumeCapabilitiesRequest) (*csipb.ValidateVolumeCapabilitiesResponse, error) {
+	if req.GetVolumeId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "volume id is required")
+	}
+	if len(req.GetVolumeCapabilities()) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "volume capabilities are required")
+	}
 	id, err := volume.ParseID(req.GetVolumeId())
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "unknown volume %q", req.GetVolumeId())
+	}
+	if err := c.requireVolumeExists(ctx, id); err != nil {
+		return nil, err
 	}
 	for _, cap := range req.GetVolumeCapabilities() {
 		if !supportsAccessMode(id.Protocol, cap.GetAccessMode().GetMode()) {
@@ -279,11 +345,20 @@ func (c *controller) CreateSnapshot(ctx context.Context, req *csipb.CreateSnapsh
 	start := time.Now()
 	defer func() { obs.ObserveCSI("CreateSnapshot", err, time.Since(start)) }()
 
+	if req.GetName() == "" {
+		return nil, status.Error(codes.InvalidArgument, "snapshot name is required")
+	}
+	if req.GetSourceVolumeId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "source volume id is required")
+	}
 	id, err := volume.ParseID(req.GetSourceVolumeId())
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "unknown source volume %q", req.GetSourceVolumeId())
 	}
 	name := sanitiseSnapshotName(req.GetName())
+	if err := c.rejectSnapshotNameReuse(ctx, id, name); err != nil {
+		return nil, err
+	}
 	s, err := c.reg.CreateSnapshot(ctx, id, name)
 	if err != nil {
 		return nil, toStatus(err)
@@ -298,6 +373,16 @@ func (c *controller) DeleteSnapshot(ctx context.Context, req *csipb.DeleteSnapsh
 	start := time.Now()
 	defer func() { obs.ObserveCSI("DeleteSnapshot", err, time.Since(start)) }()
 
+	if req.GetSnapshotId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "snapshot id is required")
+	}
+	// An unparseable id cannot name a snapshot this driver created, so there is
+	// nothing to delete. CSI requires success, exactly as for DeleteVolume.
+	if _, _, err := backend.SnapshotSource(req.GetSnapshotId()); err != nil {
+		obs.Logger(ctx).Warn("ignoring delete for unparseable snapshot id",
+			"snapshot_id", req.GetSnapshotId())
+		return &csipb.DeleteSnapshotResponse{}, nil
+	}
 	if err := c.reg.DeleteSnapshot(ctx, req.GetSnapshotId()); err != nil {
 		return nil, toStatus(err)
 	}
@@ -335,4 +420,79 @@ func toStatus(err error) error {
 		}
 	}
 	return status.Error(codes.Internal, obs.Redact(err.Error()))
+}
+
+// requireVolumeExists returns NotFound when the dataset behind a volume id is
+// absent. Several CSI calls must distinguish "you named nothing" from a real
+// failure, and only a query can tell them apart — the middleware's errname
+// cannot.
+func (c *controller) requireVolumeExists(ctx context.Context, id volume.ID) error {
+	cl, err := c.reg.Client(ctx, id.Backend)
+	if err != nil {
+		return toStatus(err)
+	}
+	ds, err := cl.DatasetQuery(ctx, id.DatasetPath())
+	if err != nil {
+		return toStatus(err)
+	}
+	if ds == nil {
+		return status.Errorf(codes.NotFound, "volume %s does not exist", id)
+	}
+	return nil
+}
+
+// requireSnapshotExists returns NotFound for a snapshot that is not there.
+func (c *controller) requireSnapshotExists(ctx context.Context, snapshotID string) error {
+	backendName, zfsID, err := backend.SnapshotSource(snapshotID)
+	if err != nil {
+		return status.Errorf(codes.NotFound, "snapshot %q does not exist", snapshotID)
+	}
+	cl, err := c.reg.Client(ctx, backendName)
+	if err != nil {
+		return toStatus(err)
+	}
+	snap, err := cl.SnapshotQuery(ctx, zfsID)
+	if err != nil {
+		return toStatus(err)
+	}
+	if snap == nil {
+		return status.Errorf(codes.NotFound, "snapshot %q does not exist", snapshotID)
+	}
+	return nil
+}
+
+// rejectSnapshotNameReuse enforces the CSI rule that one snapshot name may not
+// refer to two different source volumes.
+func (c *controller) rejectSnapshotNameReuse(ctx context.Context, source volume.ID, name string) error {
+	cl, err := c.reg.Client(ctx, source.Backend)
+	if err != nil {
+		return toStatus(err)
+	}
+	b, err := c.reg.Backend(source.Backend)
+	if err != nil {
+		return toStatus(err)
+	}
+	snaps, err := cl.SnapshotList(ctx, b.Pool+"/"+b.ParentDataset)
+	if err != nil {
+		return toStatus(err)
+	}
+	want := source.DatasetPath()
+	for _, s := range snaps {
+		if snapshotNameOf(s.ID) != name {
+			continue
+		}
+		if s.Dataset != want {
+			return status.Errorf(codes.AlreadyExists,
+				"snapshot name %q already exists for source volume %s", name, s.Dataset)
+		}
+	}
+	return nil
+}
+
+// snapshotNameOf returns the part after the @ in a ZFS snapshot id.
+func snapshotNameOf(id string) string {
+	if i := strings.LastIndex(id, "@"); i >= 0 {
+		return id[i+1:]
+	}
+	return id
 }

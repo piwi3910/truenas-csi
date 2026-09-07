@@ -20,6 +20,22 @@ type Property struct {
 type sizeField struct{ Parsed int64 }
 
 func (s *sizeField) UnmarshalJSON(b []byte) error {
+	// Not every endpoint uses the wrapper. pool.query returns plain integers
+	// for size and free, while pool.dataset.query wraps them in {"parsed": N}.
+	// Decoding only the wrapper silently yielded 0 free bytes for every pool,
+	// which would make the scheduler treat a healthy pool as full.
+	var direct int64
+	if err := json.Unmarshal(b, &direct); err == nil {
+		s.Parsed = direct
+		return nil
+	}
+	var directStr string
+	if err := json.Unmarshal(b, &directStr); err == nil {
+		if v, err := strconv.ParseInt(directStr, 10, 64); err == nil {
+			s.Parsed = v
+		}
+		return nil
+	}
 	var wrapper struct {
 		Parsed json.RawMessage `json:"parsed"`
 	}

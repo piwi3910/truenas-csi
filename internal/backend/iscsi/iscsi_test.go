@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pwatteel/truenas-csi/internal/backend"
 	"github.com/pwatteel/truenas-csi/internal/truenas"
@@ -291,5 +292,25 @@ func TestISCSICreateFromSnapshotStampsClone(t *testing.T) {
 	// And it must now be deletable through the ownership guard.
 	if err := b.Delete(ctx, volID("pvc-restored")); err != nil {
 		t.Fatalf("restored volume must be deletable: %v", err)
+	}
+}
+
+// TestDeleteRetriesWhileZvolIsBusy pins behaviour observed against a real
+// appliance: removing an extent does not immediately release the zvol, and a
+// delete issued in that window fails with "dataset is busy". Without the retry
+// every iSCSI volume deletion would leak its zvol.
+func TestDeleteRetriesWhileZvolIsBusy(t *testing.T) {
+	old := zvolReleaseTimeout
+	zvolReleaseTimeout = 5 * time.Second
+	defer func() { zvolReleaseTimeout = old }()
+
+	if !isBusy(&truenas.CallError{Code: -32001, ErrName: "EBUSY",
+		Reason: "[EBUSY] Failed to delete dataset: cannot destroy 'Pool0/k8s/x': dataset is busy"}) {
+		t.Fatal("the appliance's real EBUSY shape must be recognised as busy")
+	}
+	if isBusy(&truenas.CallError{Code: -32602, ErrName: "EINVAL",
+		Reason: "[ENOENT] None: PoolDataset Pool0/k8s/x does not exist"}) {
+		t.Fatal("a missing dataset must not be mistaken for a busy one — retrying " +
+			"would turn an idempotent delete into a 30-second stall")
 	}
 }
