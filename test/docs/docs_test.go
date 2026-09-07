@@ -56,13 +56,24 @@ var paramSourceDirs = []string{
 
 // paramKeyRE matches a StorageClass parameter lookup: the parameter map is
 // indexed by a string literal, e.g. params["fsType"] or r.Params["sparse"].
-var paramKeyRE = regexp.MustCompile(`(?:[Pp]arams|Parameters)\[\s*"([A-Za-z][A-Za-z0-9]*)"\s*\]`)
+var paramKeyREs = []*regexp.Regexp{
+	// params["fsType"] / r.Params["sparse"] / Parameters["backend"]
+	regexp.MustCompile(`(?:[Pp]arams|Parameters)\[\s*"([A-Za-z][A-Za-z0-9]*)"\s*\]`),
+	// ParamServer = "server" — the constant style used by the nfs backend
+	regexp.MustCompile(`Param[A-Za-z0-9]*\s*=\s*"([A-Za-z][A-Za-z0-9]*)"`),
+	// boolParam(m, "chap", true) — the helper style used by the iscsi backend
+	regexp.MustCompile(`[A-Za-z]*Param\(\s*[A-Za-z_][A-Za-z0-9_]*\s*,\s*"([A-Za-z][A-Za-z0-9]*)"`),
+	// m["portalID"] — direct indexing of a parameter map
+	regexp.MustCompile(`\bm\[\s*"([A-Za-z][A-Za-z0-9]*)"\s*\]`),
+}
 
 // documentedParams is every parameter the driver defines, as the chart's
 // StorageClass template and the spec list them. It is stated here as well as
 // discovered from the sources so that README.md must document a parameter even
 // while its backend is still landing.
 var documentedParams = []string{
+	"server",
+	"nodeIQNs",
 	"backend", "protocol", "pool", "parentDataset",
 	"fsType", "sparse", "volblocksize",
 	"nfsVersion", "networks", "maproot", "mode", "uid", "gid",
@@ -97,9 +108,9 @@ func paramsFromSources(t *testing.T, root string) map[string]string {
 			if err != nil {
 				t.Fatalf("read %s: %v", path, err)
 			}
-			for _, m := range paramKeyRE.FindAllStringSubmatch(string(b), -1) {
-				if _, ok := found[m[1]]; !ok {
-					found[m[1]] = filepath.Join(rel, name)
+			for _, key := range findAllParamKeys(string(b)) {
+				if _, ok := found[key]; !ok {
+					found[key] = filepath.Join(rel, name)
 				}
 			}
 		}
@@ -198,4 +209,23 @@ func TestReadmeWarnsAboutPlaintext(t *testing.T) {
 	if !strings.Contains(strings.ToLower(readme), "revoke") {
 		t.Error("README.md does not explain that TrueNAS revokes an API key presented over plaintext")
 	}
+}
+
+// findAllParamKeys returns every StorageClass parameter name a source file
+// reads. The backends use three different styles — a constant, a helper call,
+// and direct map indexing — so matching only one of them would let an
+// undocumented parameter slip past this test entirely.
+func findAllParamKeys(src string) []string {
+	seen := map[string]struct{}{}
+	var out []string
+	for _, re := range paramKeyREs {
+		for _, m := range re.FindAllStringSubmatch(src, -1) {
+			if _, ok := seen[m[1]]; ok {
+				continue
+			}
+			seen[m[1]] = struct{}{}
+			out = append(out, m[1])
+		}
+	}
+	return out
 }

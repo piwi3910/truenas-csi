@@ -190,6 +190,7 @@ A parameter left empty means "use the default"; that is not an error.
 | `fsType`        | iscsi      | `ext4`, `xfs`                                                       | `ext4`                                                                 |
 | `sparse`        | iscsi      | `true`, `false`                                                     | `true`                                                                 |
 | `volblocksize`  | iscsi      | e.g. `16K`, `128K`                                                  | the appliance's `pool.dataset.recommended_zvol_blocksize` for the pool |
+| `server`        | nfs        | address nodes mount the export from                                 | the appliance's own endpoint host                                      |
 | `nfsVersion`    | nfs        | `3`, `4`                                                            | `4`                                                                    |
 | `networks`      | nfs        | comma-separated CIDRs allowed to mount the export                   | none (no network restriction)                                          |
 | `maproot`       | nfs        | `user:group` mapped to root on the export                           | unset                                                                  |
@@ -199,6 +200,7 @@ A parameter left empty means "use the default"; that is not an error.
 | `portalID`      | iscsi      | reuse this existing portal instead of letting the driver create one | unset (driver creates the portal)                                      |
 | `chap`          | iscsi      | `true`, `false` — CHAP on the shared target                         | `true`                                                                 |
 | `initiatorACL`  | iscsi      | `true`, `false` — restrict the target to the cluster's node IQNs    | `true`                                                                 |
+| `nodeIQNs`      | iscsi      | comma-separated node IQNs allowed on the shared target              | unset — no initiator group is created, so the target stays open        |
 | `multipath`     | iscsi      | `true`, `false` — use multipath where the node supports it          | `false`                                                                |
 
 ### `pool` and `parentDataset` are policy, not a redirect
