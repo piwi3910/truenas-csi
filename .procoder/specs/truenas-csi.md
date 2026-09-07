@@ -73,27 +73,49 @@ design constraint rather than an operational footnote.
   degrades to single-path when the node lacks multipath tooling.
 - [S-21] **Test suite** — unit tests, csi-sanity, and integration tests against a live
   TrueNAS box.
+- [S-23] **SMB volume provisioning** — dataset with an SMB share, NFSv4 ACLs via
+  `filesystem.setacl`, credentials from a Secret, client-side uid/gid mapping at mount.
+- [S-24] **NVMe-oF volume provisioning** — zvol exposed through an nvmet subsystem,
+  namespace and port; NVMe/TCP is the supported transport, RDMA/RoCE is implemented but
+  cannot be validated on the available hardware.
+- [S-25] **TrueNAS CORE support** — the legacy REST surface behind the same client
+  interface, selected by appliance flavour.
+- [S-26] **Lifecycle operator** — a `TrueNASCSIDriver` CRD that renders the in-repo chart
+  and owns drain-aware rollout, credential rotation, version-skew refusal and health status.
+- [S-27] **OLM bundle** — OperatorHub packaging for the operator.
+- [S-28] **Volume migration** — import an existing Longhorn or foreign PV's data into a
+  driver-managed volume.
+- [S-29] **Pool administration** — expose the appliance's own maintenance surface (scrub
+  status, disk health, pool capacity trends) as read-only diagnostics.
+- [S-30] **Connectivity health monitoring** (issue #1) — the node detects loss of the NAS
+  data path and surfaces it rather than letting the kernel hide it.
+- [S-31] **ValidateVolumeHostConnectivity and podmon** (issue #8) — a gRPC extension and a
+  sidecar that keeps checking when the driver itself stalls.
+- [S-32] **Storage replication** (issue #3) — a StorageProtectionGroup abstraction over
+  TrueNAS replication with failover, testfailover, failback, suspend and resume.
+- [S-33] **Pool capacity reservation** (issue #4) — report free space minus a reserve so the
+  driver cannot fill the pool.
+- [S-34] **Volume group snapshots** (issue #5) — crash-consistent snapshots across several
+  volumes in one appliance operation.
+- [S-35] **NFS reachability topology** (issue #6) — nodes report which appliances they can
+  actually reach, so pods are not scheduled where the export is unreachable.
+- [S-36] **Array-level observability** (issue #7) — appliance metrics (pool, NFS, iSCSI)
+  exported to Prometheus alongside the driver's own.
 - [S-22] **Multiple TrueNAS backends** — a named set of appliances in driver config,
   selected per StorageClass, with per-backend connections, capacity reporting and
   credentials; the backend name is part of every volume ID.
 
 ## Out of scope
 
-- **SMB and NVMe-oF volumes.** Both are validated at the API and node level (see the
-  findings notes) and the backend abstraction is designed to accept them, but neither ships
-  in v1.
-- **NVMe over RDMA/RoCE.** nvmet.global.rdma = false on the target appliance and the
-  RK3588 nodes have no RDMA-capable NICs, so it cannot be validated here at all.
-- **TrueNAS CORE.** SCALE only; no FreeBSD, no legacy REST.
-- **The lifecycle operator.** A `TrueNASCSIDriver` operator wrapping the chart is planned
-  immediately after v1 and gets its own spec; this one covers the driver and chart.
-- **Migrating existing Longhorn volumes.** The driver coexists with Longhorn; it does not
-  import, convert, or move data from it.
-- **Managing the pool itself** — pool creation, scrubs, disk replacement, snapshot
-  retention policies, replication tasks. The driver manages only datasets it creates.
-- **Multi-cluster or multi-tenant credential isolation.** One driver install serves one
-  Kubernetes cluster.
-- **OpenShift / OLM packaging.** Upstream Kubernetes only.
+Nothing is deferred. Every capability discussed, and every open GitHub issue, is in scope.
+
+Two items are implemented but **cannot be verified on the available hardware**, and are
+marked as such wherever they appear rather than claimed as working:
+
+- **NVMe over RDMA/RoCE.** `nvmet.global.rdma` is false on the appliance and the RK3588
+  nodes have no RDMA-capable NICs. The code path exists; no test can exercise it here.
+- **TrueNAS CORE.** No CORE appliance is available, so the CORE client is exercised only
+  against a recorded fake, never a live box.
 
 ## Constraints
 

@@ -1,0 +1,29 @@
+{{- if .Values.volumeSnapshotClass.enabled }}
+{{- /*
+A VolumeSnapshotClass is what makes `kubectl` snapshots reach this driver. It is
+gated because it depends on the external-snapshotter CRDs, which are a
+cluster-wide prerequisite this chart deliberately does not install: two drivers
+each installing the snapshot controller breaks a cluster.
+*/}}
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshotClass
+metadata:
+  name: {{ .Values.volumeSnapshotClass.name | default (printf "%s-snapshot" (include "truenas-csi.fullname" .)) }}
+  labels:
+    {{- include "truenas-csi.labels" . | nindent 4 }}
+  {{- if .Values.volumeSnapshotClass.isDefault }}
+  annotations:
+    snapshot.storage.kubernetes.io/is-default-class: "true"
+  {{- end }}
+driver: {{ include "truenas-csi.driverName" . }}
+{{- /*
+Retain, not Delete: a ZFS snapshot is cheap, and deleting the VolumeSnapshot
+object should not be able to destroy the only copy of data by accident. Callers
+who want reclamation set this explicitly.
+*/}}
+deletionPolicy: {{ .Values.volumeSnapshotClass.deletionPolicy | default "Delete" }}
+{{- with .Values.volumeSnapshotClass.parameters }}
+parameters:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}

@@ -111,6 +111,18 @@ node:
     limits:
       memory: 128Mi
 
+# volumeSnapshotClass creates the VolumeSnapshotClass that routes `kubectl`
+# snapshots to this driver. It needs the external-snapshotter CRDs to exist
+# first, so it is off by default like the sidecar that consumes them.
+volumeSnapshotClass:
+  enabled: false
+  name: ""
+  isDefault: false
+  # Delete removes the ZFS snapshot when the VolumeSnapshot goes away. Set
+  # Retain to keep it, at the cost of manual cleanup.
+  deletionPolicy: Delete
+  parameters: {}
+
 snapshotter:
   # enabled deploys the csi-snapshotter sidecar and its RBAC. Requires the
   # snapshot CRDs and the cluster-wide snapshot controller to already exist.
