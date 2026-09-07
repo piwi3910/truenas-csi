@@ -239,12 +239,15 @@ func (b *iscsiBackend) ensureZvol(ctx context.Context, r backend.CreateRequest, 
 		}
 	}
 	if _, err := b.c.DatasetCreate(ctx, truenas.DatasetSpec{
-		Name:           dsPath,
-		Type:           "VOLUME",
-		VolSize:        r.CapacityBytes,
-		Sparse:         p.Sparse,
-		VolBlockSize:   blocksize,
-		UserProperties: map[string]string{volume.OwnerProperty: volume.OwnerValue},
+		Name:         dsPath,
+		Type:         "VOLUME",
+		VolSize:      r.CapacityBytes,
+		Sparse:       p.Sparse,
+		VolBlockSize: blocksize,
+		UserProperties: map[string]string{
+			volume.OwnerProperty:    volume.OwnerValue,
+			volume.ProtocolProperty: "iscsi",
+		},
 	}); err != nil {
 		return fmt.Errorf("creating zvol %s: %w", dsPath, err)
 	}

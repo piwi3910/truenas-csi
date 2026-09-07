@@ -80,3 +80,25 @@ func StampProperties() []map[string]string {
 // later task: it needs the internal/truenas client, which does not exist yet.
 // It is required for clones, which inherit neither the marker nor refquota from
 // their origin, and would otherwise be undeletable by this guard.
+
+// ProtocolProperty records which protocol serves a volume.
+//
+// The dataset alone cannot say: an iSCSI volume and an NVMe-oF volume are both
+// zvols, and SMB and NFS are both filesystems. Anything reconstructing a volume
+// id from appliance state — ListVolumes, the orphan reconciler — would
+// otherwise have to guess, produce an id matching no PersistentVolume, and
+// report live volumes as orphans.
+const ProtocolProperty = "io.truenas.csi:protocol"
+
+// ProtocolOr returns the recorded protocol, or the caller's fallback when the
+// volume predates this property.
+//
+// Volumes created before the protocol was recorded carry no value, so the
+// caller supplies the historical inference rather than getting an empty
+// protocol that resolves to nothing.
+func ProtocolOr(recorded, fallback string) string {
+	if recorded == "" {
+		return fallback
+	}
+	return recorded
+}

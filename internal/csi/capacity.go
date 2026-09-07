@@ -136,11 +136,13 @@ func (c *controller) ListVolumes(ctx context.Context, req *csipb.ListVolumesRequ
 				continue
 			}
 			leaf := d.ID[len(prefix):]
-			proto := "nfs"
-			size := d.RefQuota.Parsed
+			// Fall back to the historical guess only for volumes created
+			// before the protocol was recorded; a zvol may be iscsi or nvme.
+			fallback, size := "nfs", d.RefQuota.Parsed
 			if d.Type == "VOLUME" {
-				proto, size = "iscsi", d.VolSize.Parsed
+				fallback, size = "iscsi", d.VolSize.Parsed
 			}
+			proto := volume.ProtocolOr(d.LocalProperty(volume.ProtocolProperty), fallback)
 			vid := volume.ID{Backend: name, Protocol: proto, Pool: b.Pool, Parent: b.ParentDataset, Name: leaf}
 			all = append(all, volEntry{id: vid.String(), size: size})
 		}

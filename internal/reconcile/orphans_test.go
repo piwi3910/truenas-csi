@@ -119,3 +119,41 @@ func TestOrphanReconcilerSkipsOnListerError(t *testing.T) {
 		t.Fatalf("must not even scan the appliance without a usable PV list, %d calls", n)
 	}
 }
+
+// TestProtocolIsReadFromTheDatasetNotGuessed pins a bug the NVMe backend
+// exposed: an iSCSI volume and an NVMe-oF volume are both zvols, so inferring
+// the protocol from the dataset type labelled every NVMe volume "iscsi". The
+// resulting volume id matches no PersistentVolume, so a live volume is reported
+// as an orphan.
+func TestProtocolIsReadFromTheDatasetNotGuessed(t *testing.T) {
+	s := fake.Start(t, fake.Options{})
+	s.Handle("pool.dataset.query", datasetsJSON(t, `[
+	 {"id":"Pool0/k8s/pvc-nvme","type":"VOLUME","volsize":{"parsed":1073741824},
+	  "user_properties":{
+	    "io.truenas.csi:managed":{"value":"truenas-csi","source":"LOCAL"},
+	    "io.truenas.csi:protocol":{"value":"nvme","source":"LOCAL"}}},
+	 {"id":"Pool0/k8s/pvc-legacy","type":"VOLUME","volsize":{"parsed":1073741824},
+	  "user_properties":{
+	    "io.truenas.csi:managed":{"value":"truenas-csi","source":"LOCAL"}}}]`))
+	r := regFor(t, s)
+
+	// The NVMe volume has a live PV under its true protocol; the legacy one does not.
+	lister := stubLister{handles: map[string]struct{}{
+		"nas1/nvme/Pool0/k8s/pvc-nvme": {},
+	}}
+	orphans, err := NewOrphanReconciler(r, lister, 0).RunOnce(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, o := range orphans {
+		if strings.Contains(o, "pvc-nvme") {
+			t.Fatalf("a live NVMe volume was reported as an orphan (%s): its protocol was "+
+				"guessed from the dataset type instead of read from the dataset", o)
+		}
+	}
+	// The pre-property volume still falls back to the historical guess.
+	if len(orphans) != 1 || !strings.Contains(orphans[0], "iscsi") {
+		t.Fatalf("a volume created before the protocol property should fall back to "+
+			"iscsi, got %v", orphans)
+	}
+}

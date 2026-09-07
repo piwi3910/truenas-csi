@@ -8,5 +8,6 @@ package integration
 import (
 	_ "github.com/piwi3910/truenas-csi/internal/backend/iscsi"
 	_ "github.com/piwi3910/truenas-csi/internal/backend/nfs"
+	_ "github.com/piwi3910/truenas-csi/internal/backend/nvme"
 	_ "github.com/piwi3910/truenas-csi/internal/backend/smb"
 )

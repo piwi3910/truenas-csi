@@ -76,10 +76,11 @@ func (o *OrphanReconciler) RunOnce(ctx context.Context) ([]string, error) {
 				continue
 			}
 			leaf := d.ID[len(prefix):]
-			proto := "nfs"
+			fallback := "nfs"
 			if d.Type == "VOLUME" {
-				proto = "iscsi"
+				fallback = "iscsi"
 			}
+			proto := volume.ProtocolOr(d.LocalProperty(volume.ProtocolProperty), fallback)
 			id := volume.ID{Backend: name, Protocol: proto, Pool: b.Pool,
 				Parent: b.ParentDataset, Name: leaf}
 			if _, live := handles[id.String()]; live {

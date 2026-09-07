@@ -366,8 +366,11 @@ func (b *Backend) provision(ctx context.Context, dsPath string, r backend.Create
 			// share_type SMB is what gives the dataset mode 0770 and an NFSv4
 			// ACL; without it the dataset is a plain 0755 with no ACL and the
 			// setacl below would be converting rather than configuring.
-			ShareType:      "SMB",
-			UserProperties: map[string]string{volume.OwnerProperty: volume.OwnerValue},
+			ShareType: "SMB",
+			UserProperties: map[string]string{
+				volume.OwnerProperty:    volume.OwnerValue,
+				volume.ProtocolProperty: "smb",
+			},
 		})
 		if err != nil {
 			return nil, status.Errorf(codes.Internal, "create dataset %s: %v", dsPath, err)

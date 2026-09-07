@@ -46,7 +46,8 @@ const DefaultHostRoot = "/host"
 // them back verbatim on every node call. They are the node plugin's only channel of
 // information about a volume, which is why this package needs no backend imports.
 const (
-	// KeyProtocol selects the data path: ProtocolNFS or ProtocolISCSI.
+	// KeyProtocol selects the data path: ProtocolNFS, ProtocolISCSI or
+	// ProtocolNVMe.
 	KeyProtocol = "protocol"
 	// KeyServer is the NFS server address.
 	KeyServer = "server"
@@ -63,6 +64,15 @@ const (
 	// KeyNAA is the extent's NAA identifier, as returned by iscsi.extent.create,
 	// in its "0x…" form.
 	KeyNAA = "naa"
+	// KeyNQN is the NVMe subsystem NQN the node connects to.
+	KeyNQN = "nqn"
+	// KeySerial is the nvmet subsystem's serial, as returned by
+	// nvmet.subsys.create. It is the node's ONLY stable key for the resulting
+	// block device: the nodes carry their own local NVMe disks, so a device
+	// index is never a device identity.
+	KeySerial = "serial"
+	// KeyTransport is the NVMe-oF transport, "tcp" or "rdma".
+	KeyTransport = "transport"
 	// KeyCHAPUser and KeyCHAPSecret carry discovery/session CHAP credentials when
 	// the target requires them.
 	KeyCHAPUser   = "chapUser"
@@ -76,6 +86,7 @@ const (
 const (
 	ProtocolNFS   = "nfs"
 	ProtocolISCSI = "iscsi"
+	ProtocolNVMe  = "nvme"
 )
 
 // DefaultNFSVersion is the NFS version used when the publish context names none.
@@ -287,6 +298,8 @@ func (n *Node) Stage(ctx context.Context, req StageRequest) error {
 		return n.stageNFS(ctx, req)
 	case ProtocolISCSI:
 		return n.stageISCSI(ctx, req)
+	case ProtocolNVMe:
+		return n.stageNVMe(ctx, req)
 	default:
 		return fmt.Errorf("%w: publish context names no supported protocol", ErrInvalidRequest)
 	}
@@ -303,6 +316,9 @@ func (n *Node) Unstage(ctx context.Context, req UnstageRequest) error {
 
 	if err := n.unmountIfMounted(ctx, req.StagingPath); err != nil {
 		return err
+	}
+	if protocolOf(req.PublishContext) == ProtocolNVMe {
+		return n.unstageNVMe(ctx, req)
 	}
 	return n.unstageISCSI(ctx, req)
 }
@@ -349,8 +365,11 @@ func (n *Node) Unpublish(ctx context.Context, req UnpublishRequest) error {
 // present when the controller did not name one.
 func protocolOf(pc map[string]string) string {
 	switch p := strings.ToLower(pc[KeyProtocol]); p {
-	case ProtocolNFS, ProtocolISCSI:
+	case ProtocolNFS, ProtocolISCSI, ProtocolNVMe:
 		return p
+	}
+	if pc[KeyNQN] != "" {
+		return ProtocolNVMe
 	}
 	if pc[KeyNAA] != "" || pc[KeyIQN] != "" {
 		return ProtocolISCSI

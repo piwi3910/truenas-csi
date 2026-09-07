@@ -160,3 +160,19 @@ type ISCSIGlobal struct {
 	Port     int    `json:"listen_port"`
 	ALUA     bool   `json:"alua"`
 }
+
+// LocalProperty returns a user property's value when it was set on this dataset
+// itself, and "" when it is absent or merely inherited from a parent.
+//
+// Inheritance is the reason this is not a plain map lookup: a property a child
+// inherited says something about its parent, not about the child.
+func (d *Dataset) LocalProperty(key string) string {
+	if d == nil || d.UserProperties == nil {
+		return ""
+	}
+	p, ok := d.UserProperties[key]
+	if !ok || p.Source != "LOCAL" {
+		return ""
+	}
+	return p.Value
+}

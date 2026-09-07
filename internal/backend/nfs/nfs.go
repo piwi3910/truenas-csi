@@ -218,10 +218,13 @@ func (b *Backend) Create(ctx context.Context, r backend.CreateRequest) (*backend
 func (b *Backend) provision(ctx context.Context, dsPath string, r backend.CreateRequest) (*truenas.Dataset, error) {
 	if r.SourceSnapshot == "" {
 		ds, err := b.c.DatasetCreate(ctx, truenas.DatasetSpec{
-			Name:           dsPath,
-			Type:           "FILESYSTEM",
-			RefQuota:       r.CapacityBytes,
-			UserProperties: map[string]string{volume.OwnerProperty: volume.OwnerValue},
+			Name:     dsPath,
+			Type:     "FILESYSTEM",
+			RefQuota: r.CapacityBytes,
+			UserProperties: map[string]string{
+				volume.OwnerProperty:    volume.OwnerValue,
+				volume.ProtocolProperty: "nfs",
+			},
 		})
 		if err != nil {
 			return nil, status.Errorf(codes.Internal, "create dataset %s: %v", dsPath, err)

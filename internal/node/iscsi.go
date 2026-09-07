@@ -25,9 +25,10 @@ import (
 	"time"
 )
 
-// ErrDeviceNotFound is returned when the by-id link for a NAA has not appeared
-// within the resolve bound after a successful login.
-var ErrDeviceNotFound = errors.New("iscsi device did not appear after login")
+// ErrDeviceNotFound is returned when the by-id link for a block volume — an
+// iSCSI NAA or an NVMe subsystem serial — has not appeared within the resolve
+// bound after a successful login or connect.
+var ErrDeviceNotFound = errors.New("block device did not appear after attach")
 
 // byIDDir is the host-absolute directory holding the stable device links.
 const byIDDir = "/dev/disk/by-id"
