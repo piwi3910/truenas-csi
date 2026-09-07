@@ -9,8 +9,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/pwatteel/truenas-csi/internal/obs"
-	"github.com/pwatteel/truenas-csi/internal/truenas"
+	"github.com/piwi3910/truenas-csi/internal/obs"
+	"github.com/piwi3910/truenas-csi/internal/truenas"
 )
 
 // The driver's own objects are recognised by these comments, which is how a

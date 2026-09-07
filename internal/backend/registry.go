@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/pwatteel/truenas-csi/internal/config"
-	"github.com/pwatteel/truenas-csi/internal/obs"
-	"github.com/pwatteel/truenas-csi/internal/truenas"
+	"github.com/piwi3910/truenas-csi/internal/config"
+	"github.com/piwi3910/truenas-csi/internal/obs"
+	"github.com/piwi3910/truenas-csi/internal/truenas"
 )
 
 // Registry holds one connection per configured appliance.

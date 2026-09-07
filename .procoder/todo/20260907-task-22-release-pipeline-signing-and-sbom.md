@@ -18,7 +18,7 @@ Files this task owns:
 
 Interfaces it produces for later tasks:
 
-- Published image `ghcr.io/pwatteel/truenas-csi:<tag>` for `linux/arm64` and `linux/amd64`
+- Published image `ghcr.io/piwi3910/truenas-csi:<tag>` for `linux/arm64` and `linux/amd64`
 
 Done means every step below is checked, the named tests pass, the procoder gate is clean,
 and the work is committed with the message the plan specifies.

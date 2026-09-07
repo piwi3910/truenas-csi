@@ -97,7 +97,7 @@ design constraint rather than an operational footnote.
 
 ## Constraints
 
-- **Transport: `wss://` only, enforced at config validation.** TrueNAS 25.10 *revokes* an
+- **Transport: `wss://` only, enforced at config validation.** TrueNAS 25.10 _revokes_ an
   API key presented over plaintext ("API key revoked due to insecure transport") — three
   keys were destroyed this way during research. A plaintext URL must be rejected before any
   connection is attempted, and this must have a test.
@@ -120,7 +120,7 @@ design constraint rather than an operational footnote.
 - **Least privilege**: the driver's TrueNAS account uses a documented 14-role set, not
   `FULL_ADMIN`. system.info is deliberately not called because it requires `READONLY_ADMIN`.
 - **Language: Go**; licence Apache 2.0.
-- **Driver name `csi.truenas.watteel.com`**, Go module `github.com/pwatteel/truenas-csi`.
+- **Driver name `csi.truenas.watteel.com`**, Go module `github.com/piwi3910/truenas-csi`.
   The driver name is immutable once PersistentVolumes exist — changing it orphans every PV.
 - **Accepted risk: a single shared iSCSI target exposes every LUN to every logged-in node.**
   Initiator ACLs are a property of the target, not of individual LUNs, so per-volume
@@ -133,18 +133,21 @@ design constraint rather than an operational footnote.
 ## Interfaces
 
 ### CSI gRPC services
+
 Identity, Controller and Node, over UNIX domain sockets. Controller capabilities:
 `CREATE_DELETE_VOLUME`, `CREATE_DELETE_SNAPSHOT`, `LIST_VOLUMES`, `LIST_SNAPSHOTS`,
 `EXPAND_VOLUME`, `CLONE_VOLUME`, `GET_CAPACITY`. Node capabilities:
 `STAGE_UNSTAGE_VOLUME`, `EXPAND_VOLUME`, `GET_VOLUME_STATS`.
 
 ### Driver configuration (flags + Secret)
+
 A map of **named backends**, each with: endpoint URL (wss enforced), API key, username,
 optional CA bundle, `insecureSkipVerify` (default false, warns loudly), pool and parent
 dataset. Driver-level: node id, log level, metrics and health ports. Each backend holds
 its own connection, concurrency budget and capacity figures.
 
 ### StorageClass parameters
+
 `backend` (which named appliance), `protocol` (`nfs`|`iscsi`), `pool`, `parentDataset`,
 `fsType` (`ext4`|`xfs`), `sparse`, `volblocksize`; NFS options (`nfsVersion`, `networks`,
 `maproot`, `mode`, `uid`, `gid`); iSCSI options (`portalID` to reuse an existing portal
@@ -152,6 +155,7 @@ instead of letting the driver create one, `chap` to disable the default-on CHAP,
 `initiatorACL` to opt out of restricting the target to cluster node IQNs, `multipath`).
 
 ### iSCSI object model
+
 One **shared target per backend**, created by the driver on first use, with one LUN per
 volume. The driver creates the portal on demand unless `portalID` names an existing one.
 The target's initiator group lists the cluster's node IQNs by default. CHAP is enabled by
@@ -160,10 +164,12 @@ TrueNAS, which is also where the node plugin reads them from — no Kubernetes S
 needed for CHAP.
 
 ### TrueNAS middleware methods
-auth.login_ex, pool.query, pool.dataset.*, pool.snapshot.*, iscsi.*,
-sharing.nfs.*, filesystem.setperm / filesystem.stat, core.get_jobs.
+
+auth.login_ex, pool.query, pool.dataset._, pool.snapshot._, iscsi._,
+sharing.nfs._, filesystem.setperm / filesystem.stat, core.get_jobs.
 
 ### Operational surfaces
+
 Prometheus `/metrics`, health `/healthz`, gRPC probe for the liveness sidecar.
 
 ## Data

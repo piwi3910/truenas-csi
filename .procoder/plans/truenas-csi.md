@@ -22,7 +22,7 @@ rewrite; the node plugin performs mounts using host binaries it verifies at star
 Every task inherits these, taken from the spec:
 
 - Go, Apache 2.0, driver name `csi.truenas.watteel.com`, module
-  `github.com/pwatteel/truenas-csi`. The driver name is immutable once PVs exist.
+  `github.com/piwi3910/truenas-csi`. The driver name is immutable once PVs exist.
 - **Transport is wss only.** A URL with scheme http or ws is rejected at config validation
   before any socket is opened — TrueNAS revokes an API key presented over plaintext.
 - **Authentication failure is terminal**: log and exit, never retry. Only connection
@@ -60,7 +60,7 @@ Steps:
       `csi.truenas.watteel.com`:
       `func TestDriverName(t *testing.T) { if DriverName != "csi.truenas.watteel.com" { t.Fatalf("got %q", DriverName) } }`
       Run `go test ./internal/driver/` — expect FAIL with "no Go files" (package absent).
-- [ ] Create `go.mod` with `module github.com/pwatteel/truenas-csi` and `go 1.24`.
+- [ ] Create `go.mod` with `module github.com/piwi3910/truenas-csi` and `go 1.24`.
 - [ ] Create `internal/driver/driver.go` defining `DriverName` and `Version`.
 - [ ] Create `cmd/truenas-csi/main.go` parsing `-mode` and rejecting any value other than
       `controller` or `node` with exit status 1.
@@ -874,7 +874,7 @@ Files:
 
 Interfaces produced:
 
-- Published image `ghcr.io/pwatteel/truenas-csi:<tag>` for `linux/arm64` and `linux/amd64`
+- Published image `ghcr.io/piwi3910/truenas-csi:<tag>` for `linux/arm64` and `linux/amd64`
 
 Steps:
 

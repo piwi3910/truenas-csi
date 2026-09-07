@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/pwatteel/truenas-csi/internal/obs"
+	"github.com/piwi3910/truenas-csi/internal/obs"
 )
 
 func testParams(t *testing.T, over map[string]string) Params {

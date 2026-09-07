@@ -8,9 +8,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/pwatteel/truenas-csi/internal/config"
-	"github.com/pwatteel/truenas-csi/internal/truenas"
-	"github.com/pwatteel/truenas-csi/internal/truenas/fake"
+	"github.com/piwi3910/truenas-csi/internal/config"
+	"github.com/piwi3910/truenas-csi/internal/truenas"
+	"github.com/piwi3910/truenas-csi/internal/truenas/fake"
 )
 
 // nas is a stateful stand-in for the appliance's iSCSI and dataset surface,

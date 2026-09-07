@@ -6,7 +6,7 @@ supports today: **JSON-RPC 2.0 over a `wss://` websocket** at `/api/current`. Th
 REST client and no dual-transport abstraction — the legacy REST API is deprecated upstream.
 
 Driver name: `csi.truenas.watteel.com` (immutable once PersistentVolumes exist — changing
-it orphans every PV). Go module: `github.com/pwatteel/truenas-csi`. Licence: Apache 2.0.
+it orphans every PV). Go module: `github.com/piwi3910/truenas-csi`. Licence: Apache 2.0.
 
 **Protocols in v1: NFS and iSCSI.** SMB and NVMe/TCP were both validated end to end
 against a live appliance and against real cluster nodes, and the backend abstraction is

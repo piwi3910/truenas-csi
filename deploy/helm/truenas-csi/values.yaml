@@ -4,7 +4,7 @@ nameOverride: ""
 fullnameOverride: ""
 
 image:
-  repository: ghcr.io/pwatteel/truenas-csi
+  repository: ghcr.io/piwi3910/truenas-csi
   # tag defaults to the chart's appVersion.
   tag: ""
   pullPolicy: IfNotPresent

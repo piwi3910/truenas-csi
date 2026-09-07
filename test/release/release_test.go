@@ -19,7 +19,7 @@ import (
 )
 
 // defaultImage is the repository the release workflow publishes to.
-const defaultImage = "ghcr.io/pwatteel/truenas-csi"
+const defaultImage = "ghcr.io/piwi3910/truenas-csi"
 
 // wantPlatforms is the release contract. arm64 is the primary architecture and
 // the validation target; amd64 is built but not validated on hardware.

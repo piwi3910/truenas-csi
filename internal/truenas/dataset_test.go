@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pwatteel/truenas-csi/internal/truenas/fake"
+	"github.com/piwi3910/truenas-csi/internal/truenas/fake"
 )
 
 func dialFake(t *testing.T, s *fake.Server) *Client {

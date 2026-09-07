@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/pwatteel/truenas-csi/internal/config"
+	"github.com/piwi3910/truenas-csi/internal/config"
 	"golang.org/x/sync/semaphore"
 )
 

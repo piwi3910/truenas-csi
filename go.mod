@@ -1,4 +1,4 @@
-module github.com/pwatteel/truenas-csi
+module github.com/piwi3910/truenas-csi
 
 go 1.26.0
 

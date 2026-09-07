@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pwatteel/truenas-csi/internal/obs"
+	"github.com/piwi3910/truenas-csi/internal/obs"
 )
 
 // captureLogs redirects the driver's log output for the duration of one test.
