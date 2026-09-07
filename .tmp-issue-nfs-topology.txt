@@ -1,0 +1,111 @@
+# NFS topology: report which TrueNAS NFS servers nodes can reach
+
+## Problem
+
+Dell's CSM drivers solve the multi-NFS-server topology problem with a `GetTopologyByBackend` API that maps nodes to their reachable NFS backends. This allows the Kubernetes scheduler to place pods on the node that can actually reach the NFS server for their volume.
+
+Our CSI driver is single-backend (one TrueNAS appliance), but the spec already mentions topology labels per-capability. What's missing is **NFS-specific topology** — the node report should indicate whether the node is on the same network segment as the NFS backend, and if a multi-appliance setup exists, which NFS server each node can reach.
+
+### Why it matters
+
+NFS servers have their own network topology — they might be on a `10.0.0.0/24` management VLAN while the Kubernetes nodes are on `192.168.0.0/24`. If a TrueNAS cluster has multiple NFS exports on different appliances, only nodes on the correct VLAN can reach them. The scheduler needs this information to avoid scheduling pods on nodes that can't reach the NFS server.
+
+Dell solves this by registering a `TopologyByBackend` API that the CO calls during scheduling. The driver returns the set of backends the node can reach, and the CO then uses this to filter nodes and assign topology labels to PVCs.
+
+### Single-appliance case
+
+In the simple case of one TrueNAS NFS export accessible to all nodes, topology labels are not needed — all nodes can reach all volumes. But the `GetTopologyByBackend` API is still valuable because:
+
+1. **Multi-appliance future-proofing** — when the driver supports multiple TrueNAS appliances, topology labeling ensures pods are placed on the node that can reach the NFS server.
+2. **VLAN awareness** — even with one appliance, some nodes may be on a different network segment that can't reach it. Topology labels enable the scheduler to filter those out.
+3. **Cross-replication awareness** — if TrueNAS replication is added (Issue #3), topology labels help understand the network topology between clusters.
+
+## Design
+
+Add a `csi.NodeGetCapabilities` call that reports the node's NFS topology, plus a storage backend query API that maps nodes to reachable backends.
+
+### GetTopologyByBackend (CSI spec)
+
+The CSI spec includes a `GetTopologyByBackend` RPC (CSI spec 1.7+) that lets the CO ask which nodes can reach which storage backends:
+
+```go
+// NodeGetCapabilities returns what capabilities this node's plugin supports.
+func (n *node) NodeGetCapabilities(ctx context.Context, req *csi.NodeGetCapabilitiesRequest) (*csi.NodeGetCapabilitiesResponse, error) {
+    return &csi.NodeGetCapabilitiesResponse{
+        Capabilities: []*csi.NodeServiceCapability{
+            {
+                Type: &csi.NodeServiceCapability_Rpc{
+                    Rpc: &csi.NodeServiceCapability_RPC{
+                        Type:csi.NodeServiceCapability_RPC_NODE_GET_TOPOLOGY_BY_BACKEND,
+                    },
+                },
+            },
+        },
+    }, nil
+}
+```
+
+### Topology by backend — true NFS topology
+
+The node reports which NFS servers it can reach by pinging the NFS server's IP:
+
+```go
+type node struct {
+    // ... existing fields ...
+    backends *backend.Registry  // multi-appliance support (S-8)
+}
+
+func (n *node) NodeGetCapabilities(ctx context.Context, req *csi.NodeGetCapabilitiesRequest) (*csi.NodeGetCapabilitiesResponse, error) {
+    topologyLabels := map[string]string{}
+
+    for _, be := range n.backends.All() {
+        if be.IsReachable() {
+            topologyLabels["truenas.watteel.com/backend"] = be.ID
+            topologyLabels["truenas.watteel.com/nfs-ready"] = "true"
+        } else {
+            topologyLabels["truenas.watteel.com/nfs-ready"] = "false"
+        }
+    }
+
+    return &csi.NodeGetCapabilitiesResponse{
+        NodeInfo: &csi.NodeInfo{
+            VolumeTopology: topologyLabels,
+        },
+    }, nil
+}
+```
+
+### Multi-appliance future
+
+Issue #8 (multi-appliance registry) stores the network addresses of each backend. When we have the registry, each node's `/proc/net/route` or ARP table can be checked to determine if a backend is on the same network segment.
+
+The topology labels are:
+
+| Label | Value | Meaning |
+|-------|-------|---------|
+| `truenas.watteel.com/backend` | `<backend.id>` | Which backend this node can reach |
+| `truenas.watteel.com/nfs-ready` | `true/false` | Is this node on the same network as the NFS export? |
+| `truenas.watteel.com/iscsi-ready` | `true/false` | Is iSCSI reachable from this node? |
+
+### Node affinity
+
+With this in place, the operator can write a `nodeAffinity` rule to ensure pods with NFS volumes are always placed on nodes that can reach the NFS server:
+
+```yaml
+affinity:
+  nodeAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: truenas.watteel.com/nfs-ready
+              operator: In
+              values: ["true"]
+```
+
+## Acceptance Criteria
+
+- [ ] `TestNodeGetCapabilitiesReportsNFS`: `NodeGetCapabilities` includes `NODE_GET_TOPOLOGY_BY_BACKEND` capability
+- [ ] `TestNodeGetCapabilitiesReportsBackend`: the node's volume topology includes the backend ID when the backend is reachable
+- [ ] `TestNodeGetCapabilitiesNoBackend`: when no backend is configured, no topology labels are reported
+- [ ] `TestNodeGetCapabilitiesBackendDown`: when the backend is unreachable, `nfs-ready` is `false`
+- [ ] Integration: deploy the driver, verify the node gets the correct topology labels in `kubectl describe node`

@@ -1,3 +1,5 @@
+# Storage replication: add StorageProtectionGroup abstraction with TrueNAS backend
+
 ## Problem
 
 Dell's CSM for Replication provides a generalized framework for storage array-based replication: `StorageProtectionGroup`, `failover`, `testfailover`, `failback`, `suspend`, `resume`, with a generic `CreateRemoteVolume` and controller-level coordination. TrueNAS has its own native replication feature (dataset replication to another TrueNAS appliance), but the CSI driver has no role in it — replication is entirely a platform concern managed via TrueNAS UI/API.
@@ -26,18 +28,19 @@ Pool0/home/volume1 -> (replication task) -> remote-truenas/Pool0/home/volume1
 ```
 
 A replication task is created via:
-- `data.repl_create_create` — creates a new replication task
+- `data.repl_create` — creates a new replication task (TrueNAS 25.04+)
 - `data.repl_query` — query replication task state
 - `data.repl_update` — update (e.g. to start/stop)
 - `data.repl_delete` — delete the task
 
 A task has:
 - `parent_dataset` — source dataset
-- `target_dataset` — destination dataset (must exist as clone)
+- `target_dataset` — destination dataset (cloned automatically)
 - `host`, `port`, `destination_user`, `destination_ssh_key` — remote connection
 - `direction` — PUSH or PULL
 - `encryption` — optional
 - `auto_destroy` — whether to auto-destroy the destination on failure
+- `run_periodically` / `schedule` — schedule (daily, weekly, etc.)
 
 ### Protection Group Implementation
 
@@ -75,23 +78,61 @@ func (r *StorageReplicator) ExecuteAction(ctx context.Context, req *replication.
 
 | Replication Proto Action | TrueNAS API | Notes |
 |-------------------------|-------------|-------|
-| `CreateStorageProtectionGroup` | `data.repl_create` | Creates task + clones the destination dataset |
-| `CreateRemoteVolume` | `pool.dataset.clone` + `data.repl_create` | Same as above, but on a different host |
-| `DeleteStorageProtectionGroup` | `data.repl_delete` + `pool.destroy` | Destroys task + the cloned target dataset |
+| `CreateStorageProtectionGroup` | `data.repl_create` + `pool.dataset.clone` | Creates task + clones the destination dataset |
+| `CreateRemoteVolume` | `pool.dataset.clone` | Clone the destination dataset |
+| `DeleteStorageProtectionGroup` | `data.repl_delete` + `pool.dataset.destroy` | Destroys task + the cloned target dataset |
 | `GetStorageProtectionGroupStatus` | `data.repl_query` + `data.repl_status` | Maps TrueNAS states to replication proto states |
-| `ExecuteAction` | Varies | See mapping below |
+| Various actions | Varies | See mapping below |
 
 ### Action Mapping
 
 | Replication Proto Action | TrueNAS Equivalent | Implementation |
 |-------------------------|--------------------|----------------|
-| `SUSPEND` | `UPDATE {"run_period": "00:00"}` | Set run period to 0 (disabled) |
-| `RESUME` | `UPDATE {"run_period": "daily"}` | Restore regular schedule |
-| `FAILBACK` | `data.repl_destroy` + recreate from target to source | Destroy old task + create reverse task |
-| `FAILOVER_LOCAL` | N/A | No-op — the local dataset IS the active writer, nothing to do. Update the replication status to reflect local is now the source. |
-| `FAILOVER_REMOTE` | Destroy local, promote remote clone, create new reverse replication | Kill the old task, destroy/replace the old local volume, set up reverse replication from remote |
-| `TEST_FAILOVER` | Run the replication task manually, verify the clone works | One-shot replication + status check |
-| `TEST_FAILOVER_STOP` | Stop test failover | Destroy the cloned dataset |
+| `SUSPEND` | `data.repl_update {"enable_transfer": false}` | Disable the task |
+| `RESUME` | `data.repl_update {"enable_transfer": true}` | Re-enable the task |
+| `FAILBACK` | Destroy old task + create reverse replication task | Swap source/target and recreate task |
+| `FAILOVER_LOCAL` | No-op (local IS source) | Set replication status: local is the source |
+| `FAILOVER_REMOTE` | Destroy local volume, promote clone, create reverse replication | Kill the old task + volume, set up reverse replication |
+| `TEST_FAILOVER` | One-shot replication + verify clone | Create a temporary task, run it, verify |
+| `TEST_FAILOVER_STOP` | Destroy cloned dataset | Clean up test failover clone |
+| `FAILBACK_DISCARD_CHANGES` | Destroy clone + recreate from original source | Ignore remote writes, reclone from source |
+
+### State Mapping
+
+| TrueNAS State | Replication Proto State | Notes |
+|--------------|------------------------|-------|
+| `SUCCESS` | `SYNCHRONIZED` | Replication completed successfully |
+| `WAITING` | `SYNC_IN_PROGRESS` | Waiting for the next scheduled run |
+| `RUNNING` | `SYNC_IN_PROGRESS` | Replication is in progress |
+| `FAILED` | `SYNC_IN_PROGRESS` or `INVALID` | Failed — next successful run will sync |
+| — | `SUSPENDED` | When `enable_transfer` is false |
+| — | `FAILEDOVER` | After a failover action |
+
+### Controller Deployment
+
+The replication proto service is registered alongside the CSI gRPC server in the controller:
+
+```go
+grpcServer := grpc.NewServer()
+serving.RegisterControllerServer(grpcServer, controller)
+replication.RegisterReplicationServer(grpcServer, storagereplication.New(conn, cfg))
+```
+
+This means the replication proto is served from the same unix socket that the CSI controller uses — the replicator sidecar (or operator) connects to the same socket.
+
+## Acceptance Criteria
+
+- [ ] `TestCreateStorageProtectionGroup`: calling CreateStorageProtectionGroup creates a TrueNAS replication task with correct parameters
+- [ ] `TestGetStorageProtectionGroupStatusSynchronized`: a successful task returns `SYNCHRONIZED` state
+- [ ] `TestGetStorageProtectionGroupStatusInProgress`: a running task returns `SYNC_IN_PROGRESS` state
+- [ ] `TestGetStorageProtectionGroupStatusSuspended`: a task with enabled_transfer=false returns `SUSPENDED` state
+- [ ] `TestDeleteStorageProtectionGroup`: a replication task is deleted and the clone is destroyed
+- [ ] `TestExecuteActionFailback`: executing failback destroys the old task and creates the reverse task
+- [ ] `TestExecuteActionSuspend`: executing suspend disables the replication task
+- [ ] `TestExecuteActionResume`: executing resume enables the replication task
+- [ ] `TestExecuteActionFailoverRemote`: executing failover remote destroys local, promotes clone, creates reverse replication
+- [ ] `TestCreateRemoteVolume`: creates a dataset clone on the remote TrueNAS appliance
+- [ ] `TestReplicationProtoRegistered`: the replication service is registered on the controller's gRPC server
 
 ### State Mapping
 

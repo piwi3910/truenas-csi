@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"sync"
 	"time"
 
@@ -223,4 +224,18 @@ func (c *Client) dropConn(conn *websocket.Conn) {
 		close(ch)
 	}
 	conn.Close()
+}
+
+// Host is the appliance's hostname or address, taken from the endpoint URL.
+//
+// It is the default data address for NFS exports and iSCSI portals, so a
+// backend does not have to depend on a StorageClass parameter having been seen
+// earlier in this process's lifetime — a cache that a controller restart would
+// empty, stranding volumes that already exist.
+func (c *Client) Host() string {
+	u, err := url.Parse(c.backend.Endpoint)
+	if err != nil {
+		return ""
+	}
+	return u.Hostname()
 }

@@ -1,0 +1,120 @@
+# Array-level observability: pull NFS/iSCSI metrics from TrueNAS API into Prometheus
+
+## Problem
+
+Dell's CSM for Observability uses an OpenTelemetry Collector agent that scrapes array-level metrics (NFS bandwidth, iSCSI IOPS, latency, pool utilization) from Dell storage arrays and exposes them to Prometheus. This lets Kubernetes admins monitor backend performance without accessing the array directly.
+
+Our CSI driver's observability (`internal/obs`) only covers driver-level metrics: requests, errors, job wait times. It does not expose the array's own metrics — how fast NFS shares are performing, how many IOPS the backend is doing, pool write speed, etc. These are critical for capacity planning and alerting.
+
+## Design
+
+Create an `internal/observability` package that queries TrueNAS for array-level metrics and exposes them as Prometheus metrics. This is a long-running component within the driver (not a separate sidecar) — started on the controller, not the node.
+
+### Metrics to pull from TrueNAS
+
+TrueNAS exposes the following metrics via its JSON-RPC API:
+
+| Metric | API | Type | Labels | Notes |
+|--------|-----|------|--------|-------|
+| Pool available space | `pool.query` | `up` (bool) | `pool` | Is the pool healthy? |
+| Pool usage percent | `pool.used_capacity` | gauge | `pool` | Percentage of pool used |
+| NFS share bandwidth (bytes in/out) | `sharing.nfs.query` | counter | `share`, `protocol` | Bytes read/written per share |
+| NFS share active connections | `sharing.nfs.query` | gauge | `share` | Number of active NFS connections |
+| iSCSI active sessions | `iscsi.stat` | gauge | — | Number of active iSCSI sessions |
+| iSCSI transfer rate | `iscsi.stat` | counter | — | Bytes transferred per second |
+| Dataset count | `pool.dataset.query` | gauge | `pool` | Number of datasets in the pool |
+| TrueNAS CPU usage (via `system.info`) | `system.info` | gauge | — | CPU load average (deprecated in our spec) |
+
+### How to pull metrics from TrueNAS TrueNAS has a native replication feature (dataset replication to another TrueNAS appliance), but the CSI driver has no role in it — replication is entirely a platform concern managed via TrueNAS UI/API.
+
+- **Periodic polling**: the observability module polls TrueNAS every 30 seconds (configurable) and updates Prometheus metrics. It does NOT use long-lived streaming (like the job subscription).
+- **Authentication**: uses the same TrueNAS client as the driver, with automatic authentication header injection.
+- **Caching**: the module caches the metrics for 30 seconds and only re-queries if the cache is stale. This avoids hitting the array on every Prometheus scrape.
+
+```go
+// Collector queries TrueNAS for array-level metrics and exposes them as Prometheus metrics.
+type Collector struct {
+    client *truenas.Client
+    interval time.Duration
+    cache map[string]*MetricSnapshot
+}
+
+// Collect is the Prometheus Collector interface implementation.
+// It queries TrueNAS and returns the current metric set.
+func (c *Collector) Collect(ch chan<- prometheus.Metric) {
+    data := c.queryAll(ctx)  // single batch call to TrueNAS
+    for m, v := range data {
+        ch <- prometheus.NewDesc(m.Name, m.Help, m.Labels, prometheus.UntypedValue(v))
+    }
+}
+```
+
+### Integration with existing metrics
+
+The observability module reuses the existing `obs.Metrics` type and simply adds more metric groups:
+
+```go
+// In internal/obs/metrics.go
+type Metrics struct {
+    // ... existing ...
+
+    // Pool metrics (New in this issue)
+    poolAvailableBytes *prometheus.GaugeVec
+    poolUsedPercent    *prometheus.GaugeVec
+
+    // NFS metrics (New in this issue)
+    nfsBytesTotal     *prometheus.CounterVec
+    nfsActiveSessions *prometheus.GaugeVec
+
+    // iSCSI metrics (New in this issue)
+    iscsiConnections  *prometheus.GaugeVec
+    iscsiBytesTotal   *prometheus.CounterVec
+}
+```
+
+### Metrics namespacing
+
+All new metrics use the prefix `truenas_csi_array_` to distinguish them from driver-level metrics:
+
+```
+truenas_csi_array_pool_available_bytes{pool="Pool0"} 1099511627776
+truenas_csi_array_pool_used_percent{pool="Pool0"} 0.45
+truenas_csi_array_nfs_bytes_total{share="mnt/Pool0/NFS/data",protocol="v3"} 1234567890
+truenas_csi_array_iscsi_connections 3
+truenas_csi_array_iscsi_bytes_total{} 9876543210
+```
+
+### Scheduling
+
+The observability collector runs on the controller pod, not the node. It makes periodic batch-queries to TrueNAS and updates Prometheus gauges. This way:
+
+- All metrics are exposed via one endpoint, even if multiple controller pods exist (Prometheus handles the deduplication via `__address__`)
+- No per-node polling overhead (every node would hit TrueNAS independently)
+
+### Prometheus scrape
+
+The driver's `/metrics` endpoint already exposes Prometheus metrics. We add the array-level metrics to the same endpoint:
+
+```go
+// In StartController, register the array-level collector:
+prometheus.MustRegister(obs.NewMetrics().GetMetricCollector())
+```
+
+### Grafana dashboards (optional)
+
+Include pre-built Grafana dashboards in the Helm chart (`test/chart/templates/grafana-dashboard.yaml`) that show:
+
+- Pool utilization over time
+- NFS share bandwidth per-share
+- iSCSI active sessions and throughputs
+- Dataset count trends
+
+## Acceptance Criteria
+
+- [ ] `TestCollectorPoolMetrics`: the collector returns pool available bytes and used percent
+- [ ] `TestCollectorNFSMetrics`: the collector returns NFS share bandwidth and active connections
+- [ ] `TestCollectorISCSIMetrics`: the collector returns iSCSI session count and total bytes
+- [ ] `TestCollectorCaching`: the collector only queries TrueNAS once every 30 seconds, not on every Prometheus scrape
+- [ ] `TestCollectorStaleCacheAfter30Seconds(): the cache is refreshed after 30 seconds, even if no Prometheus scrape occurred
+- [ ] `TestControllerStartsCollector`: `StartController` registers the array-level collector with Prometheus
+- [ ] `TestControllerMetricsEndpoint`: the `/metrics` endpoint includes both driver-level and array-level metrics
