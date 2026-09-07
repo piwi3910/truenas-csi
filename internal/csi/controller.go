@@ -9,6 +9,7 @@ import (
 	csipb "github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/pwatteel/truenas-csi/internal/backend"
 	"github.com/pwatteel/truenas-csi/internal/config"
+	"github.com/pwatteel/truenas-csi/internal/node"
 	"github.com/pwatteel/truenas-csi/internal/obs"
 	"github.com/pwatteel/truenas-csi/internal/volume"
 	"google.golang.org/grpc/codes"
@@ -184,9 +185,10 @@ func (c *controller) CreateVolume(ctx context.Context, req *csipb.CreateVolumeRe
 		}
 	}
 	out := &csipb.Volume{
-		VolumeId:      vol.ID.String(),
-		CapacityBytes: vol.CapacityBytes,
-		VolumeContext: vctx,
+		VolumeId:           vol.ID.String(),
+		CapacityBytes:      vol.CapacityBytes,
+		VolumeContext:      vctx,
+		AccessibleTopology: requiredTopology(id.Protocol, req.GetParameters()),
 	}
 	if cr.SourceSnapshot != "" {
 		out.ContentSource = &csipb.VolumeContentSource{Type: &csipb.VolumeContentSource_Snapshot{
@@ -495,4 +497,25 @@ func snapshotNameOf(id string) string {
 		return id[i+1:]
 	}
 	return id
+}
+
+// requiredTopology names the node capabilities a volume needs, so the scheduler
+// will not place a pod on a node that cannot attach or mount it.
+//
+// Publishing capability labels from the node is only half of topology: without
+// the matching requirement here, every node looks equally able and the pod is
+// scheduled somewhere that then fails to mount.
+func requiredTopology(protocol string, params map[string]string) []*csipb.Topology {
+	segments := map[string]string{
+		node.TopologyKey(node.Capability(protocol)): "true",
+	}
+	if fs := params["fsType"]; fs != "" && fs != "ext4" {
+		segments[node.TopologyKey(node.Capability(fs))] = "true"
+	} else if protocol == "iscsi" {
+		segments[node.TopologyKey(node.CapExt4)] = "true"
+	}
+	if params["multipath"] == "true" {
+		segments[node.TopologyKey(node.CapMultipath)] = "true"
+	}
+	return []*csipb.Topology{{Segments: segments}}
 }

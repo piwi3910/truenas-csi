@@ -24,3 +24,7 @@ func (p *Preflight) TopologyLabels() map[string]string {
 	}
 	return labels
 }
+
+// TopologyKey is the node label that advertises a capability. The controller
+// uses it to express what a volume requires, so both halves cannot drift apart.
+func TopologyKey(c Capability) string { return topologyPrefix + string(c) }

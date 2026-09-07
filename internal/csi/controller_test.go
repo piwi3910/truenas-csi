@@ -2,6 +2,9 @@ package csi
 
 import (
 	"context"
+	"github.com/pwatteel/truenas-csi/internal/node"
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -271,5 +274,67 @@ func TestValidateVolumeCapabilitiesRejectsRWXOnISCSI(t *testing.T) {
 	}
 	if resp.GetConfirmed() != nil {
 		t.Fatal("iscsi must not confirm MULTI_NODE_MULTI_WRITER — a zvol is one block device")
+	}
+}
+
+// TestTopologyExcludesIncapableNode proves the two halves of topology line up:
+// what CreateVolume demands of a node must be spelled exactly as the node
+// advertises it, or the requirement matches nothing and the scheduler places
+// pods on nodes that cannot mount the volume.
+func TestTopologyExcludesIncapableNode(t *testing.T) {
+	// A node with ext4 and NFS but no xfs and no multipath tooling.
+	root := t.TempDir()
+	for _, dir := range []string{"sbin", "proc"} {
+		if err := os.MkdirAll(filepath.Join(root, dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, bin := range []string{"mount.nfs", "mkfs.ext4", "iscsiadm", "iscsid"} {
+		if err := os.WriteFile(filepath.Join(root, "sbin", bin), []byte("#!/bin/sh\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "proc", "modules"),
+		[]byte("iscsi_tcp 1 0 - Live 0x0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pf, err := node.Detect(context.Background(), root, func(context.Context, string) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	published := pf.TopologyLabels()
+
+	for _, tc := range []struct {
+		name        string
+		params      map[string]string
+		schedulable bool
+	}{
+		{"nfs on a capable node", map[string]string{"protocol": "nfs"}, true},
+		{"xfs on a node without xfsprogs",
+			map[string]string{"protocol": "iscsi", "fsType": "xfs"}, false},
+		{"multipath on a node without multipath-tools",
+			map[string]string{"protocol": "iscsi", "multipath": "true"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			required := requiredTopology(tc.params["protocol"], tc.params)
+			if len(required) != 1 {
+				t.Fatalf("want exactly one topology requirement, got %d", len(required))
+			}
+			matches := true
+			for k, v := range required[0].GetSegments() {
+				got, present := published[k]
+				if !present {
+					t.Fatalf("CreateVolume requires %q, which the node never publishes — "+
+						"the requirement can never be satisfied by any node", k)
+				}
+				if got != v {
+					matches = false
+				}
+			}
+			if matches != tc.schedulable {
+				t.Fatalf("node schedulable=%v, want %v (required %v, node publishes %v)",
+					matches, tc.schedulable, required[0].GetSegments(), published)
+			}
+		})
 	}
 }

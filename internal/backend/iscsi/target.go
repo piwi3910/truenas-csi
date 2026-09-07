@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	"net"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -414,13 +416,20 @@ func portalAddress(ctx context.Context, c *truenas.Client, portalID int) (string
 		if po.ID != portalID {
 			continue
 		}
+		// Prefer a concrete address. A portal that listens on the wildcard
+		// reports 0.0.0.0 or ::, which is where the APPLIANCE listens, not an
+		// address a node can dial — handing it to an initiator produces
+		// "cannot make connection to 0.0.0.0: Connection refused".
 		for _, l := range po.Listen {
-			if l.IP != "" {
-				return fmt.Sprintf("%s:%d", l.IP, port), nil
+			if l.IP != "" && !isWildcardAddress(l.IP) {
+				return net.JoinHostPort(l.IP, strconv.Itoa(port)), nil
 			}
 		}
+		if host := c.Host(); host != "" {
+			return net.JoinHostPort(host, strconv.Itoa(port)), nil
+		}
 	}
-	return "", fmt.Errorf("portal %d has no listen address", portalID)
+	return "", fmt.Errorf("portal %d has no reachable listen address", portalID)
 }
 
 // queryTarget reads the target with its groups, which the typed client omits.
@@ -437,4 +446,14 @@ func queryTarget(ctx context.Context, c *truenas.Client, name string) (*rawTarge
 		return nil, nil
 	}
 	return &out[0], nil
+}
+
+// isWildcardAddress reports whether an address is a listen-anywhere placeholder
+// rather than something an initiator can connect to.
+func isWildcardAddress(ip string) bool {
+	switch strings.TrimSpace(ip) {
+	case "0.0.0.0", "::", "[::]", "*", "":
+		return true
+	}
+	return false
 }

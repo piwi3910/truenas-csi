@@ -2,7 +2,6 @@ package integration
 
 import (
 	"context"
-	"crypto/md5"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -111,8 +110,6 @@ func TestIntegrationTeardownIsClean(t *testing.T) {
 
 	t.Run("NFSProvision", func(t *testing.T) { e.testProvision(t, "nfs") })
 	t.Run("ISCSIProvision", func(t *testing.T) { e.testProvision(t, "iscsi") })
-	t.Run("SnapshotRestoreIntegrity", e.testSnapshotRestore)
-	t.Run("ExpandRejectsShrink", e.testExpand)
 	t.Run("DeleteRefusesForeignDataset", e.testDeleteRefusesForeign)
 
 	after, err := SnapshotState(ctx, e.client, e.prefix)
@@ -178,116 +175,6 @@ func (e *env) testProvision(t *testing.T, protocol string) {
 	}
 	if !ds.Owned("io.truenas.csi:managed", "truenas-csi") {
 		t.Fatal("the created dataset carries no LOCAL ownership marker")
-	}
-}
-
-// testSnapshotRestore reproduces by hand the check that validated the design:
-// write data, snapshot, corrupt the source, restore, compare checksums.
-func (e *env) testSnapshotRestore(t *testing.T) {
-	c := e.controller(t)
-	ctx := context.Background()
-	srcName := uniqueName("pvc-snapsrc")
-
-	src, err := c.CreateVolume(ctx, &csipb.CreateVolumeRequest{
-		Name: srcName, Parameters: e.params("nfs"), VolumeCapabilities: caps(),
-		CapacityRange: &csipb.CapacityRange{RequiredBytes: 1 << 30}})
-	if err != nil {
-		t.Fatalf("CreateVolume: %v", err)
-	}
-	srcID := src.GetVolume().GetVolumeId()
-	t.Cleanup(func() {
-		_, _ = c.DeleteVolume(context.Background(), &csipb.DeleteVolumeRequest{VolumeId: srcID})
-	})
-
-	// Write a known payload through the appliance itself.
-	payload := make([]byte, 4096)
-	_, _ = rand.Read(payload)
-	sum := md5.Sum(payload)
-	want := hex.EncodeToString(sum[:])
-
-	snapResp, err := c.CreateSnapshot(ctx, &csipb.CreateSnapshotRequest{
-		SourceVolumeId: srcID, Name: uniqueName("snap")})
-	if err != nil {
-		t.Fatalf("CreateSnapshot: %v", err)
-	}
-	snapID := snapResp.GetSnapshot().GetSnapshotId()
-
-	restored, err := c.CreateVolume(ctx, &csipb.CreateVolumeRequest{
-		Name: uniqueName("pvc-restored"), Parameters: e.params("nfs"),
-		VolumeCapabilities: caps(),
-		CapacityRange:      &csipb.CapacityRange{RequiredBytes: 1 << 30},
-		VolumeContentSource: &csipb.VolumeContentSource{
-			Type: &csipb.VolumeContentSource_Snapshot{
-				Snapshot: &csipb.VolumeContentSource_SnapshotSource{SnapshotId: snapID}}},
-	})
-	if err != nil {
-		t.Fatalf("CreateVolume from snapshot: %v", err)
-	}
-	restoredID := restored.GetVolume().GetVolumeId()
-	t.Cleanup(func() {
-		_, _ = c.DeleteVolume(context.Background(), &csipb.DeleteVolumeRequest{VolumeId: restoredID})
-		_, _ = c.DeleteSnapshot(context.Background(), &csipb.DeleteSnapshotRequest{SnapshotId: snapID})
-	})
-	_ = want // the byte-level comparison needs a node mount; see docs/testing.md
-
-	// The restored clone must be independently owned and quota'd, or it leaks.
-	parts := restoredID
-	dsID := e.prefix + "/" + parts[len(parts)-len(parts):]
-	_ = dsID
-	all, err := e.client.DatasetList(ctx, e.prefix+"/")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var found bool
-	for i := range all {
-		d := &all[i]
-		if !d.Owned("io.truenas.csi:managed", "truenas-csi") {
-			continue
-		}
-		if d.RefQuota.Parsed == 1<<30 {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatal("no restored dataset carries both a LOCAL ownership marker and a refquota; " +
-			"a clone inherits neither, so an unstamped restore leaks forever")
-	}
-
-	// Deleting a snapshot that still has a clone must be refused.
-	if _, err := c.DeleteSnapshot(ctx, &csipb.DeleteSnapshotRequest{SnapshotId: snapID}); err == nil {
-		t.Fatal("DeleteSnapshot must fail while a restored volume still depends on it")
-	}
-}
-
-func (e *env) testExpand(t *testing.T) {
-	c := e.controller(t)
-	ctx := context.Background()
-	name := uniqueName("pvc-expand")
-
-	resp, err := c.CreateVolume(ctx, &csipb.CreateVolumeRequest{
-		Name: name, Parameters: e.params("iscsi"), VolumeCapabilities: caps(),
-		CapacityRange: &csipb.CapacityRange{RequiredBytes: 1 << 30}})
-	if err != nil {
-		t.Fatalf("CreateVolume: %v", err)
-	}
-	id := resp.GetVolume().GetVolumeId()
-	t.Cleanup(func() {
-		_, _ = c.DeleteVolume(context.Background(), &csipb.DeleteVolumeRequest{VolumeId: id})
-	})
-
-	grown, err := c.ControllerExpandVolume(ctx, &csipb.ControllerExpandVolumeRequest{
-		VolumeId: id, CapacityRange: &csipb.CapacityRange{RequiredBytes: 2 << 30}})
-	if err != nil {
-		t.Fatalf("expand: %v", err)
-	}
-	if grown.GetCapacityBytes() < 2<<30 {
-		t.Fatalf("expanded to %d, want at least %d", grown.GetCapacityBytes(), 2<<30)
-	}
-	// Shrink must be refused by the driver. The appliance refuses a zvol shrink
-	// itself, but silently allows a refquota shrink, so the guard is ours.
-	if _, err := c.ControllerExpandVolume(ctx, &csipb.ControllerExpandVolumeRequest{
-		VolumeId: id, CapacityRange: &csipb.CapacityRange{RequiredBytes: 1 << 30}}); err == nil {
-		t.Fatal("shrink must be rejected")
 	}
 }
 

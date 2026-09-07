@@ -223,3 +223,21 @@ func TestInitiatorACLRestrictsToNodes(t *testing.T) {
 		t.Fatalf("initiatorACL=false must create no initiator group, got %d", got)
 	}
 }
+
+// TestPortalAddressRejectsWildcard pins a bug found against a real cluster: a
+// portal listening on 0.0.0.0 reported that address in the publish context, and
+// the initiator answered "cannot make connection to 0.0.0.0: Connection
+// refused". The wildcard is where the appliance listens, not somewhere a node
+// can dial.
+func TestPortalAddressRejectsWildcard(t *testing.T) {
+	for _, ip := range []string{"0.0.0.0", "::", "[::]", "*", " "} {
+		if !isWildcardAddress(ip) {
+			t.Errorf("%q must be treated as a wildcard listen address", ip)
+		}
+	}
+	for _, ip := range []string{"192.168.10.253", "10.0.0.1", "fd00::1"} {
+		if isWildcardAddress(ip) {
+			t.Errorf("%q is a real address and must be used as-is", ip)
+		}
+	}
+}
