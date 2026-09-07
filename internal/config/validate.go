@@ -60,6 +60,12 @@ func (b Backend) validate() error {
 	if strings.Contains(b.ParentDataset, "..") {
 		return errors.New("parentDataset must not contain ..")
 	}
+	if b.ReservedBytes < 0 {
+		return fmt.Errorf("reservedBytes must not be negative, got %d", b.ReservedBytes)
+	}
+	if b.ReservedPercent < 0 || b.ReservedPercent > 100 {
+		return fmt.Errorf("reservedPercent must be between 0 and 100, got %v", b.ReservedPercent)
+	}
 	return nil
 }
 

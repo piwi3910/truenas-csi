@@ -17,12 +17,41 @@ type Backend struct {
 	Pool          string `yaml:"pool"`
 	ParentDataset string `yaml:"parentDataset"`
 
+	// ReservedBytes is an absolute amount of pool space this driver must never
+	// hand out. TrueNAS needs headroom for its system datasets, for snapshots
+	// that already exist on the pool and for replication targets; without a
+	// reservation, PVCs can fill the pool to the last byte and degrade the
+	// appliance itself.
+	ReservedBytes int64 `yaml:"reservedBytes"`
+	// ReservedPercent reserves a share of the pool's total size, 0..100. It
+	// scales with the pool where ReservedBytes does not.
+	//
+	// When both are set the LARGER of the two reservations wins — they are two
+	// ways of stating the same headroom, not two headrooms to be added up.
+	ReservedPercent float64 `yaml:"reservedPercent"`
+
 	// CACert, when set, is the only certificate trusted for this appliance.
 	CACert []byte `yaml:"caCert"`
 	// InsecureSkipVerify disables certificate verification. A stock TrueNAS
 	// certificate is self-signed with SAN=DNS:localhost and cannot be verified
 	// against a real address, so this exists — but it is never the default.
 	InsecureSkipVerify bool `yaml:"insecureSkipVerify"`
+}
+
+// Reserve returns the number of bytes of poolSize this driver must leave
+// untouched: the larger of ReservedBytes and ReservedPercent of poolSize, and
+// zero when neither is configured. The result is never negative.
+func (b Backend) Reserve(poolSize int64) int64 {
+	reserve := b.ReservedBytes
+	if b.ReservedPercent > 0 && poolSize > 0 {
+		if pct := int64(float64(poolSize) * b.ReservedPercent / 100); pct > reserve {
+			reserve = pct
+		}
+	}
+	if reserve < 0 {
+		return 0
+	}
+	return reserve
 }
 
 // String renders the backend without its credentials, so it is safe to log.

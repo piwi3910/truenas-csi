@@ -38,6 +38,11 @@ healthAddr: ":9808"
 #     # below.
 #     caCert: ""
 #     insecureSkipVerify: false
+#     # Pool headroom the driver never hands out, so PVCs cannot fill the pool
+#     # and starve TrueNAS itself. Both are optional; when both are set the
+#     # LARGER reservation wins. reservedPercent is a share of the pool size.
+#     reservedBytes: 53687091200 # 50 GiB
+#     reservedPercent: 10
 backends: {}
 
 # existingSecret names a Secret you manage yourself holding key `config.yaml`.

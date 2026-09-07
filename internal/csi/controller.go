@@ -126,6 +126,9 @@ func (c *controller) CreateVolume(ctx context.Context, req *csipb.CreateVolumeRe
 	if size <= 0 {
 		size = 1 << 30 // 1 GiB default, as CSI permits when no range is given
 	}
+	if err := c.requireRoomOutsideReserve(ctx, id.Backend, size); err != nil {
+		return nil, err
+	}
 	cr := backend.CreateRequest{ID: id, CapacityBytes: size, Params: req.GetParameters()}
 	if src := req.GetVolumeContentSource(); src != nil {
 		if s := src.GetSnapshot(); s != nil {

@@ -119,6 +119,9 @@ backends:
     apiKey: "1-abcdef..."
     pool: tank
     parentDataset: tank/k8s
+    # Pool headroom this driver will never hand out. See "Pool reservation" below.
+    reservedBytes: 53687091200 # 50 GiB
+    reservedPercent: 10 # 10% of the pool's total size
     # The stock TrueNAS certificate is self-signed with SAN=DNS:localhost and cannot
     # be verified against a real address. Supply a PEM bundle here.
     caCert: |
@@ -146,6 +149,30 @@ Credentials are rendered into a Secret mounted at `/etc/truenas-csi/config.yaml`
 never appear in a container argument or a plaintext environment variable. Set
 `existingSecret` to a Secret you manage yourself (holding key `config.yaml`) to keep them
 in an external secret store instead — `backends` is then ignored.
+
+#### Pool reservation
+
+TrueNAS needs pool headroom of its own — system datasets, snapshots that already exist on
+the pool, replication targets. Left alone, the driver reports the pool's entire free space
+and PVCs can fill it to the last byte, at which point snapshots and replication start
+failing and the appliance itself degrades. Two per-backend options reserve that headroom:
+
+| Backend option    | Values                        | Default              |
+| ----------------- | ----------------------------- | -------------------- |
+| `reservedBytes`   | absolute bytes, non-negative  | `0` (no reservation) |
+| `reservedPercent` | `0`–`100`, of the pool's size | `0` (no reservation) |
+
+Both are optional. When **both** are set the **larger** of the two reservations wins — they
+are two ways of stating the same headroom, not two headrooms to be added together. A
+`reservedPercent` outside `0`–`100`, or a negative `reservedBytes`, is rejected at startup.
+
+The reservation is enforced twice, because reporting it alone would not be enough:
+
+- `GetCapacity` reports `pool free − reserve`, never less than zero, so the scheduler and
+  `CSIStorageCapacity` already see the reduced figure.
+- `CreateVolume` refuses a claim that would eat into the reserve with `ResourceExhausted`,
+  naming the pool free space, the reserve and the request — a PVC can be created larger
+  than the reported capacity, so the check has to be made at provisioning time too.
 
 Multiple appliances are configured as multiple entries under `backends`; each gets its own
 connection, concurrency budget and capacity figures, and one unreachable appliance does not
