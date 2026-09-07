@@ -307,3 +307,6 @@ design more than any other requirement:
 - [docs/security.md](docs/security.md) — least-privilege TrueNAS roles, TLS trust, the
   accepted shared-target risk, and the data-safety model.
 - [docs/troubleshooting.md](docs/troubleshooting.md) — failure modes and their signatures.
+- [docs/replication.md](docs/replication.md) — StorageProtectionGroup: cross-appliance
+  replication, failover, test failover and failback, their safety rules, and what has
+  not been verified against real hardware.
