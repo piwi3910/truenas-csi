@@ -1,6 +1,6 @@
 # Task 19: Observability and secret redaction
 
-Status: open
+Status: closed
 Created: 2026-09-07
 
 ## Description
@@ -34,14 +34,17 @@ Tests introduced or exercised: TestNoSecretsInOutput, TestMetricsAndLogAttributi
 
 ## Acceptance criteria
 
-- [ ] Write `TestNoSecretsInOutput`: register the API key `8-jX9B9ugcrfTfOjY2YdZb01sAuq0RZKAAZp2k24xvrYI67hv3pb8exkJiF8BiAhxz` and a CHAP secret, drive a full `CreateVolume` and a failing `CreateVolume` against the fake with logs captured to a buffer, and assert neither literal string appears in the buffer, in the returned gRPC error text, or in any metric label. Run `go test ./internal/obs/` — expect FAIL with "undefined: Redact".
-- [ ] Write `TestMetricsAndLogAttribution` asserting that after one `CreateVolume` the `truenas_csi_calls_total` counter has one sample with `method="CreateVolume"` and `error="false"`, that a middleware counter also incremented, and that every log record emitted during the call carries a `volume_id` attribute.
-- [ ] Write `TestRedactHandlesSubstrings` asserting a registered secret is masked even when embedded in a longer string, and that an empty registration never masks everything.
-- [ ] Implement `Redact` over a copy-on-write set of registered secrets, replacing each with `[redacted]`, and wire it into the logger and into gRPC error construction.
-- [ ] Implement the two histogram-and-counter pairs and a gauge for per-backend connection state.
-- [ ] Implement `/healthz` returning 200 when the process is up and `/readyz` returning 503 while no backend has ever connected.
-- [ ] Run `go test ./internal/obs/` — expect PASS.
-- [ ] Commit: "obs: metrics, volume-attributed logging, credential redaction, health".
+- [x] Write `TestNoSecretsInOutput`: register the API key `8-jX9B9ugcrfTfOjY2YdZb01sAuq0RZKAAZp2k24xvrYI67hv3pb8exkJiF8BiAhxz` and a CHAP secret, drive a full `CreateVolume` and a failing `CreateVolume` against the fake with logs captured to a buffer, and assert neither literal string appears in the buffer, in the returned gRPC error text, or in any metric label. Run `go test ./internal/obs/` — expect FAIL with "undefined: Redact".
+- [x] Write `TestMetricsAndLogAttribution` asserting that after one `CreateVolume` the `truenas_csi_calls_total` counter has one sample with `method="CreateVolume"` and `error="false"`, that a middleware counter also incremented, and that every log record emitted during the call carries a `volume_id` attribute.
+- [x] Write `TestRedactHandlesSubstrings` asserting a registered secret is masked even when embedded in a longer string, and that an empty registration never masks everything.
+- [x] Implement `Redact` over a copy-on-write set of registered secrets, replacing each with `[redacted]`, and wire it into the logger and into gRPC error construction.
+- [x] Implement the two histogram-and-counter pairs and a gauge for per-backend connection state.
+- [x] Implement `/healthz` returning 200 when the process is up and `/readyz` returning 503 while no backend has ever connected.
+- [x] Run `go test ./internal/obs/` — expect PASS.
+- [x] Commit: "obs: metrics, volume-attributed logging, credential redaction, health".
 
 ## Evidence
 
+- Delivered by a parallel worktree; merged. Mutation: a no-op Redact leaked the api key.
+- `go test ./...` green across all 18 packages; `gofmt -l` and `go vet ./...` clean.
+- procoder gate: 0 blocking findings. Committed on branch feat/foundation.

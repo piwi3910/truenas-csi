@@ -1,6 +1,6 @@
 # Task 8: Backend interface and multi-appliance registry
 
-Status: open
+Status: closed
 Created: 2026-09-07
 
 ## Description
@@ -34,12 +34,15 @@ Tests introduced or exercised: TestBackendSelectionAndIsolation, TestRegistryUnk
 
 ## Acceptance criteria
 
-- [ ] Write `TestBackendSelectionAndIsolation`: build a registry over two fakes, `nas1` healthy and `nas2` refusing connections; assert `For("nas3","nfs")` returns `ErrUnknownBackend` with the name in the message, assert a `Create` against `nas1` succeeds while `nas2` is down, and assert `nas2`'s failure never blocks `nas1` by running both concurrently with a 2-second bound. Run `go test ./internal/backend/` — expect FAIL with "undefined: NewRegistry".
-- [ ] Write `TestRegistryUnknownProtocol` asserting `For("nas1","smb")` returns an error naming `smb` as unsupported in this version.
-- [ ] Implement `Registry` holding one `*truenas.Client` per backend, dialled lazily so one unreachable appliance does not prevent startup, with its own semaphore per client.
-- [ ] Implement `For` dispatching on protocol to the nfs or iscsi implementation bound to that backend's client, pool and parent dataset.
-- [ ] Run `go test ./internal/backend/` — expect PASS.
-- [ ] Commit: "backend: protocol interface and multi-appliance registry".
+- [x] Write `TestBackendSelectionAndIsolation`: build a registry over two fakes, `nas1` healthy and `nas2` refusing connections; assert `For("nas3","nfs")` returns `ErrUnknownBackend` with the name in the message, assert a `Create` against `nas1` succeeds while `nas2` is down, and assert `nas2`'s failure never blocks `nas1` by running both concurrently with a 2-second bound. Run `go test ./internal/backend/` — expect FAIL with "undefined: NewRegistry".
+- [x] Write `TestRegistryUnknownProtocol` asserting `For("nas1","smb")` returns an error naming `smb` as unsupported in this version.
+- [x] Implement `Registry` holding one `*truenas.Client` per backend, dialled lazily so one unreachable appliance does not prevent startup, with its own semaphore per client.
+- [x] Implement `For` dispatching on protocol to the nfs or iscsi implementation bound to that backend's client, pool and parent dataset.
+- [x] Run `go test ./internal/backend/` — expect PASS.
+- [x] Commit: "backend: protocol interface and multi-appliance registry".
 
 ## Evidence
 
+- Registry with per-appliance dial locks; TestBackendSelectionAndIsolation proves a dead appliance does not stall a healthy one.
+- `go test ./...` green across all 18 packages; `gofmt -l` and `go vet ./...` clean.
+- procoder gate: 0 blocking findings. Committed on branch feat/foundation.

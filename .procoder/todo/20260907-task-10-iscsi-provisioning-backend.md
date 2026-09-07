@@ -1,6 +1,6 @@
 # Task 10: iSCSI provisioning backend
 
-Status: open
+Status: closed
 Created: 2026-09-07
 
 ## Description
@@ -35,20 +35,23 @@ Tests introduced or exercised: TestLUNAllocationUnderConcurrency, TestEnsureTarg
 
 ## Acceptance criteria
 
-- [ ] Write `TestLUNAllocationUnderConcurrency`: fake tracks created targetextents; run 20 concurrent `allocateLUN` calls against one target and assert every returned id is distinct and contiguous from 0, then simulate a controller restart by discarding all in-memory state and assert the next allocation continues from the live query rather than restarting at 0. Run `go test ./internal/backend/iscsi/` — expect FAIL with "undefined: allocateLUN".
-- [ ] Write `TestEnsureTargetIsIdempotent`: two concurrent `ensureTarget` calls produce exactly one `iscsi.target.create` at the fake.
-- [ ] Write `TestEnsurePortalRespectsOverride`: with `portalID` set, assert no `iscsi.portal.create` is issued and the given id is used.
-- [ ] Write `TestCHAPGeneratedPerTarget`: assert an `iscsi.auth` entry is created with a generated secret of at least 12 characters, that the secret never appears in any log line captured during the test, and that `PublishContext` references it without inlining it.
-- [ ] Write `TestInitiatorACLRestrictsToNodes`: assert the target's initiator group contains the supplied node IQNs, and that setting `initiatorACL: "false"` creates no group.
-- [ ] Write `TestISCSICreateIsIdempotent` asserting a repeated `Create` yields one zvol and one extent, and `TestISCSIDeleteVerifiesOwnership` asserting an unmarked zvol is refused.
-- [ ] Write `TestISCSIExpandRejectsShrink` asserting a smaller size is rejected by the driver before reaching middleware.
-- [ ] Implement `allocateLUN`: under the backend lock, query `iscsi.targetextent.query` filtered by target, collect used ids, and return the lowest free id — derived from the live query every time, never cached.
-- [ ] Implement `ensurePortal` and `ensureTarget`: query first, create only when absent, and treat a create that fails because the object already exists as success followed by a re-query.
-- [ ] Implement `Create`: query for an existing zvol; if absent create it with `type: VOLUME`, the requested `volsize`, `sparse`, `volblocksize` taken from the parameter or `pool.dataset.recommended_zvol_blocksize`, and the ownership property. Then create the extent with `type: DISK`, `disk: "zvol/<dataset path>"`, capture the returned `naa`, ensure the shared target, allocate a LUN, and create the targetextent. Roll back created objects in reverse on any failure.
-- [ ] Implement `Delete`: verify ownership on the zvol, then delete targetextent, extent and zvol in that order, tolerating each already being absent.
-- [ ] Implement `Expand` updating `volsize`, rejecting shrink.
-- [ ] Run `go test ./internal/backend/iscsi/` — expect PASS.
-- [ ] Commit: "backend/iscsi: zvol, extent, shared target, LUN allocation and CHAP".
+- [x] Write `TestLUNAllocationUnderConcurrency`: fake tracks created targetextents; run 20 concurrent `allocateLUN` calls against one target and assert every returned id is distinct and contiguous from 0, then simulate a controller restart by discarding all in-memory state and assert the next allocation continues from the live query rather than restarting at 0. Run `go test ./internal/backend/iscsi/` — expect FAIL with "undefined: allocateLUN".
+- [x] Write `TestEnsureTargetIsIdempotent`: two concurrent `ensureTarget` calls produce exactly one `iscsi.target.create` at the fake.
+- [x] Write `TestEnsurePortalRespectsOverride`: with `portalID` set, assert no `iscsi.portal.create` is issued and the given id is used.
+- [x] Write `TestCHAPGeneratedPerTarget`: assert an `iscsi.auth` entry is created with a generated secret of at least 12 characters, that the secret never appears in any log line captured during the test, and that `PublishContext` references it without inlining it.
+- [x] Write `TestInitiatorACLRestrictsToNodes`: assert the target's initiator group contains the supplied node IQNs, and that setting `initiatorACL: "false"` creates no group.
+- [x] Write `TestISCSICreateIsIdempotent` asserting a repeated `Create` yields one zvol and one extent, and `TestISCSIDeleteVerifiesOwnership` asserting an unmarked zvol is refused.
+- [x] Write `TestISCSIExpandRejectsShrink` asserting a smaller size is rejected by the driver before reaching middleware.
+- [x] Implement `allocateLUN`: under the backend lock, query `iscsi.targetextent.query` filtered by target, collect used ids, and return the lowest free id — derived from the live query every time, never cached.
+- [x] Implement `ensurePortal` and `ensureTarget`: query first, create only when absent, and treat a create that fails because the object already exists as success followed by a re-query.
+- [x] Implement `Create`: query for an existing zvol; if absent create it with `type: VOLUME`, the requested `volsize`, `sparse`, `volblocksize` taken from the parameter or `pool.dataset.recommended_zvol_blocksize`, and the ownership property. Then create the extent with `type: DISK`, `disk: "zvol/<dataset path>"`, capture the returned `naa`, ensure the shared target, allocate a LUN, and create the targetextent. Roll back created objects in reverse on any failure.
+- [x] Implement `Delete`: verify ownership on the zvol, then delete targetextent, extent and zvol in that order, tolerating each already being absent.
+- [x] Implement `Expand` updating `volsize`, rejecting shrink.
+- [x] Run `go test ./internal/backend/iscsi/` — expect PASS.
+- [x] Commit: "backend/iscsi: zvol, extent, shared target, LUN allocation and CHAP".
 
 ## Evidence
 
+- Delivered by a parallel worktree; merged. Added a bounded EBUSY retry after the live appliance showed zvol deletion failing right after extent removal.
+- `go test ./...` green across all 18 packages; `gofmt -l` and `go vet ./...` clean.
+- procoder gate: 0 blocking findings. Committed on branch feat/foundation.

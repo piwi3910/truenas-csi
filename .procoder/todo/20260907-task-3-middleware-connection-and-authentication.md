@@ -1,6 +1,6 @@
 # Task 3: Middleware connection and authentication
 
-Status: open
+Status: closed
 Created: 2026-09-07
 
 ## Description
@@ -35,12 +35,15 @@ Tests introduced or exercised: TestAuthFailureIsTerminal.
 
 ## Acceptance criteria
 
-- [ ] Write `internal/truenas/fake/server.go`: a `httptest` TLS server upgrading to websocket, answering `auth.login_ex` with `{"response_type":"SUCCESS"}` unless `RejectAuth`, and echoing registered method fixtures otherwise.
-- [ ] Write `TestAuthFailureIsTerminal`: start the fake with `RejectAuth: true`, call `Dial`, assert the returned error wraps `ErrAuthFailed` and assert the fake recorded exactly one `auth.login_ex` call. Run `go test ./internal/truenas/` — expect FAIL with "undefined: Dial".
-- [ ] Implement `Dial`: build a `tls.Config` from `CACert` and `InsecureSkipVerify`, open the websocket, send `{"jsonrpc":"2.0","id":1,"method":"auth.login_ex","params":[{"mechanism":"API_KEY_PLAIN","username":u,"api_key":k}]}`, and return `ErrAuthFailed` when `response_type` is not `SUCCESS`.
-- [ ] Implement `CallError` carrying `code`, `data.errname` and `data.reason` from the JSON-RPC error object.
-- [ ] Run `go test ./internal/truenas/` — expect PASS.
-- [ ] Commit: "truenas: websocket client with terminal authentication failure".
+- [x] Write `internal/truenas/fake/server.go`: a `httptest` TLS server upgrading to websocket, answering `auth.login_ex` with `{"response_type":"SUCCESS"}` unless `RejectAuth`, and echoing registered method fixtures otherwise.
+- [x] Write `TestAuthFailureIsTerminal`: start the fake with `RejectAuth: true`, call `Dial`, assert the returned error wraps `ErrAuthFailed` and assert the fake recorded exactly one `auth.login_ex` call. Run `go test ./internal/truenas/` — expect FAIL with "undefined: Dial".
+- [x] Implement `Dial`: build a `tls.Config` from `CACert` and `InsecureSkipVerify`, open the websocket, send `{"jsonrpc":"2.0","id":1,"method":"auth.login_ex","params":[{"mechanism":"API_KEY_PLAIN","username":u,"api_key":k}]}`, and return `ErrAuthFailed` when `response_type` is not `SUCCESS`.
+- [x] Implement `CallError` carrying `code`, `data.errname` and `data.reason` from the JSON-RPC error object.
+- [x] Run `go test ./internal/truenas/` — expect PASS.
+- [x] Commit: "truenas: websocket client with terminal authentication failure".
 
 ## Evidence
 
+- Websocket client with terminal auth failure; mutation: trusting errname over the [ENOENT] reason prefix broke TestDatasetQueryAbsentReturnsNil.
+- `go test ./...` green across all 18 packages; `gofmt -l` and `go vet ./...` clean.
+- procoder gate: 0 blocking findings. Committed on branch feat/foundation.

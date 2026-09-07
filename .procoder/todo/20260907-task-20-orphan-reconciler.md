@@ -1,6 +1,6 @@
 # Task 20: Orphan reconciler
 
-Status: open
+Status: closed
 Created: 2026-09-07
 
 ## Description
@@ -28,13 +28,16 @@ Tests introduced or exercised: TestOrphanReconcilerReports, TestOrphanReconciler
 
 ## Acceptance criteria
 
-- [ ] Write `TestOrphanReconcilerReports`: fake holds three owned datasets while the lister returns two matching volume handles; assert `RunOnce` returns exactly the third, increments `truenas_csi_orphaned_volumes`, logs its id, and — the important assertion — that no `pool.dataset.delete` reached the fake. Run `go test ./internal/reconcile/` — expect FAIL with "undefined: NewOrphanReconciler".
-- [ ] Write `TestOrphanReconcilerIgnoresUnowned` asserting a dataset without a `LOCAL` ownership marker is never reported, since it was never ours to begin with.
-- [ ] Write `TestOrphanReconcilerSkipsOnListerError` asserting that when the PV lister fails, nothing is reported — a partial view must never be read as evidence of orphans.
-- [ ] Implement `RunOnce` listing owned datasets per backend, subtracting known PV handles, and reporting the remainder through the metric and a warning log.
-- [ ] Implement the loop calling `RunOnce` on the interval, defaulting to 30 minutes.
-- [ ] Run `go test ./internal/reconcile/` — expect PASS.
-- [ ] Commit: "reconcile: report-only orphan detection".
+- [x] Write `TestOrphanReconcilerReports`: fake holds three owned datasets while the lister returns two matching volume handles; assert `RunOnce` returns exactly the third, increments `truenas_csi_orphaned_volumes`, logs its id, and — the important assertion — that no `pool.dataset.delete` reached the fake. Run `go test ./internal/reconcile/` — expect FAIL with "undefined: NewOrphanReconciler".
+- [x] Write `TestOrphanReconcilerIgnoresUnowned` asserting a dataset without a `LOCAL` ownership marker is never reported, since it was never ours to begin with.
+- [x] Write `TestOrphanReconcilerSkipsOnListerError` asserting that when the PV lister fails, nothing is reported — a partial view must never be read as evidence of orphans.
+- [x] Implement `RunOnce` listing owned datasets per backend, subtracting known PV handles, and reporting the remainder through the metric and a warning log.
+- [x] Implement the loop calling `RunOnce` on the interval, defaulting to 30 minutes.
+- [x] Run `go test ./internal/reconcile/` — expect PASS.
+- [x] Commit: "reconcile: report-only orphan detection".
 
 ## Evidence
 
+- Report-only orphan detection; mutation: making it delete failed TestOrphanReconcilerReports.
+- `go test ./...` green across all 18 packages; `gofmt -l` and `go vet ./...` clean.
+- procoder gate: 0 blocking findings. Committed on branch feat/foundation.

@@ -1,6 +1,6 @@
 # Task 11: Snapshots, clones and restore
 
-Status: open
+Status: closed
 Created: 2026-09-07
 
 ## Description
@@ -30,15 +30,18 @@ Tests introduced or exercised: TestRestoredCloneIsManaged, TestRestoredNFSCloneG
 
 ## Acceptance criteria
 
-- [ ] Write `TestRestoredCloneIsManaged`: assert that after `restoreFromSnapshot` the clone receives an explicit `user_properties_update` stamping the ownership marker and an explicit quota or volsize — a ZFS clone inherits neither from its origin, so without both the volume leaks permanently and misreports its size. Run `go test ./internal/backend/` — expect FAIL with "undefined: restoreFromSnapshot".
-- [ ] Write `TestRestoredNFSCloneGetsPermissions` asserting `filesystem.setperm` runs on a restored filesystem volume, because the clone carries the snapshot's permissions rather than the new StorageClass's.
-- [ ] Write `TestDeleteSnapshotWithDependentClone`: fake reports the snapshot has a clone; assert `DeleteSnapshot` returns `codes.FailedPrecondition` and issues no delete.
-- [ ] Write `TestSnapshotNeverPromotes`: assert no `pool.dataset.promote` is issued anywhere in the restore path — promoting inverts the dependency and makes the SOURCE volume undeletable.
-- [ ] Implement `CreateSnapshot` calling `pool.snapshot.create` with the source dataset and a name derived from the CSI snapshot name, returning `ReadyToUse: true` immediately since ZFS snapshots are atomic.
-- [ ] Implement `DeleteSnapshot`: query dependent clones first and return `FailedPrecondition` when any exist; return nil when the snapshot is already absent.
-- [ ] Implement `restoreFromSnapshot`: `pool.snapshot.clone` to the target dataset, then stamp ownership, then set refquota or volsize, then for filesystem volumes run `SetPerm`, then create the share or iSCSI objects as the protocol requires.
-- [ ] Run `go test ./internal/backend/` — expect PASS.
-- [ ] Commit: "backend: snapshots, dependency-checked deletion and stamped restore".
+- [x] Write `TestRestoredCloneIsManaged`: assert that after `restoreFromSnapshot` the clone receives an explicit `user_properties_update` stamping the ownership marker and an explicit quota or volsize — a ZFS clone inherits neither from its origin, so without both the volume leaks permanently and misreports its size. Run `go test ./internal/backend/` — expect FAIL with "undefined: restoreFromSnapshot".
+- [x] Write `TestRestoredNFSCloneGetsPermissions` asserting `filesystem.setperm` runs on a restored filesystem volume, because the clone carries the snapshot's permissions rather than the new StorageClass's.
+- [x] Write `TestDeleteSnapshotWithDependentClone`: fake reports the snapshot has a clone; assert `DeleteSnapshot` returns `codes.FailedPrecondition` and issues no delete.
+- [x] Write `TestSnapshotNeverPromotes`: assert no `pool.dataset.promote` is issued anywhere in the restore path — promoting inverts the dependency and makes the SOURCE volume undeletable.
+- [x] Implement `CreateSnapshot` calling `pool.snapshot.create` with the source dataset and a name derived from the CSI snapshot name, returning `ReadyToUse: true` immediately since ZFS snapshots are atomic.
+- [x] Implement `DeleteSnapshot`: query dependent clones first and return `FailedPrecondition` when any exist; return nil when the snapshot is already absent.
+- [x] Implement `restoreFromSnapshot`: `pool.snapshot.clone` to the target dataset, then stamp ownership, then set refquota or volsize, then for filesystem volumes run `SetPerm`, then create the share or iSCSI objects as the protocol requires.
+- [x] Run `go test ./internal/backend/` — expect PASS.
+- [x] Commit: "backend: snapshots, dependency-checked deletion and stamped restore".
 
 ## Evidence
 
+- Snapshots never promote; DeleteSnapshot returns FailedPrecondition while clones exist.
+- `go test ./...` green across all 18 packages; `gofmt -l` and `go vet ./...` clean.
+- procoder gate: 0 blocking findings. Committed on branch feat/foundation.

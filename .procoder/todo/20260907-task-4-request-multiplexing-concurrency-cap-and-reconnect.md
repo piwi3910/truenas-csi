@@ -1,6 +1,6 @@
 # Task 4: Request multiplexing, concurrency cap and reconnect
 
-Status: open
+Status: closed
 Created: 2026-09-07
 
 ## Description
@@ -32,14 +32,17 @@ Tests introduced or exercised: TestConcurrencyCapUnderLoad, TestConnectionFailur
 
 ## Acceptance criteria
 
-- [ ] Write `TestConcurrencyCapUnderLoad`: start the fake with `ConcurrencyLimit: 20` (returning JSON-RPC code `-32000` beyond it), issue 100 concurrent `Call`s, assert every call succeeds and the fake's observed peak concurrency is at most 16. Run `go test ./internal/truenas/ -run TestConcurrencyCapUnderLoad` — expect FAIL with "undefined: Call".
-- [ ] Write `TestConnectionFailureRetries`: fake with `DropAfter: 1`; assert a second call succeeds after reconnect and that `auth.login_ex` was seen twice, once per connection.
-- [ ] Write `TestNotificationsAreRouted`: fake emits a `collection_update` with no id; assert it arrives on `Notifications()` and does not corrupt an in-flight call.
-- [ ] Implement `mux.go`: one reader goroutine; responses with an id resolve the waiting future, messages without an id go to the notification channel.
-- [ ] Implement `Call`: acquire a weighted semaphore of `MaxInFlight`, assign the next id, register a waiter, send, and wait on the context.
-- [ ] Implement reconnect with exponential backoff starting at 1s capped at 30s; on reconnect re-authenticate once, and if that authentication fails, surface `ErrAuthFailed` and stop retrying entirely.
-- [ ] Run `go test ./internal/truenas/` — expect PASS.
-- [ ] Commit: "truenas: response multiplexing, bounded concurrency, reconnect".
+- [x] Write `TestConcurrencyCapUnderLoad`: start the fake with `ConcurrencyLimit: 20` (returning JSON-RPC code `-32000` beyond it), issue 100 concurrent `Call`s, assert every call succeeds and the fake's observed peak concurrency is at most 16. Run `go test ./internal/truenas/ -run TestConcurrencyCapUnderLoad` — expect FAIL with "undefined: Call".
+- [x] Write `TestConnectionFailureRetries`: fake with `DropAfter: 1`; assert a second call succeeds after reconnect and that `auth.login_ex` was seen twice, once per connection.
+- [x] Write `TestNotificationsAreRouted`: fake emits a `collection_update` with no id; assert it arrives on `Notifications()` and does not corrupt an in-flight call.
+- [x] Implement `mux.go`: one reader goroutine; responses with an id resolve the waiting future, messages without an id go to the notification channel.
+- [x] Implement `Call`: acquire a weighted semaphore of `MaxInFlight`, assign the next id, register a waiter, send, and wait on the context.
+- [x] Implement reconnect with exponential backoff starting at 1s capped at 30s; on reconnect re-authenticate once, and if that authentication fails, surface `ErrAuthFailed` and stop retrying entirely.
+- [x] Run `go test ./internal/truenas/` — expect PASS.
+- [x] Commit: "truenas: response multiplexing, bounded concurrency, reconnect".
 
 ## Evidence
 
+- Mux, semaphore, reconnect; mutation: MaxInFlight=64 produced 80 -32000 failures. Fixed a real deadlock (login held the mutex the reader needed) and a fake-server accounting bug.
+- `go test ./...` green across all 18 packages; `gofmt -l` and `go vet ./...` clean.
+- procoder gate: 0 blocking findings. Committed on branch feat/foundation.

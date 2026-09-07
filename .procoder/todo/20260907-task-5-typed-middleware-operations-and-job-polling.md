@@ -1,6 +1,6 @@
 # Task 5: Typed middleware operations and job polling
 
-Status: open
+Status: closed
 Created: 2026-09-07
 
 ## Description
@@ -37,14 +37,17 @@ Tests introduced or exercised: TestDatasetQueryAbsentReturnsNil, TestSetPermPoll
 
 ## Acceptance criteria
 
-- [ ] Write `TestDatasetQueryAbsentReturnsNil`: fake returns the real observed error shape for a missing dataset — code `-32602`, `errname` `EINVAL`, reason `"[ENOENT] None: PoolDataset x does not exist"` — and assert `DatasetQuery` returns `(nil, nil)` rather than an error, because errname cannot be trusted. Run the test — expect FAIL with "undefined: DatasetQuery".
-- [ ] Write `TestSetPermPollsJobToCompletion`: fake returns integer job id `9615` from `filesystem.setperm`, then reports state `RUNNING` twice and `SUCCESS`; assert `SetPerm` returns nil and polled at least three times.
-- [ ] Write `TestSetPermFailsOnJobFailure`: fake reports state `FAILED` with an error string; assert `SetPerm` returns an error containing that string.
-- [ ] Write `TestSetPermTimesOut`: fake never leaves `RUNNING`; assert `SetPerm` returns a timeout error within the configured bound rather than blocking forever.
-- [ ] Implement the dataset, snapshot, share and iSCSI wrappers, each marshalling the documented parameter shapes and unmarshalling into typed structs.
-- [ ] Implement `SetPerm`: call `filesystem.setperm`, decode the integer job id, then poll `core.get_jobs` with filter `[["id","=",jobID]]` every 300ms until state is one of `SUCCESS`, `FAILED`, `ABORTED`, bounded by a 2-minute context.
-- [ ] Run `go test ./internal/truenas/` — expect PASS.
-- [ ] Commit: "truenas: typed dataset, share, iscsi operations and job polling".
+- [x] Write `TestDatasetQueryAbsentReturnsNil`: fake returns the real observed error shape for a missing dataset — code `-32602`, `errname` `EINVAL`, reason `"[ENOENT] None: PoolDataset x does not exist"` — and assert `DatasetQuery` returns `(nil, nil)` rather than an error, because errname cannot be trusted. Run the test — expect FAIL with "undefined: DatasetQuery".
+- [x] Write `TestSetPermPollsJobToCompletion`: fake returns integer job id `9615` from `filesystem.setperm`, then reports state `RUNNING` twice and `SUCCESS`; assert `SetPerm` returns nil and polled at least three times.
+- [x] Write `TestSetPermFailsOnJobFailure`: fake reports state `FAILED` with an error string; assert `SetPerm` returns an error containing that string.
+- [x] Write `TestSetPermTimesOut`: fake never leaves `RUNNING`; assert `SetPerm` returns a timeout error within the configured bound rather than blocking forever.
+- [x] Implement the dataset, snapshot, share and iSCSI wrappers, each marshalling the documented parameter shapes and unmarshalling into typed structs.
+- [x] Implement `SetPerm`: call `filesystem.setperm`, decode the integer job id, then poll `core.get_jobs` with filter `[["id","=",jobID]]` every 300ms until state is one of `SUCCESS`, `FAILED`, `ABORTED`, bounded by a 2-minute context.
+- [x] Run `go test ./internal/truenas/` — expect PASS.
+- [x] Commit: "truenas: typed dataset, share, iscsi operations and job polling".
 
 ## Evidence
 
+- Typed dataset/share/iscsi ops and job polling; SetPerm polls core.get_jobs to a terminal state.
+- `go test ./...` green across all 18 packages; `gofmt -l` and `go vet ./...` clean.
+- procoder gate: 0 blocking findings. Committed on branch feat/foundation.

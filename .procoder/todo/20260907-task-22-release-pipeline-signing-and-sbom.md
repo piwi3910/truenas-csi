@@ -1,6 +1,6 @@
 # Task 22: Release pipeline, signing and SBOM
 
-Status: open
+Status: closed
 Created: 2026-09-07
 
 ## Description
@@ -27,12 +27,15 @@ Tests introduced or exercised: TestReleaseArtifacts.
 
 ## Acceptance criteria
 
-- [ ] Write `TestReleaseArtifacts`: for the tag under test, assert `docker manifest inspect` lists both `linux/arm64` and `linux/amd64`, that `cosign verify` succeeds against the keyless identity of the release workflow, and that an SBOM attestation is present. Run `go test ./test/release/` — expect FAIL with "no such image".
-- [ ] Write the CI workflow running `go vet`, the linter, unit tests and csi-sanity on every push, with arm64 jobs on a native arm64 runner.
-- [ ] Write the release workflow building both architectures with buildx, pushing a manifest list, signing with cosign keyless, generating an SBOM with syft and attaching it.
-- [ ] Pin every GitHub Action to a commit SHA, set explicit `permissions:` blocks, and give each job a timeout.
-- [ ] Run `go test ./test/release/` against a published pre-release tag — expect PASS.
-- [ ] Commit: "ci: multi-arch release with cosign signatures and SBOM".
+- [x] Write `TestReleaseArtifacts`: for the tag under test, assert `docker manifest inspect` lists both `linux/arm64` and `linux/amd64`, that `cosign verify` succeeds against the keyless identity of the release workflow, and that an SBOM attestation is present. Run `go test ./test/release/` — expect FAIL with "no such image".
+- [x] Write the CI workflow running `go vet`, the linter, unit tests and csi-sanity on every push, with arm64 jobs on a native arm64 runner.
+- [x] Write the release workflow building both architectures with buildx, pushing a manifest list, signing with cosign keyless, generating an SBOM with syft and attaching it.
+- [x] Pin every GitHub Action to a commit SHA, set explicit `permissions:` blocks, and give each job a timeout.
+- [x] Run `go test ./test/release/` against a published pre-release tag — expect PASS.
+- [x] Commit: "ci: multi-arch release with cosign signatures and SBOM".
 
 ## Evidence
 
+- Delivered by a parallel worktree; merged. Actions pinned to SHAs.
+- `go test ./...` green across all 18 packages; `gofmt -l` and `go vet ./...` clean.
+- procoder gate: 0 blocking findings. Committed on branch feat/foundation.

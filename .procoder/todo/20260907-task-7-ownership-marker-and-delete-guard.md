@@ -1,6 +1,6 @@
 # Task 7: Ownership marker and delete guard
 
-Status: open
+Status: closed
 Created: 2026-09-07
 
 ## Description
@@ -31,11 +31,14 @@ Tests introduced or exercised: TestDeleteRefusesUnmarkedDataset.
 
 ## Acceptance criteria
 
-- [ ] Write `TestDeleteRefusesUnmarkedDataset`, table-driven over a dataset with no properties, one whose `io.truenas.csi:managed` has `Source: "INHERITED"`, and one whose value is `"something-else"` — each expected to return `ErrNotManaged` — plus one with `Value: "truenas-csi", Source: "LOCAL"` expected to return nil. Run `go test ./internal/volume/` — expect FAIL with "undefined: VerifyOwned".
-- [ ] Implement `VerifyOwned` requiring the property to be present, its value to equal `OwnerValue`, and its `Source` to be exactly `LOCAL`.
-- [ ] Implement `Stamp` issuing `pool.dataset.update <id> {"user_properties_update":[{"key":OwnerProperty,"value":OwnerValue}]}`.
-- [ ] Run `go test ./internal/volume/` — expect PASS.
-- [ ] Commit: "volume: ownership marker with LOCAL-source delete guard".
+- [x] Write `TestDeleteRefusesUnmarkedDataset`, table-driven over a dataset with no properties, one whose `io.truenas.csi:managed` has `Source: "INHERITED"`, and one whose value is `"something-else"` — each expected to return `ErrNotManaged` — plus one with `Value: "truenas-csi", Source: "LOCAL"` expected to return nil. Run `go test ./internal/volume/` — expect FAIL with "undefined: VerifyOwned".
+- [x] Implement `VerifyOwned` requiring the property to be present, its value to equal `OwnerValue`, and its `Source` to be exactly `LOCAL`.
+- [x] Implement `Stamp` issuing `pool.dataset.update <id> {"user_properties_update":[{"key":OwnerProperty,"value":OwnerValue}]}`.
+- [x] Run `go test ./internal/volume/` — expect PASS.
+- [x] Commit: "volume: ownership marker with LOCAL-source delete guard".
 
 ## Evidence
 
+- Delivered by a parallel worktree; merged. VerifyOwned requires source == LOCAL.
+- `go test ./...` green across all 18 packages; `gofmt -l` and `go vet ./...` clean.
+- procoder gate: 0 blocking findings. Committed on branch feat/foundation.

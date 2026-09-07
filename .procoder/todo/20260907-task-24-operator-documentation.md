@@ -1,6 +1,6 @@
 # Task 24: Operator documentation
 
-Status: open
+Status: closed
 Created: 2026-09-07
 
 ## Description
@@ -27,12 +27,15 @@ Tests introduced or exercised: TestDocsListAllStorageClassParameters.
 
 ## Acceptance criteria
 
-- [ ] Write `TestDocsListAllStorageClassParameters` in `test/docs/docs_test.go`, parsing the parameter names out of the backend implementations and asserting each appears in `README.md`; fails when a parameter is added without documentation. Run `go test ./test/docs/` — expect FAIL with "README.md not found".
-- [ ] Write `docs/security.md` containing the exact 14-role list — `DATASET_WRITE`, `DATASET_DELETE`, `POOL_READ`, `SNAPSHOT_WRITE`, `SNAPSHOT_DELETE`, `SHARING_ISCSI_EXTENT_WRITE`, `SHARING_ISCSI_TARGET_WRITE`, `SHARING_ISCSI_TARGETEXTENT_WRITE`, `SHARING_ISCSI_GLOBAL_READ`, `SHARING_ISCSI_PORTAL_READ`, `SHARING_ISCSI_INITIATOR_READ`, `SHARING_ISCSI_AUTH_READ`, `SHARING_NFS_WRITE`, `FILESYSTEM_ATTRS_WRITE` — with instructions for creating the TrueNAS account, and a prominent section stating that a single shared iSCSI target exposes every LUN to every logged-in node, so RWO is not enforced below Kubernetes.
-- [ ] Write `docs/troubleshooting.md` covering: an API key revoked by plaintext connection, authentication failure being terminal by design, `-32000` backpressure, a StorageClass requesting a filesystem the node cannot create, and a PVC stuck Pending because pool capacity is exhausted.
-- [ ] Write `README.md` covering installation via Helm, the node package prerequisites (`open-iscsi`, `xfsprogs`, `cifs-utils`, `nvme-cli`, `multipath-tools`), every StorageClass parameter with its default, and the supported protocol matrix.
-- [ ] Run `go test ./test/docs/` — expect PASS.
-- [ ] Commit: "docs: operator guide, security model and troubleshooting".
+- [x] Write `TestDocsListAllStorageClassParameters` in `test/docs/docs_test.go`, parsing the parameter names out of the backend implementations and asserting each appears in `README.md`; fails when a parameter is added without documentation. Run `go test ./test/docs/` — expect FAIL with "README.md not found".
+- [x] Write `docs/security.md` containing the exact 14-role list — `DATASET_WRITE`, `DATASET_DELETE`, `POOL_READ`, `SNAPSHOT_WRITE`, `SNAPSHOT_DELETE`, `SHARING_ISCSI_EXTENT_WRITE`, `SHARING_ISCSI_TARGET_WRITE`, `SHARING_ISCSI_TARGETEXTENT_WRITE`, `SHARING_ISCSI_GLOBAL_READ`, `SHARING_ISCSI_PORTAL_READ`, `SHARING_ISCSI_INITIATOR_READ`, `SHARING_ISCSI_AUTH_READ`, `SHARING_NFS_WRITE`, `FILESYSTEM_ATTRS_WRITE` — with instructions for creating the TrueNAS account, and a prominent section stating that a single shared iSCSI target exposes every LUN to every logged-in node, so RWO is not enforced below Kubernetes.
+- [x] Write `docs/troubleshooting.md` covering: an API key revoked by plaintext connection, authentication failure being terminal by design, `-32000` backpressure, a StorageClass requesting a filesystem the node cannot create, and a PVC stuck Pending because pool capacity is exhausted.
+- [x] Write `README.md` covering installation via Helm, the node package prerequisites (`open-iscsi`, `xfsprogs`, `cifs-utils`, `nvme-cli`, `multipath-tools`), every StorageClass parameter with its default, and the supported protocol matrix.
+- [x] Run `go test ./test/docs/` — expect PASS.
+- [x] Commit: "docs: operator guide, security model and troubleshooting".
 
 ## Evidence
 
+- Delivered by a parallel worktree; merged, with the parameter-coverage test fixed so it actually discovers parameters — which found two undocumented ones.
+- `go test ./...` green across all 18 packages; `gofmt -l` and `go vet ./...` clean.
+- procoder gate: 0 blocking findings. Committed on branch feat/foundation.

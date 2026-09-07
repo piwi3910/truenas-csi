@@ -1,6 +1,6 @@
 # Task 6: Volume identity and parent-dataset confinement
 
-Status: open
+Status: closed
 Created: 2026-09-07
 
 ## Description
@@ -32,13 +32,16 @@ Tests introduced or exercised: TestVolumeIDRoundTrip, TestVolumeIDConfinement, T
 
 ## Acceptance criteria
 
-- [ ] Write `TestVolumeIDRoundTrip` asserting `ParseID("nas1/iscsi/Pool0/k8s/pvc-abc").String()` equals the input and that `DatasetPath()` is `Pool0/k8s/pvc-abc`. Run `go test ./internal/volume/` — expect FAIL with "undefined: ParseID".
-- [ ] Write `TestVolumeIDConfinement`, table-driven, asserting `ErrOutsideParent` for each of: `"nas1/nfs/Pool0/k8s/../../Home"`, `"nas1/nfs/Pool0/../Home/x"`, `"nas1/nfs/Pool0/k8s/./../../old_homes"`, `"nas1/nfs/OtherPool/k8s/x"`, `"nas1/nfs/Pool0/notk8s/x"`, and a name containing `/`; and success for `"nas1/nfs/Pool0/k8s/pvc-1"`.
-- [ ] Write `TestParseIDRejectsMalformed` covering empty string, three segments, and an empty component between separators.
-- [ ] Implement `ParseID` splitting into exactly five components, rejecting any component that is empty, `.` or `..`, or that contains a path separator after unescaping.
-- [ ] Implement `Confine` comparing `filepath.Clean` of the resolved dataset path against the configured `<pool>/<parent>` prefix, requiring a separator at the boundary so `k8s-other` does not match `k8s`.
-- [ ] Run `go test ./internal/volume/` — expect PASS.
-- [ ] Commit: "volume: structured identity with parent-dataset confinement".
+- [x] Write `TestVolumeIDRoundTrip` asserting `ParseID("nas1/iscsi/Pool0/k8s/pvc-abc").String()` equals the input and that `DatasetPath()` is `Pool0/k8s/pvc-abc`. Run `go test ./internal/volume/` — expect FAIL with "undefined: ParseID".
+- [x] Write `TestVolumeIDConfinement`, table-driven, asserting `ErrOutsideParent` for each of: `"nas1/nfs/Pool0/k8s/../../Home"`, `"nas1/nfs/Pool0/../Home/x"`, `"nas1/nfs/Pool0/k8s/./../../old_homes"`, `"nas1/nfs/OtherPool/k8s/x"`, `"nas1/nfs/Pool0/notk8s/x"`, and a name containing `/`; and success for `"nas1/nfs/Pool0/k8s/pvc-1"`.
+- [x] Write `TestParseIDRejectsMalformed` covering empty string, three segments, and an empty component between separators.
+- [x] Implement `ParseID` splitting into exactly five components, rejecting any component that is empty, `.` or `..`, or that contains a path separator after unescaping.
+- [x] Implement `Confine` comparing `filepath.Clean` of the resolved dataset path against the configured `<pool>/<parent>` prefix, requiring a separator at the boundary so `k8s-other` does not match `k8s`.
+- [x] Run `go test ./internal/volume/` — expect PASS.
+- [x] Commit: "volume: structured identity with parent-dataset confinement".
 
 ## Evidence
 
+- Delivered by a parallel worktree; merged. Traversal cases rejected before any middleware call.
+- `go test ./...` green across all 18 packages; `gofmt -l` and `go vet ./...` clean.
+- procoder gate: 0 blocking findings. Committed on branch feat/foundation.

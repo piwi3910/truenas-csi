@@ -1,6 +1,6 @@
 # Task 18: Multipath support with single-path degradation
 
-Status: open
+Status: closed
 Created: 2026-09-07
 
 ## Description
@@ -27,12 +27,15 @@ Tests introduced or exercised: TestMultipathDegrades, TestMultipathUsesMapperDev
 
 ## Acceptance criteria
 
-- [ ] Write `TestMultipathDegrades`: preflight without `CapMultipath`; assert staging still succeeds using the plain by-id device and that a warning containing `multipath-tools` is logged exactly once. Run `go test ./internal/node/ -run TestMultipathDegrades` — expect FAIL with "undefined: multipathDevice".
-- [ ] Write `TestMultipathUsesMapperDevice`: preflight with `CapMultipath` and a fake `multipath -l` output naming the NAA; assert the staged device is the `/dev/mapper/<wwid>` path rather than the raw `sd` device.
-- [ ] Implement `multipathDevice` invoking `multipath -l <wwid>` and parsing the mapper name, returning `false` when the capability is absent so the caller falls back.
-- [ ] Implement the fallback in the staging path, logging the warning once per node start rather than per volume.
-- [ ] Run `go test ./internal/node/` — expect PASS.
-- [ ] Commit: "node: multipath device mapping with single-path fallback".
+- [x] Write `TestMultipathDegrades`: preflight without `CapMultipath`; assert staging still succeeds using the plain by-id device and that a warning containing `multipath-tools` is logged exactly once. Run `go test ./internal/node/ -run TestMultipathDegrades` — expect FAIL with "undefined: multipathDevice".
+- [x] Write `TestMultipathUsesMapperDevice`: preflight with `CapMultipath` and a fake `multipath -l` output naming the NAA; assert the staged device is the `/dev/mapper/<wwid>` path rather than the raw `sd` device.
+- [x] Implement `multipathDevice` invoking `multipath -l <wwid>` and parsing the mapper name, returning `false` when the capability is absent so the caller falls back.
+- [x] Implement the fallback in the staging path, logging the warning once per node start rather than per volume.
+- [x] Run `go test ./internal/node/` — expect PASS.
+- [x] Commit: "node: multipath device mapping with single-path fallback".
 
 ## Evidence
 
+- Delivered by a parallel worktree; merged.
+- `go test ./...` green across all 18 packages; `gofmt -l` and `go vet ./...` clean.
+- procoder gate: 0 blocking findings. Committed on branch feat/foundation.

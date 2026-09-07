@@ -1,6 +1,6 @@
 # Task 9: NFS provisioning backend
 
-Status: open
+Status: closed
 Created: 2026-09-07
 
 ## Description
@@ -29,19 +29,22 @@ Tests introduced or exercised: TestNFSCreateSetsRefquota, TestNFSCreateStampsOwn
 
 ## Acceptance criteria
 
-- [ ] Write `TestNFSCreateSetsRefquota`: assert the create path issues `pool.dataset.create` with `refquota` equal to the requested bytes, and fail the test if `refquota` is absent — without it a pod sees the whole pool rather than its volume. Run `go test ./internal/backend/nfs/` — expect FAIL with "undefined: New".
-- [ ] Write `TestNFSCreateStampsOwnership` asserting `user_properties` carries `io.truenas.csi:managed` at creation.
-- [ ] Write `TestNFSCreateSetsPermissions` asserting `filesystem.setperm` is called with the configured mode, uid and gid before the share is created, because a fresh dataset is `root:root 0755` and a non-root pod cannot write to it.
-- [ ] Write `TestNFSCreateIsIdempotent`: run `Create` twice with identical parameters and assert exactly one `pool.dataset.create` reaches the fake and both calls return the same volume — the second must find the existing dataset by query.
-- [ ] Write `TestNFSCreateConflictingSize`: existing dataset with a different refquota; assert a `codes.AlreadyExists` error.
-- [ ] Write `TestNFSDeleteVerifiesOwnership`: fake returns a dataset with no `LOCAL` marker; assert `Delete` returns `volume.ErrNotManaged` and issues no `pool.dataset.delete`.
-- [ ] Write `TestNFSExpandRejectsShrink` asserting a smaller size returns `codes.InvalidArgument` and issues no update, because middleware silently permits a refquota shrink below current usage.
-- [ ] Implement `Create`: query for an existing dataset first; if absent create it with `refquota`, the ownership property and `share_type` unset; then `SetPerm`; then create the NFS share with the configured networks and maproot. On any failure after dataset creation, delete the dataset before returning so no unmarked partial remains.
-- [ ] Implement `Delete`: query the dataset, `VerifyOwned`, delete the NFS share whose path matches the mountpoint, then delete the dataset. Return nil when the dataset is already absent.
-- [ ] Implement `Expand` rejecting any size below the current refquota, then updating it.
-- [ ] Implement `PublishContext` returning the server address, export path and nfs version.
-- [ ] Run `go test ./internal/backend/nfs/` — expect PASS.
-- [ ] Commit: "backend/nfs: dataset, quota, permissions and share provisioning".
+- [x] Write `TestNFSCreateSetsRefquota`: assert the create path issues `pool.dataset.create` with `refquota` equal to the requested bytes, and fail the test if `refquota` is absent — without it a pod sees the whole pool rather than its volume. Run `go test ./internal/backend/nfs/` — expect FAIL with "undefined: New".
+- [x] Write `TestNFSCreateStampsOwnership` asserting `user_properties` carries `io.truenas.csi:managed` at creation.
+- [x] Write `TestNFSCreateSetsPermissions` asserting `filesystem.setperm` is called with the configured mode, uid and gid before the share is created, because a fresh dataset is `root:root 0755` and a non-root pod cannot write to it.
+- [x] Write `TestNFSCreateIsIdempotent`: run `Create` twice with identical parameters and assert exactly one `pool.dataset.create` reaches the fake and both calls return the same volume — the second must find the existing dataset by query.
+- [x] Write `TestNFSCreateConflictingSize`: existing dataset with a different refquota; assert a `codes.AlreadyExists` error.
+- [x] Write `TestNFSDeleteVerifiesOwnership`: fake returns a dataset with no `LOCAL` marker; assert `Delete` returns `volume.ErrNotManaged` and issues no `pool.dataset.delete`.
+- [x] Write `TestNFSExpandRejectsShrink` asserting a smaller size returns `codes.InvalidArgument` and issues no update, because middleware silently permits a refquota shrink below current usage.
+- [x] Implement `Create`: query for an existing dataset first; if absent create it with `refquota`, the ownership property and `share_type` unset; then `SetPerm`; then create the NFS share with the configured networks and maproot. On any failure after dataset creation, delete the dataset before returning so no unmarked partial remains.
+- [x] Implement `Delete`: query the dataset, `VerifyOwned`, delete the NFS share whose path matches the mountpoint, then delete the dataset. Return nil when the dataset is already absent.
+- [x] Implement `Expand` rejecting any size below the current refquota, then updating it.
+- [x] Implement `PublishContext` returning the server address, export path and nfs version.
+- [x] Run `go test ./internal/backend/nfs/` — expect PASS.
+- [x] Commit: "backend/nfs: dataset, quota, permissions and share provisioning".
 
 ## Evidence
 
+- Delivered by a parallel worktree; merged, with a correction: PublishContext now falls back to the appliance host so a restarted controller can publish existing volumes.
+- `go test ./...` green across all 18 packages; `gofmt -l` and `go vet ./...` clean.
+- procoder gate: 0 blocking findings. Committed on branch feat/foundation.
