@@ -88,9 +88,8 @@ Interfaces produced:
 Steps:
 
 - [ ] Write `TestRejectsPlaintextEndpoint` in `internal/config/config_test.go`, table-driven
-      over `"http://nas/api/current"`, `"ws://nas/api/current"`, `"https://nas"`, each
-      expected to return `ErrInsecureTransport`, and `"wss://nas/api/current"` expected to
-      pass. Run `go test ./internal/config/` — expect FAIL with "undefined: Validate".
+      over endpoints whose scheme is http, plain ws, or https — each expected to return
+      `ErrInsecureTransport` — and an endpoint whose scheme is wss, expected to pass. Run `go test ./internal/config/` — expect FAIL with "undefined: Validate".
 - [ ] Write `TestValidateRequiresBackendFields` asserting a backend missing `Pool` or
       `ParentDataset` fails with a message naming the field.
 - [ ] Implement `Backend`, `Config`, and `Load` reading YAML from a path.
@@ -735,8 +734,8 @@ Steps:
 
 - [ ] Write `TestMultipathDegrades`: preflight without `CapMultipath`; assert staging still
       succeeds using the plain by-id device and that a warning containing
-      `multipath-tools` is logged exactly once. Run `go test ./internal/node/ -run
-      TestMultipathDegrades` — expect FAIL with "undefined: multipathDevice".
+      `multipath-tools` is logged exactly once. Run the node package tests — expect FAIL
+      with "undefined: multipathDevice".
 - [ ] Write `TestMultipathUsesMapperDevice`: preflight with `CapMultipath` and a fake
       `multipath -l` output naming the NAA; assert the staged device is the
       `/dev/mapper/<wwid>` path rather than the raw `sd` device.
@@ -966,3 +965,52 @@ Steps:
       StorageClass parameter with its default, and the supported protocol matrix.
 - [ ] Run `go test ./test/docs/` — expect PASS.
 - [ ] Commit: "docs: operator guide, security model and troubleshooting".
+
+## Task 25: gRPC server and process wiring
+
+Added during implementation: no earlier task serves the CSI services over a socket or
+wires the process together, so the driver could not actually run and Task 23's
+conformance suite would have nothing to exercise.
+
+Files:
+
+- `internal/server/server.go` — gRPC server, socket lifecycle, interceptors.
+- `internal/server/server_test.go` — tests.
+- `internal/csi/node.go` — adapts the node data path to the CSI gRPC surface.
+- `cmd/truenas-csi/main.go` — replace the mode stub with real wiring.
+
+Interfaces produced:
+
+- `func New(endpoint string, id csipb.IdentityServer, ctrl csipb.ControllerServer, node csipb.NodeServer) (*Server, error)`
+- `func (s *Server) Serve(ctx context.Context) error` — returns when the context ends
+- `func (s *Server) Stop(ctx context.Context) error` — graceful drain
+- `func csi.NewNode(n *node.Node) csipb.NodeServer`
+
+Steps:
+
+- [ ] Write `TestServerServesIdentityOverUnixSocket`: start the server on a short socket
+      path, dial it, call `GetPluginInfo`, and assert the plugin name; fails if the socket
+      is not created or the service is not registered.
+- [ ] Write `TestGracefulShutdownDrainsInFlight`: a controller whose CreateVolume blocks;
+      trigger shutdown mid-call and assert the call returns a real response rather than a
+      cancellation; fails if Stop hard-stops instead of draining.
+- [ ] Write `TestServerRemovesStaleSocket`: leave a file at the socket path and assert the
+      server still starts; fails if it returns "address already in use".
+- [ ] Write `TestUnaryInterceptorRecordsMetricsAndRedacts`: a handler returning an error
+      containing a registered secret must surface a redacted message with its status code
+      intact; fails if a credential reaches the caller.
+- [ ] Write `TestRunRejectsPlaintextConfig` in `cmd/truenas-csi`: a config whose endpoint
+      scheme is http must stop the driver before any socket is opened; fails if the process
+      starts or the socket appears.
+- [ ] Implement the server: strip the socket scheme prefix, remove a stale socket file,
+      listen, register the non-nil services, and install a unary interceptor that times,
+      records and redacts.
+- [ ] Implement `Stop` with `GracefulStop` bounded by 30 seconds, falling back to a hard
+      stop only if the drain does not finish.
+- [ ] Implement the node adapter, persisting the publish context beside the staging path so
+      unstage can log out of the right target without guessing from live session state.
+- [ ] Rewrite `cmd/truenas-csi/main.go`: parse the flags, load and validate the config,
+      register every credential for redaction, build the registry in controller mode or run
+      the capability preflight in node mode, serve metrics and health, and handle SIGTERM.
+- [ ] Run `go test ./internal/server/ ./cmd/...` — expect PASS.
+- [ ] Commit: "server: gRPC serving, graceful drain and process wiring".
