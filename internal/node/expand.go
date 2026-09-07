@@ -30,29 +30,47 @@ func (n *Node) Expand(ctx context.Context, req ExpandRequest) (ExpandResponse, e
 	ctx = obs.WithVolume(ctx, req.VolumeID)
 	resp := ExpandResponse{CapacityBytes: req.CapacityBytes}
 
+	var (
+		device string
+		rescan func() error
+	)
 	switch protocolOf(req.PublishContext) {
 	case ProtocolNFS:
 		// Nothing to do on the node. The dataset's refquota is the size the pod
 		// sees, and it changed on the appliance.
 		return resp, nil
 	case ProtocolISCSI:
+		portal, iqn, naa := req.PublishContext[KeyPortal], req.PublishContext[KeyIQN], req.PublishContext[KeyNAA]
+		if portal == "" || iqn == "" || naa == "" {
+			return resp, fmt.Errorf("%w: iscsi expansion needs %q, %q and %q in the publish context",
+				ErrInvalidRequest, KeyPortal, KeyIQN, KeyNAA)
+		}
+		d, err := n.deviceFor(ctx, naa)
+		if err != nil {
+			return resp, err
+		}
+		device = d
+		rescan = func() error { return iscsiRescan(ctx, n.exec, portal, iqn) }
+	case ProtocolNVMe:
+		serial := req.PublishContext[KeySerial]
+		if serial == "" {
+			return resp, fmt.Errorf("%w: nvme expansion needs %q in the publish context",
+				ErrInvalidRequest, KeySerial)
+		}
+		d, err := resolveNVMeDevice(ctx, n.exec, n.hostRoot(), serial)
+		if err != nil {
+			return resp, err
+		}
+		device = d
+		// The namespace rescan is scoped to the device resolved from our own
+		// subsystem serial, so no other controller on the node is disturbed.
+		rescan = func() error { return nvmeRescan(ctx, n.exec, device) }
 	default:
 		return resp, fmt.Errorf("%w: publish context names no supported protocol", ErrInvalidRequest)
 	}
 
-	portal, iqn, naa := req.PublishContext[KeyPortal], req.PublishContext[KeyIQN], req.PublishContext[KeyNAA]
-	if portal == "" || iqn == "" || naa == "" {
-		return resp, fmt.Errorf("%w: iscsi expansion needs %q, %q and %q in the publish context",
-			ErrInvalidRequest, KeyPortal, KeyIQN, KeyNAA)
-	}
-
-	device, err := n.deviceFor(ctx, naa)
-	if err != nil {
-		return resp, err
-	}
-
 	before, haveBefore := n.deviceSize(ctx, device)
-	if err := iscsiRescan(ctx, n.exec, portal, iqn); err != nil {
+	if err := rescan(); err != nil {
 		return resp, err
 	}
 	after := n.waitForGrowth(ctx, device, before, haveBefore)

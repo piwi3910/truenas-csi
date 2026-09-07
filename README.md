@@ -8,11 +8,12 @@ REST client and no dual-transport abstraction — the legacy REST API is depreca
 Driver name: `csi.truenas.watteel.com` (immutable once PersistentVolumes exist — changing
 it orphans every PV). Go module: `github.com/piwi3910/truenas-csi`. Licence: Apache 2.0.
 
-**Protocols in v1: NFS and iSCSI.** SMB and NVMe/TCP were both validated end to end
-against a live appliance and against real cluster nodes, and the backend abstraction is
-shaped to accept them, but neither ships in v1. **NVMe over RDMA/RoCE is out of scope**:
-the target appliance reports `nvmet.global.rdma = false` and the arm64 nodes have no
-RDMA-capable NICs, so it cannot be validated at all.
+**Protocols: NFS, iSCSI and NVMe/TCP**, all three validated end to end against a live
+appliance and real cluster nodes. SMB was validated too but does not ship yet. **NVMe over
+RDMA/RoCE is implemented but UNVALIDATED**: the target appliance reports
+`nvmet.global.rdma = false` and the arm64 nodes have no RDMA-capable NICs, so the driver
+refuses `transport: rdma` on an appliance that reports no RDMA rather than exporting a
+volume nothing can connect to.
 
 ---
 
@@ -56,15 +57,15 @@ deliver, and logs exactly what an operator must install for anything missing. A
 StorageClass asking for a capability a node lacks fails fast with a message naming the
 missing package instead of a cryptic mount error.
 
-| Capability                  | Debian/Ubuntu package | Needs                                            |
-| --------------------------- | --------------------- | ------------------------------------------------ |
-| iSCSI                       | `open-iscsi`          | `iscsiadm`, `iscsid`, module `iscsi_tcp`         |
-| NFS                         | `nfs-common`          | `mount.nfs`                                      |
-| ext4                        | `e2fsprogs`           | `mkfs.ext4`, `resize2fs`                         |
-| XFS                         | `xfsprogs`            | `mkfs.xfs`, `xfs_growfs`                         |
-| multipath                   | `multipath-tools`     | `multipath`, `multipathd`, module `dm_multipath` |
-| SMB (deferred protocol)     | `cifs-utils`          | `mount.cifs`, module `cifs`                      |
-| NVMe-oF (deferred protocol) | `nvme-cli`            | `nvme`, module `nvme_tcp`                        |
+| Capability              | Debian/Ubuntu package | Needs                                            |
+| ----------------------- | --------------------- | ------------------------------------------------ |
+| iSCSI                   | `open-iscsi`          | `iscsiadm`, `iscsid`, module `iscsi_tcp`         |
+| NFS                     | `nfs-common`          | `mount.nfs`                                      |
+| ext4                    | `e2fsprogs`           | `mkfs.ext4`, `resize2fs`                         |
+| XFS                     | `xfsprogs`            | `mkfs.xfs`, `xfs_growfs`                         |
+| multipath               | `multipath-tools`     | `multipath`, `multipathd`, module `dm_multipath` |
+| NVMe-oF                 | `nvme-cli`            | `nvme`, module `nvme_tcp`                        |
+| SMB (deferred protocol) | `cifs-utils`          | `mount.cifs`, module `cifs`                      |
 
 Notes:
 
@@ -190,7 +191,7 @@ A parameter left empty means "use the default"; that is not an error.
 | Parameter       | Applies to | Values                                                              | Default                                                                |
 | --------------- | ---------- | ------------------------------------------------------------------- | ---------------------------------------------------------------------- |
 | `backend`       | all        | a name from the chart's `backends` map                              | required, unless exactly one backend is configured                     |
-| `protocol`      | all        | `nfs`, `iscsi`                                                      | required                                                               |
+| `protocol`      | all        | `nfs`, `iscsi`, `nvme`                                              | required                                                               |
 | `pool`          | all        | ZFS pool name                                                       | the backend's configured pool                                          |
 | `parentDataset` | all        | dataset every volume is created under                               | the backend's configured parent dataset                                |
 | `fsType`        | iscsi      | `ext4`, `xfs`                                                       | `ext4`                                                                 |
@@ -208,6 +209,12 @@ A parameter left empty means "use the default"; that is not an error.
 | `initiatorACL`  | iscsi      | `true`, `false` — restrict the target to the cluster's node IQNs    | `true`                                                                 |
 | `nodeIQNs`      | iscsi      | comma-separated node IQNs allowed on the shared target              | unset — no initiator group is created, so the target stays open        |
 | `multipath`     | iscsi      | `true`, `false` — use multipath where the node supports it          | `false`                                                                |
+| `transport`     | nvme       | `tcp`, `rdma` — NVMe-oF transport (see below)                       | `tcp`                                                                  |
+| `hostNQNs`      | nvme       | comma-separated initiator NQNs allowed on the subsystem             | unset — the subsystem is created with `allow_any_host`                 |
+| `sparse`        | nvme       | `true`, `false`                                                     | `true`                                                                 |
+| `volblocksize`  | nvme       | e.g. `16K`, `128K`                                                  | the appliance's `pool.dataset.recommended_zvol_blocksize` for the pool |
+| `portAddress`   | nvme       | address the NVMe-oF port listens on                                 | the appliance's own endpoint host                                      |
+| `port`          | nvme       | transport service id                                                | `4420`                                                                 |
 
 ### `pool` and `parentDataset` are policy, not a redirect
 
@@ -223,6 +230,33 @@ TrueNAS refuses to create a **thick** zvol larger than 80% of the pool's free sp
 `sparse: "false"` a large PVC can therefore be refused outright (surfaced as
 `RESOURCE_EXHAUSTED`) where a sparse one would have been created.
 
+### `transport: rdma` is implemented but UNVALIDATED
+
+NVMe over RDMA/RoCE is written and wired, but not one byte has moved over it: the
+validation appliance reports `nvmet.global.rdma = false` and the cluster's RK3588 nodes
+have no RDMA hardware, so the path cannot be exercised here. The driver therefore
+**refuses** `transport: rdma` against an appliance reporting `rdma = false`, rather than
+creating a port nothing can connect to and failing much later at attach time. Treat RDMA
+as untested until someone runs it on hardware that has it. NVMe/TCP is validated end to
+end.
+
+### `hostNQNs` empty means "any host", not "no host"
+
+An NVMe subsystem with `allow_any_host = false` and an empty host ACL accepts **nobody**.
+Writing that when no NQNs are configured would provision every volume cleanly and then
+fail every attach, so an empty `hostNQNs` creates the subsystem with `allow_any_host`
+instead. Setting `hostNQNs` closes the subsystem and registers exactly those initiators
+(`nvmet.host` + `nvmet.host_subsys`). This is the same rule the iSCSI backend applies to
+an empty initiator group.
+
+### NVMe uses one subsystem per volume
+
+Unlike the iSCSI backend's single shared target, each NVMe volume gets its own subsystem.
+A namespace only exists inside a subsystem and host ACLs are a property of the subsystem,
+so per-volume subsystems keep exposure and teardown per-volume. The transport **port** is
+the one shared object: it is queried first, created only when absent, and never removed by
+a volume's delete or rollback.
+
 ### `volblocksize` is visible to the initiator
 
 A zvol's `volblocksize` surfaces to the initiator as the device's _physical_ sector size
@@ -237,6 +271,7 @@ sector size when its block size is smaller). It is not purely a performance knob
 | --------- | ------------- | ------------ | ------------- | ---------------- | ---------------- |
 | **NFS**   | yes           | yes          | **yes**       | yes              | no               |
 | **iSCSI** | yes           | no           | **no**        | yes              | yes              |
+| **NVMe**  | yes           | no           | **no**        | yes              | yes              |
 
 **iSCSI is single-node by nature.** A volume is one zvol exported as one block device; two
 nodes writing the same block device with independent page caches and a non-cluster

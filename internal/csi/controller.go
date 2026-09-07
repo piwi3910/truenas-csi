@@ -511,7 +511,7 @@ func requiredTopology(protocol string, params map[string]string) []*csipb.Topolo
 	}
 	if fs := params["fsType"]; fs != "" && fs != "ext4" {
 		segments[node.TopologyKey(node.Capability(fs))] = "true"
-	} else if protocol == "iscsi" {
+	} else if protocol == "iscsi" || protocol == "nvme" {
 		segments[node.TopologyKey(node.CapExt4)] = "true"
 	}
 	if params["multipath"] == "true" {
