@@ -110,12 +110,21 @@ func (n *Node) unstageISCSI(ctx context.Context, req UnstageRequest) error {
 	return iscsiLogout(ctx, n.exec, portal, iqn)
 }
 
-// deviceFor resolves the NAA to a device path, preferring the multipath mapper
-// device when this node has multipath and the target is multipathed.
+// deviceFor resolves the NAA to the device the volume should be used through: the
+// multipath mapper device when this node has multipath and the LUN is multipathed,
+// and the single by-id path otherwise. A node without multipath-tools degrades to
+// the single path with one warning rather than failing the attach.
 func (n *Node) deviceFor(ctx context.Context, naa string) (string, error) {
 	device, err := resolveDevice(n.hostRoot(), naa)
 	if err != nil {
 		return "", err
+	}
+	if !n.pre.Found[CapMultipath] {
+		n.warnNoMultipath(ctx)
+		return device, nil
+	}
+	if mapper, ok, err := multipathDevice(ctx, n.exec, naa); err == nil && ok {
+		return mapper, nil
 	}
 	return device, nil
 }
