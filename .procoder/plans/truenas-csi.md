@@ -1014,3 +1014,187 @@ Steps:
       the capability preflight in node mode, serve metrics and health, and handle SIGTERM.
 - [ ] Run `go test ./internal/server/ ./cmd/...` — expect PASS.
 - [ ] Commit: "server: gRPC serving, graceful drain and process wiring".
+
+## Task 26: SMB provisioning backend
+
+Files:
+
+- `internal/backend/smb/smb.go` — create, delete, expand, publish context.
+- `internal/truenas/acl.go` — the job-based ACL call SMB datasets need.
+- `internal/backend/smb/smb_test.go` — tests.
+
+Interfaces produced:
+
+- `func New(c *truenas.Client, pool, parent string) backend.Backend` registered as "smb"
+- `func (c *Client) SetACL(ctx context.Context, path string, spec ACLSpec) error`
+
+Steps:
+
+- [ ] Write `TestSMBCreateSetsACLNotPerm` asserting `filesystem.setacl` is called and
+      `filesystem.setperm` is not; fails if the NFS permissions path is reused, which does
+      not apply to an SMB dataset's NFSv4 ACL.
+- [ ] Write `TestSMBShareNameWithinLimit` asserting two long distinct volume names do not
+      collapse onto one share; fails if truncation is plain rather than hash-suffixed.
+- [ ] Write `TestSMBCreateSetsRefquota`, `TestSMBCreateStampsOwnership`,
+      `TestSMBCreateIsIdempotent`, `TestSMBCreateRollsBackOnShareFailure`,
+      `TestSMBDeleteVerifiesOwnership`, `TestSMBExpandRejectsShrink`,
+      `TestSMBPublishContextCarriesNoPassword`, `TestSMBRestoreStampsClone`.
+- [ ] Implement create with `share_type: "SMB"`, refquota, ownership marker, `SetACL`, then
+      the share; roll back the dataset on any later failure.
+- [ ] Implement delete verifying `source == "LOCAL"` before removing share then dataset.
+- [ ] Run the package tests — expect PASS. Commit.
+
+## Task 27: NVMe-oF provisioning backend and node attach
+
+Files:
+
+- `internal/backend/nvme/nvme.go`, `internal/backend/nvme/target.go` — provisioning.
+- `internal/truenas/nvmet.go` — typed nvmet calls.
+- `internal/node/nvme.go` — node attach, device resolution, disconnect.
+- tests alongside each.
+
+Interfaces produced:
+
+- `func New(c *truenas.Client, pool, parent string) backend.Backend` registered as "nvme"
+- Publish context keys `nqn`, `serial`, `portal`, `transport`
+- `CapNVMe` in the node preflight
+
+Steps:
+
+- [ ] Write `TestNVMeDeviceResolutionUsesSerial` with the by-id directory made execute-only
+      so an exact-path lookup works but enumeration cannot; fails if the code lists /dev,
+      which races with the node's own local NVMe disks.
+- [ ] Write `TestNVMeEmptyHostNQNsAllowsAnyHost`; fails if an empty list creates an empty
+      host ACL, which on TrueNAS denies every initiator and takes the backend offline.
+- [ ] Write `TestNVMePortalNeverWildcard`, `TestNVMeRDMARefusedWhenUnsupported`,
+      `TestNVMeCreateStampsOwnership`, `TestNVMeCreateIsIdempotent`,
+      `TestNVMeCreateRollsBackOnFailure`, `TestNVMeDeleteVerifiesOwnership`,
+      `TestNVMeExpandRejectsShrink`, `TestNVMeDisconnectIsScoped`.
+- [ ] Implement the subsystem/namespace/port/port_subsys sequence with reverse rollback.
+- [ ] Implement node attach: discover, connect, resolve by serial, disconnect scoped.
+- [ ] Run the package tests — expect PASS. Commit.
+
+## Task 28: Pool capacity reservation and NFS reachability topology
+
+Files:
+
+- `internal/config/` — reservation fields.
+- `internal/csi/capacity.go` — capacity minus reserve.
+- `internal/node/reachability.go` — per-backend reachability probe.
+- tests alongside each.
+
+Steps:
+
+- [ ] Write `TestCapacityReportsFreeMinusReserved` covering bytes-only, percent-only, both
+      set, and a reserve larger than free; fails if the result can go negative.
+- [ ] Write `TestCreateVolumeRefusesEatingIntoReserve` expecting `RESOURCE_EXHAUSTED`.
+- [ ] Write `TestBackendReachabilityLabels` against a real listener and a closed port.
+- [ ] Write `TestTopologyKeysMatchWhatNodesPublish`; fails if the controller requires a key
+      no node publishes, which can never be satisfied by any node.
+- [ ] Implement the reservation, the probe, and the topology requirement. Commit per issue.
+
+## Task 29: Array-level observability
+
+Files:
+
+- `internal/arraymetrics/collector.go` — appliance metrics collector.
+- `cmd/truenas-csi/main.go` — start it in controller mode.
+
+Steps:
+
+- [ ] Write `TestCollectorExportsPoolMetrics` using the appliance's real plain-integer
+      shape; fails if only the wrapped `{"parsed": N}` shape decodes, which once made every
+      pool report zero free bytes.
+- [ ] Write `TestCollectorOnlyExportsOwnedDatasets`; fails if datasets that merely inherited
+      the ownership marker are exported, which is both other people's data and unbounded
+      cardinality.
+- [ ] Write `TestCollectorDoesNotPollOnScrape`, `TestCollectorSurvivesUnreachableBackend`,
+      `TestArrayCollectorIsWiredIntoTheController`.
+- [ ] Implement the interval-driven collector reusing existing clients. Commit.
+
+## Task 30: Connectivity health monitoring and podmon
+
+Files:
+
+- `internal/node/health.go` — bounded health checks per staged volume.
+- `internal/podmon/service.go` — the independent connectivity service.
+- chart wiring for the optional sidecar.
+
+Steps:
+
+- [ ] Write `TestHealthCheckIsBounded`; fails if a hung stat can block the monitor, which is
+      precisely the failure being detected.
+- [ ] Write `TestPodmonAnswersWhileDriverStalled`; fails if the service shares the driver's
+      blocked client, which would defeat the point of an independent checker.
+- [ ] Write `TestHealthTransitionLogsOnce`, `TestVolumeConditionReportedInStats`,
+      `TestHealthMetricsHaveBoundedCardinality`, `TestPodmonIsWiredIntoTheNode`.
+- [ ] Implement, advertise the VOLUME_CONDITION node capability, wire into main. Commit.
+
+## Task 31: Crash-consistent volume group snapshots
+
+Files:
+
+- `internal/csi/groupcontroller.go` — the GroupController service.
+- `internal/backend/groupsnapshot.go` — registry operations.
+
+Steps:
+
+- [ ] Write `TestGroupSnapshotIsAtomic` asserting ONE recursive snapshot call; fails if
+      members are snapshotted in a loop, which is not crash-consistent and would hand a
+      database an inconsistent restore point.
+- [ ] Write `TestGroupSnapshotRefusesNonSiblings` and `TestGroupSnapshotRefusesCrossBackend`.
+- [ ] Write `TestGroupSnapshotMembersAreIndividuallyRestorable`,
+      `TestDeleteGroupSnapshotRefusesWithDependentClone`, `TestGroupSnapshotNeverPromotes`.
+- [ ] Implement and register the service. Commit.
+
+## Task 32: Lifecycle operator and OLM bundle
+
+Files:
+
+- `operator/` — a separate Go module: CRD types, reconciler, manager, config, bundle.
+- `docs/operator.md`, root `go.work`.
+
+Steps:
+
+- [ ] Write `TestCRDRejectsPlaintextEndpoint`; fails if the CRD accepts a non-wss endpoint,
+      which would let a single apply destroy the appliance credential.
+- [ ] Write `TestNodeRolloutIsDrainAware`; fails if all nodes roll at once, which rips the
+      node plugin out from under mounted volumes.
+- [ ] Write `TestReconcileRendersChart`, `TestReconcileIsIdempotent`,
+      `TestKeyRotationRestartsPods`, `TestVersionSkewRefused`, `TestStatusReportsBackendHealth`.
+- [ ] Implement the reconciler rendering the in-repo chart through the Helm Go SDK.
+- [ ] Produce the OLM bundle with channels and an upgrade graph. Commit both.
+
+## Task 33: TrueNAS CORE support
+
+Files:
+
+- `internal/truenas/api.go` — the interface the backends depend on.
+- `internal/truenas/core/` — the REST implementation and its fake.
+
+Steps:
+
+- [ ] Write `TestCoreRefusesPlaintextEndpoint`; fails if http is accepted, which revokes the
+      appliance credential exactly as plaintext does on SCALE.
+- [ ] Write `TestCoreImplementsTheSameInterface` running identical operations against both
+      fakes and asserting identical observable behaviour; fails when the two drift.
+- [ ] Write `TestCoreAuthFailureIsTerminal`, `TestCoreDatasetQueryAbsentReturnsNil`,
+      `TestCoreJobPolling`, `TestFlavourValidation`.
+- [ ] Implement, selected by a per-backend flavour. Document that it is UNVERIFIED against
+      real CORE hardware. Commit.
+
+## Task 34: Volume migration and pool administration
+
+Files:
+
+- `internal/migration/` — import a foreign volume's data into a driver-managed volume.
+- `internal/pooladmin/` — read-only appliance diagnostics.
+
+Steps:
+
+- [ ] Write `TestMigrationRefusesUnownedTarget`; fails if migration can write into a dataset
+      the driver does not own, which would overwrite real user data.
+- [ ] Write `TestMigrationIsResumable` and `TestMigrationVerifiesChecksum`; fails if a
+      partial copy can be reported as complete.
+- [ ] Write `TestPoolAdminIsReadOnly` asserting no mutating middleware call is ever issued.
+- [ ] Implement both. Commit.
