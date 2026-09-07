@@ -209,6 +209,14 @@ parameters:
 > Adding `xfsprogs` or `open-iscsi` to a node the driver has already registered makes its
 > node plugin fail to re-register until the labels are cleared by hand — see
 > [troubleshooting](docs/troubleshooting.md).
+>
+> **The same applies to network routes.** Each node also probes, at startup, whether it can
+> reach each configured appliance's data path (a bounded TCP dial to NFS 2049 and iSCSI
+> 3260, never ICMP) and publishes `csi.truenas.watteel.com/backend-<name>` as `true` or
+> `false`; the controller requires `true` for a volume's own backend, so a node with no
+> route to an appliance is excluded from scheduling instead of failing at mount. Because
+> the value is immutable too, give a node its route to the appliance **before** the driver
+> first registers there — see [troubleshooting](docs/troubleshooting.md).
 
 ## StorageClass parameters
 

@@ -129,7 +129,17 @@ func run(mode, endpoint, configPath, nodeID, hostRoot string) error {
 			slog.Warn("capability unavailable on this node",
 				"capability", capName, "install", missing)
 		}
-		nd = csi.NewNode(node.NewNode(cfg.NodeID, pf, node.HostExec(hostRoot)))
+		// Which appliances this node can actually reach is as much a scheduling
+		// constraint as which tooling it has: with several backends, a node with
+		// no route to one of them must not be given its volumes.
+		//
+		// The values published here are IMMUTABLE for the life of the node's
+		// labels — see node.Reachability.TopologyLabels and
+		// docs/troubleshooting.md.
+		reach := node.ProbeReachability(ctx, node.BackendDataAddresses(cfg), node.ProbeTimeout)
+		n := node.NewNode(cfg.NodeID, pf, node.HostExec(hostRoot))
+		n.SetReachability(reach)
+		nd = csi.NewNode(n)
 		obs.MarkReady()
 	}
 
