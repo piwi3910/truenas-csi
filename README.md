@@ -292,6 +292,7 @@ can see every LUN. RWO is enforced by Kubernetes, not below it.
 
 Controller: `CREATE_DELETE_VOLUME`, `PUBLISH_UNPUBLISH_VOLUME`, `CREATE_DELETE_SNAPSHOT`,
 `LIST_SNAPSHOTS`, `LIST_VOLUMES`, `EXPAND_VOLUME`, `CLONE_VOLUME`, `GET_CAPACITY`.
+GroupController: `CREATE_DELETE_GET_VOLUME_GROUP_SNAPSHOT`.
 Node: `STAGE_UNSTAGE_VOLUME`, `EXPAND_VOLUME`, `GET_VOLUME_STATS`.
 
 - **Snapshots and restore.** `CreateSnapshot`/`DeleteSnapshot`/`ListSnapshots`, and
@@ -300,6 +301,25 @@ Node: `STAGE_UNSTAGE_VOLUME`, `EXPAND_VOLUME`, `GET_VOLUME_STATS`.
   restored volume still depends on it — as the CSI spec prescribes. Deleting the PVC is
   never blocked by a clone. Cloning directly from a volume is not supported; snapshot it
   first.
+- **Volume group snapshots.** `CreateVolumeGroupSnapshot`/`DeleteVolumeGroupSnapshot`/
+  `GetVolumeGroupSnapshot` capture several volumes at a single instant, which is what makes
+  a restore of a database's data, WAL and log PVCs consistent with itself.
+
+  **Every member must live on the same backend and share a parent dataset.** ZFS's only
+  multi-dataset atomic primitive is a recursive snapshot of a common ancestor: one call,
+  one transaction group, one instant. Members without a common parent — or spread across
+  two appliances — would have to be snapshotted one at a time, in as many transaction
+  groups, and the result would not be crash-consistent however it was labelled. The driver
+  therefore refuses such a group (`FAILED_PRECONDITION` for a missing common parent,
+  `INVALID_ARGUMENT` across appliances) rather than hand a database a restore point that
+  looks valid and is not. Volumes provisioned by one backend share its configured parent
+  dataset, so this holds by construction for ordinary use.
+
+  Each member snapshot carries the same id format as a single-volume snapshot and can be
+  restored on its own through `CreateVolume`. Deleting a group is blocked with
+  `FAILED_PRECONDITION` while any member still has a dependent clone, and — as with
+  `DeleteSnapshot` — the clone is never promoted, because promotion inverts the dependency
+  and would strand the source volume instead.
 - **Expansion is grow-only**, and works live: a mounted iSCSI volume grows by device rescan
   plus filesystem grow, with no unmount and no pod restart. Shrink is rejected by the
   driver on both backends.
