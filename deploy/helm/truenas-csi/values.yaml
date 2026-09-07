@@ -17,6 +17,11 @@ logLevel: info
 metricsAddr: ":9090"
 healthAddr: ":9808"
 
+# How often the controller polls each appliance for array-level metrics (pool,
+# dataset and iSCSI figures). Polling never happens on the Prometheus scrape
+# path, so this bounds staleness only, never scrape latency.
+metricsInterval: "60s"
+
 # backends maps a StorageClass `backend` parameter to one TrueNAS appliance.
 # Every field mirrors internal/config.Backend. The whole map is rendered into a
 # Secret and mounted at /etc/truenas-csi/config.yaml — credentials never appear

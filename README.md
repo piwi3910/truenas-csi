@@ -286,6 +286,35 @@ Prometheus metrics on `metricsAddr` (default `:9090`) and health on `healthAddr`
 method and backend names — a volume ID or a credential never becomes a label. Volume IDs
 appear in log lines instead, so a failing volume can be traced end to end.
 
+### Array-level metrics
+
+The controller also polls each appliance for its own figures and exports them on the same
+endpoint, so the backend can be watched without handing anyone a TrueNAS login:
+
+| Metric                                | Labels               | Meaning                                                                  |
+| ------------------------------------- | -------------------- | ------------------------------------------------------------------------ |
+| `truenas_pool_size_bytes`             | `backend`, `pool`    | Total pool size.                                                         |
+| `truenas_pool_free_bytes`             | `backend`, `pool`    | Free space in the pool.                                                  |
+| `truenas_pool_used_bytes`             | `backend`, `pool`    | Used space (size minus free).                                            |
+| `truenas_pool_healthy`                | `backend`, `pool`    | 1 when the appliance reports the pool healthy, 0 otherwise.              |
+| `truenas_dataset_used_bytes`          | `backend`, `dataset` | Space used by a dataset this driver owns.                                |
+| `truenas_dataset_quota_bytes`         | `backend`, `dataset` | Provisioned capacity: `refquota` for a filesystem, `volsize` for a zvol. |
+| `truenas_iscsi_sessions`              | `backend`            | Open iSCSI sessions on the appliance.                                    |
+| `truenas_collection_duration_seconds` | `backend`            | Duration of the last array metrics collection.                           |
+| `truenas_collection_errors_total`     | `backend`            | Failed collections since the driver started.                             |
+
+- **Only datasets this driver owns are exported** — the ZFS ownership marker must be
+  present with `source == "LOCAL"`. The pool holds other people's data, which is neither
+  ours to publish nor bounded in cardinality.
+- **Polling is on an interval, never on the scrape path.** `metricsInterval` in the
+  configuration sets it (a Go duration, default `60s`); a scrape is served from the last
+  snapshot, so a slow appliance can never stall Prometheus.
+- **A failed collection keeps the last known values** and increments
+  `truenas_collection_errors_total`. Zeroing the gauges would turn a middleware outage
+  into a false capacity alert. One unreachable appliance never stops the others.
+- The collector runs on the **controller only** (the node plugin has no appliance client)
+  and is skipped with a log line, not a crash loop, when no backend answers at startup.
+
 ## Data safety
 
 The pool this driver was built against holds live, irreplaceable data, and that shaped the
