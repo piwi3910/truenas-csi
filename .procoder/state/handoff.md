@@ -1,9 +1,9 @@
 # procoder handoff
 
 <!-- procoder:facts -->
-generated: 2026-09-07T18:22:47Z
+generated: 2026-09-07T19:28:29Z
 branch: feat/foundation — default branch unknown (no origin/HEAD, no main or master)
-head: d66b70b
+head: d7c6131
 dirty files: none (clean tree)
 sprint: none — no backlog yet (`procoder backlog` starts one)
 open tasks: none

@@ -23,6 +23,7 @@ import (
 	"github.com/pwatteel/truenas-csi/internal/driver"
 	"github.com/pwatteel/truenas-csi/internal/node"
 	"github.com/pwatteel/truenas-csi/internal/obs"
+	"github.com/pwatteel/truenas-csi/internal/reconcile"
 	"github.com/pwatteel/truenas-csi/internal/server"
 )
 
@@ -52,6 +53,10 @@ func main() {
 }
 
 // logLevel maps the configured level name onto slog.
+// orphanInterval is how often the controller compares appliance state against
+// the cluster's PersistentVolumes.
+const orphanInterval = 30 * time.Minute
+
 func logLevel(name string) slog.Level {
 	switch name {
 	case "debug":
@@ -98,6 +103,18 @@ func run(mode, endpoint, configPath, nodeID, hostRoot string) error {
 		}
 		defer reg.Close()
 		ctrl = csi.NewController(reg, cfg)
+
+		// The orphan reconciler reports appliance objects with no
+		// PersistentVolume. It never deletes; an apparent orphan is more often
+		// a stale PV listing than a leak. Without a usable API-server client it
+		// is skipped rather than silently reporting everything as orphaned.
+		if lister, lErr := reconcile.NewKubePVLister(driver.DriverName); lErr != nil {
+			slog.Warn("orphan reporting disabled: no in-cluster API access",
+				"error", obs.Redact(lErr.Error()))
+		} else {
+			go reconcile.NewOrphanReconciler(reg, lister, orphanInterval).Run(ctx)
+			slog.Info("orphan reporting enabled", "interval", orphanInterval.String())
+		}
 		obs.MarkReady()
 
 	case "node":

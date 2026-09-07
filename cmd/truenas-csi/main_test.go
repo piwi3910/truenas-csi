@@ -57,3 +57,33 @@ func TestRunRejectsMissingConfig(t *testing.T) {
 		t.Fatal("a missing config file must be fatal")
 	}
 }
+
+// TestOrphanReconcilerIsWiredIntoTheController guards a gap that survived a
+// full "everything is implemented" report: the reconciler had tests and worked,
+// but nothing ever started it, so it did nothing in a running driver.
+func TestOrphanReconcilerIsWiredIntoTheController(t *testing.T) {
+	src, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"reconcile.NewOrphanReconciler", "reconcile.NewKubePVLister"} {
+		if !strings.Contains(string(src), want) {
+			t.Errorf("main.go never calls %s: the reconciler would be dead code "+
+				"in the shipped binary", want)
+		}
+	}
+}
+
+// TestMetricsAndHealthAreServed likewise checks the observability endpoints are
+// actually started, not merely implemented.
+func TestMetricsAndHealthAreServed(t *testing.T) {
+	src, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"/metrics", "/healthz", "/readyz", "go serveHTTP"} {
+		if !strings.Contains(string(src), want) {
+			t.Errorf("main.go does not serve %s", want)
+		}
+	}
+}
