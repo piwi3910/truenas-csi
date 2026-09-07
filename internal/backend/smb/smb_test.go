@@ -1,0 +1,629 @@
+package smb
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"strings"
+	"sync"
+	"testing"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
+	"github.com/piwi3910/truenas-csi/internal/backend"
+	"github.com/piwi3910/truenas-csi/internal/config"
+	"github.com/piwi3910/truenas-csi/internal/truenas"
+	"github.com/piwi3910/truenas-csi/internal/truenas/fake"
+	"github.com/piwi3910/truenas-csi/internal/volume"
+)
+
+// nas is a stateful stand-in for the appliance, mirroring the behaviours proven
+// against the live box: a clone inherits neither the ownership marker nor the
+// refquota, and an SMB dataset carries an ACL rather than a plain POSIX mode.
+type nas struct {
+	*fake.Server
+
+	mu       sync.Mutex
+	datasets map[string]*fakeDataset
+	shares   map[string]*fakeShare // keyed by path
+	nextID   int
+
+	createPayloads []map[string]any
+	setacls        []map[string]any
+	setperms       []map[string]any
+	sharePayloads  []map[string]any
+
+	shareCreateErr error
+}
+
+type fakeShare struct {
+	id   int
+	name string
+	path string
+}
+
+type fakeDataset struct {
+	refquota  int64
+	marker    string
+	source    string
+	shareType string
+}
+
+func (d *fakeDataset) json(id string) map[string]any {
+	props := map[string]any{}
+	if d.marker != "" {
+		props[volume.OwnerProperty] = map[string]any{"value": d.marker, "source": d.source}
+	}
+	return map[string]any{
+		"id":              id,
+		"type":            "FILESYSTEM",
+		"mountpoint":      "/mnt/" + id,
+		"refquota":        map[string]any{"parsed": d.refquota},
+		"user_properties": props,
+	}
+}
+
+func newNAS(t *testing.T) *nas {
+	t.Helper()
+	n := &nas{
+		Server:   fake.Start(t, fake.Options{}),
+		datasets: map[string]*fakeDataset{},
+		shares:   map[string]*fakeShare{},
+	}
+
+	n.Handle("pool.dataset.query", func(p []json.RawMessage) (any, error) {
+		id := filterValue(t, p)
+		n.mu.Lock()
+		defer n.mu.Unlock()
+		ds, ok := n.datasets[id]
+		if !ok {
+			return []any{}, nil
+		}
+		return []any{ds.json(id)}, nil
+	})
+
+	n.Handle("pool.dataset.create", func(p []json.RawMessage) (any, error) {
+		var payload map[string]any
+		mustJSON(t, p[0], &payload)
+		id, _ := payload["name"].(string)
+		n.mu.Lock()
+		defer n.mu.Unlock()
+		n.createPayloads = append(n.createPayloads, payload)
+		ds := &fakeDataset{}
+		if q, ok := payload["refquota"].(float64); ok {
+			ds.refquota = int64(q)
+		}
+		ds.shareType, _ = payload["share_type"].(string)
+		if props, ok := payload["user_properties"].([]any); ok {
+			for _, raw := range props {
+				m, _ := raw.(map[string]any)
+				if m["key"] == volume.OwnerProperty {
+					ds.marker, _ = m["value"].(string)
+					ds.source = "LOCAL"
+				}
+			}
+		}
+		n.datasets[id] = ds
+		return ds.json(id), nil
+	})
+
+	n.Handle("pool.dataset.update", func(p []json.RawMessage) (any, error) {
+		var id string
+		var patch map[string]any
+		mustJSON(t, p[0], &id)
+		mustJSON(t, p[1], &patch)
+		n.mu.Lock()
+		defer n.mu.Unlock()
+		ds, ok := n.datasets[id]
+		if !ok {
+			return nil, &fake.RPCError{Code: -32602, ErrName: "EINVAL", Reason: "[ENOENT] " + id}
+		}
+		if q, ok := patch["refquota"].(float64); ok {
+			ds.refquota = int64(q)
+		}
+		if props, ok := patch["user_properties_update"].([]any); ok {
+			for _, raw := range props {
+				m, _ := raw.(map[string]any)
+				if m["key"] == volume.OwnerProperty {
+					ds.marker, _ = m["value"].(string)
+					ds.source = "LOCAL"
+				}
+			}
+		}
+		return ds.json(id), nil
+	})
+
+	n.Handle("pool.dataset.delete", func(p []json.RawMessage) (any, error) {
+		var id string
+		mustJSON(t, p[0], &id)
+		n.mu.Lock()
+		defer n.mu.Unlock()
+		delete(n.datasets, id)
+		return true, nil
+	})
+
+	// A real ZFS clone inherits NEITHER the marker NOR refquota.
+	n.Handle("pool.snapshot.clone", func(p []json.RawMessage) (any, error) {
+		var payload map[string]any
+		mustJSON(t, p[0], &payload)
+		dst, _ := payload["dataset_dst"].(string)
+		n.mu.Lock()
+		defer n.mu.Unlock()
+		n.datasets[dst] = &fakeDataset{}
+		return true, nil
+	})
+
+	n.Handle("filesystem.setacl", func(p []json.RawMessage) (any, error) {
+		var payload map[string]any
+		mustJSON(t, p[0], &payload)
+		n.mu.Lock()
+		n.setacls = append(n.setacls, payload)
+		n.mu.Unlock()
+		return 1, nil
+	})
+	// Registered deliberately: a backend that wrongly used setperm must fail the
+	// assertion, not blow up on an unknown method.
+	n.Handle("filesystem.setperm", func(p []json.RawMessage) (any, error) {
+		var payload map[string]any
+		mustJSON(t, p[0], &payload)
+		n.mu.Lock()
+		n.setperms = append(n.setperms, payload)
+		n.mu.Unlock()
+		return 1, nil
+	})
+	n.HandleValue("core.get_jobs", []any{map[string]any{"id": 1, "state": "SUCCESS"}})
+
+	n.Handle("sharing.smb.create", func(p []json.RawMessage) (any, error) {
+		n.mu.Lock()
+		defer n.mu.Unlock()
+		if n.shareCreateErr != nil {
+			return nil, n.shareCreateErr
+		}
+		var payload map[string]any
+		mustJSON(t, p[0], &payload)
+		n.sharePayloads = append(n.sharePayloads, payload)
+		path, _ := payload["path"].(string)
+		name, _ := payload["name"].(string)
+		n.nextID++
+		n.shares[path] = &fakeShare{id: n.nextID, name: name, path: path}
+		return map[string]any{"id": n.nextID, "path": path, "name": name}, nil
+	})
+
+	n.Handle("sharing.smb.query", func(p []json.RawMessage) (any, error) {
+		path := filterValue(t, p)
+		n.mu.Lock()
+		defer n.mu.Unlock()
+		s, ok := n.shares[path]
+		if !ok {
+			return []any{}, nil
+		}
+		return []any{map[string]any{"id": s.id, "path": s.path, "name": s.name}}, nil
+	})
+
+	n.Handle("sharing.smb.delete", func(p []json.RawMessage) (any, error) {
+		var id int
+		mustJSON(t, p[0], &id)
+		n.mu.Lock()
+		defer n.mu.Unlock()
+		for path, s := range n.shares {
+			if s.id == id {
+				delete(n.shares, path)
+			}
+		}
+		return true, nil
+	})
+
+	return n
+}
+
+func (n *nas) dataset(id string) *fakeDataset {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.datasets[id]
+}
+
+func (n *nas) put(id string, ds *fakeDataset) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.datasets[id] = ds
+}
+
+func (n *nas) shareNames() []string {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	out := make([]string, 0, len(n.sharePayloads))
+	for _, p := range n.sharePayloads {
+		s, _ := p["name"].(string)
+		out = append(out, s)
+	}
+	return out
+}
+
+func filterValue(t *testing.T, p []json.RawMessage) string {
+	t.Helper()
+	var filters [][]any
+	mustJSON(t, p[0], &filters)
+	if len(filters) == 0 || len(filters[0]) < 3 {
+		t.Fatalf("unexpected query filters %s", string(p[0]))
+	}
+	s, _ := filters[0][2].(string)
+	return s
+}
+
+func mustJSON(t *testing.T, raw json.RawMessage, out any) {
+	t.Helper()
+	if err := json.Unmarshal(raw, out); err != nil {
+		t.Fatalf("decode %s: %v", string(raw), err)
+	}
+}
+
+func newBackend(t *testing.T, n *nas) backend.Backend {
+	t.Helper()
+	c, err := truenas.Dial(context.Background(), config.Backend{
+		Name: "nas1", Endpoint: n.URL(), Username: "truenas_admin", APIKey: "1-secret",
+		Pool: "Pool0", ParentDataset: "k8s", InsecureSkipVerify: true,
+	})
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+	return New(c, "Pool0", "k8s")
+}
+
+const gib = int64(1) << 30
+
+func testID(name string) volume.ID {
+	return volume.ID{Backend: "nas1", Protocol: "smb", Pool: "Pool0", Parent: "k8s", Name: name}
+}
+
+func testRequest(name string, bytes int64) backend.CreateRequest {
+	return backend.CreateRequest{
+		ID:            testID(name),
+		CapacityBytes: bytes,
+		Params: map[string]string{
+			"server":          "192.168.10.253",
+			"secretName":      "smb-creds",
+			"secretNamespace": "kube-system",
+		},
+	}
+}
+
+// TestSMBCreateSetsRefquota catches a create that omits refquota: the share then
+// reports the WHOLE POOL (31T observed for a 10Gi volume).
+func TestSMBCreateSetsRefquota(t *testing.T) {
+	n := newNAS(t)
+	b := newBackend(t, n)
+
+	if _, err := b.Create(context.Background(), testRequest("pvc-1", 10*gib)); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if len(n.createPayloads) != 1 {
+		t.Fatalf("want exactly one pool.dataset.create, got %d", len(n.createPayloads))
+	}
+	q, ok := n.createPayloads[0]["refquota"]
+	if !ok {
+		t.Fatal("pool.dataset.create carried no refquota — the share would report the whole pool")
+	}
+	if got := int64(q.(float64)); got != 10*gib {
+		t.Fatalf("refquota = %d, want %d", got, 10*gib)
+	}
+}
+
+// TestSMBCreateUsesShareTypeSMB catches a plain dataset: share_type SMB is what
+// gives the dataset mode 0770 with an NFSv4 ACL instead of 0755 with none.
+func TestSMBCreateUsesShareTypeSMB(t *testing.T) {
+	n := newNAS(t)
+	b := newBackend(t, n)
+
+	if _, err := b.Create(context.Background(), testRequest("pvc-1", gib)); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	ds := n.dataset("Pool0/k8s/pvc-1")
+	if ds == nil {
+		t.Fatal("dataset was not created")
+	}
+	if ds.shareType != "SMB" {
+		t.Fatalf("share_type = %q, want SMB", ds.shareType)
+	}
+}
+
+// TestSMBCreateSetsACLNotPerm catches the NFS permission model leaking into the
+// SMB path: an SMB dataset carries an NFSv4 ACL, and filesystem.setperm would
+// strip it rather than configure it.
+func TestSMBCreateSetsACLNotPerm(t *testing.T) {
+	n := newNAS(t)
+	b := newBackend(t, n)
+
+	if _, err := b.Create(context.Background(), testRequest("pvc-1", gib)); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if got := n.CallsTo("filesystem.setacl"); got != 1 {
+		t.Fatalf("filesystem.setacl called %d times, want 1", got)
+	}
+	if got := n.CallsTo("filesystem.setperm"); got != 0 {
+		t.Fatalf("filesystem.setperm called %d times — it would strip the SMB dataset's ACL", got)
+	}
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	dacl, ok := n.setacls[0]["dacl"].([]any)
+	if !ok || len(dacl) == 0 {
+		t.Fatalf("filesystem.setacl carried no dacl: %v", n.setacls[0])
+	}
+}
+
+// TestSMBCreateStampsOwnership catches an unmarked dataset, which the delete
+// guard would later refuse to remove — leaking the volume forever.
+func TestSMBCreateStampsOwnership(t *testing.T) {
+	n := newNAS(t)
+	b := newBackend(t, n)
+
+	if _, err := b.Create(context.Background(), testRequest("pvc-1", gib)); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	ds := n.dataset("Pool0/k8s/pvc-1")
+	if ds == nil {
+		t.Fatal("dataset was not created")
+	}
+	if ds.marker != volume.OwnerValue || ds.source != "LOCAL" {
+		t.Fatalf("marker = %q source %q, want %q LOCAL", ds.marker, ds.source, volume.OwnerValue)
+	}
+}
+
+// TestSMBCreateIsIdempotent catches a repeat CreateVolume that provisions twice
+// or reports a conflict for an identical request.
+func TestSMBCreateIsIdempotent(t *testing.T) {
+	n := newNAS(t)
+	b := newBackend(t, n)
+
+	first, err := b.Create(context.Background(), testRequest("pvc-1", gib))
+	if err != nil {
+		t.Fatalf("first Create: %v", err)
+	}
+	second, err := b.Create(context.Background(), testRequest("pvc-1", gib))
+	if err != nil {
+		t.Fatalf("second Create: %v", err)
+	}
+	if first.Context["share"] != second.Context["share"] {
+		t.Fatalf("share changed between identical creates: %q vs %q",
+			first.Context["share"], second.Context["share"])
+	}
+	if got := n.CallsTo("pool.dataset.create"); got != 1 {
+		t.Fatalf("pool.dataset.create called %d times, want 1", got)
+	}
+	if got := n.CallsTo("sharing.smb.create"); got != 1 {
+		t.Fatalf("sharing.smb.create called %d times, want 1", got)
+	}
+
+	// A conflicting size must be reported, not silently reconciled.
+	_, err = b.Create(context.Background(), testRequest("pvc-1", 2*gib))
+	if got := status.Code(err); got != codes.AlreadyExists {
+		t.Fatalf("code = %v, want AlreadyExists (err %v)", got, err)
+	}
+}
+
+// TestSMBCreateRollsBackOnShareFailure catches a partial provision: a dataset
+// with no share is an orphan no retry reconciles.
+func TestSMBCreateRollsBackOnShareFailure(t *testing.T) {
+	n := newNAS(t)
+	n.mu.Lock()
+	n.shareCreateErr = &fake.RPCError{Code: -32001, ErrName: "EFAULT", Reason: "share creation failed"}
+	n.mu.Unlock()
+	b := newBackend(t, n)
+
+	if _, err := b.Create(context.Background(), testRequest("pvc-1", gib)); err == nil {
+		t.Fatal("want an error when the share cannot be created")
+	}
+	if ds := n.dataset("Pool0/k8s/pvc-1"); ds != nil {
+		t.Fatal("dataset survived a failed share creation — a partial volume was left behind")
+	}
+	if got := n.CallsTo("pool.dataset.delete"); got != 1 {
+		t.Fatalf("pool.dataset.delete called %d times, want 1 (rollback)", got)
+	}
+}
+
+// TestSMBDeleteVerifiesOwnership catches a delete guard that trusts presence
+// alone: an unmarked or merely INHERITED marker is operator data.
+func TestSMBDeleteVerifiesOwnership(t *testing.T) {
+	n := newNAS(t)
+	n.put("Pool0/k8s/pvc-1", &fakeDataset{refquota: gib}) // no marker at all
+	n.put("Pool0/k8s/pvc-2", &fakeDataset{refquota: gib, marker: volume.OwnerValue, source: "INHERITED"})
+	b := newBackend(t, n)
+
+	for _, name := range []string{"pvc-1", "pvc-2"} {
+		err := b.Delete(context.Background(), testID(name))
+		if !errors.Is(err, volume.ErrNotManaged) {
+			t.Fatalf("%s: want ErrNotManaged, got %v", name, err)
+		}
+	}
+	if got := n.CallsTo("pool.dataset.delete"); got != 0 {
+		t.Fatalf("pool.dataset.delete called %d times on unowned datasets — data loss", got)
+	}
+	if got := n.CallsTo("sharing.smb.delete"); got != 0 {
+		t.Fatalf("sharing.smb.delete called %d times before the ownership check", got)
+	}
+
+	// An owned volume goes: share first, then dataset. Absent is success.
+	if _, err := b.Create(context.Background(), testRequest("pvc-3", gib)); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := b.Delete(context.Background(), testID("pvc-3")); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if n.dataset("Pool0/k8s/pvc-3") != nil {
+		t.Fatal("dataset survived Delete")
+	}
+	if got := n.CallsTo("sharing.smb.delete"); got != 1 {
+		t.Fatalf("sharing.smb.delete called %d times, want 1", got)
+	}
+	if err := b.Delete(context.Background(), testID("pvc-3")); err != nil {
+		t.Fatalf("deleting an absent volume must succeed: %v", err)
+	}
+}
+
+// TestSMBExpandRejectsShrink catches delegation of the shrink guard to the
+// middleware, which SILENTLY PERMITS a refquota shrink below current usage.
+func TestSMBExpandRejectsShrink(t *testing.T) {
+	n := newNAS(t)
+	n.put("Pool0/k8s/pvc-1", &fakeDataset{refquota: 10 * gib, marker: volume.OwnerValue, source: "LOCAL"})
+	b := newBackend(t, n)
+
+	_, err := b.Expand(context.Background(), testID("pvc-1"), 5*gib)
+	if got := status.Code(err); got != codes.InvalidArgument {
+		t.Fatalf("code = %v, want InvalidArgument (err %v)", got, err)
+	}
+	if got := n.CallsTo("pool.dataset.update"); got != 0 {
+		t.Fatalf("pool.dataset.update issued %d times for a shrink — middleware would allow it", got)
+	}
+	if ds := n.dataset("Pool0/k8s/pvc-1"); ds.refquota != 10*gib {
+		t.Fatalf("refquota = %d, want unchanged %d", ds.refquota, 10*gib)
+	}
+
+	size, err := b.Expand(context.Background(), testID("pvc-1"), 20*gib)
+	if err != nil {
+		t.Fatalf("grow: %v", err)
+	}
+	if size != 20*gib {
+		t.Fatalf("Expand returned %d, want %d", size, 20*gib)
+	}
+	if ds := n.dataset("Pool0/k8s/pvc-1"); ds.refquota != 20*gib {
+		t.Fatalf("refquota = %d after grow, want %d", ds.refquota, 20*gib)
+	}
+}
+
+// TestSMBShareNameWithinLimit catches plain truncation. An SMB share name is
+// capped at 80 characters; two long volume names sharing a prefix would collapse
+// onto ONE share, so two volumes would address the same data.
+func TestSMBShareNameWithinLimit(t *testing.T) {
+	prefix := strings.Repeat("a", 90)
+	names := []string{prefix + "-one", prefix + "-two"}
+
+	n := newNAS(t)
+	b := newBackend(t, n)
+	for _, name := range names {
+		if _, err := b.Create(context.Background(), testRequest(name, gib)); err != nil {
+			t.Fatalf("Create %s: %v", name, err)
+		}
+	}
+
+	got := n.shareNames()
+	if len(got) != 2 {
+		t.Fatalf("want 2 share creates, got %d (%v)", len(got), got)
+	}
+	for _, s := range got {
+		if len(s) == 0 || len(s) > maxShareName {
+			t.Fatalf("share name %q is %d chars, want 1..%d", s, len(s), maxShareName)
+		}
+	}
+	if got[0] == got[1] {
+		t.Fatalf("two distinct volumes collapsed onto one share name %q — they would address the same data", got[0])
+	}
+}
+
+// TestSMBPublishContextCarriesNoPassword catches a credential leak: the node
+// gets a Secret REFERENCE, never the password itself.
+func TestSMBPublishContextCarriesNoPassword(t *testing.T) {
+	n := newNAS(t)
+	b := newBackend(t, n)
+
+	r := testRequest("pvc-1", gib)
+	r.Params["password"] = "hunter2"
+	r.Params["uid"] = "1000"
+	r.Params["gid"] = "1000"
+	r.Params["fileMode"] = "0660"
+	r.Params["dirMode"] = "0770"
+	vol, err := b.Create(context.Background(), r)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	pc, err := b.PublishContext(context.Background(), testID("pvc-1"))
+	if err != nil {
+		t.Fatalf("PublishContext: %v", err)
+	}
+	for _, m := range []map[string]string{pc, vol.Context} {
+		for k, v := range m {
+			lk, lv := strings.ToLower(k), strings.ToLower(v)
+			if strings.Contains(lk, "password") || strings.Contains(lk, "passwd") {
+				t.Fatalf("publish context key %q carries a credential", k)
+			}
+			if strings.Contains(lv, "hunter2") {
+				t.Fatalf("publish context %q=%q leaks the password", k, v)
+			}
+		}
+	}
+
+	if pc["protocol"] != Protocol {
+		t.Fatalf("protocol = %q, want %q", pc["protocol"], Protocol)
+	}
+	if pc["server"] != "192.168.10.253" {
+		t.Fatalf("server = %q", pc["server"])
+	}
+	// The node mounts //server/<share NAME>, not a filesystem path.
+	if pc["share"] == "" || strings.HasPrefix(pc["share"], "/") {
+		t.Fatalf("share = %q, want an SMB share name rather than a path", pc["share"])
+	}
+	// SMB ownership is mount-time: the client maps uid/gid itself.
+	for k, want := range map[string]string{
+		"uid": "1000", "gid": "1000", "fileMode": "0660", "dirMode": "0770",
+		nodeStageSecretNameKey:      "smb-creds",
+		nodeStageSecretNamespaceKey: "kube-system",
+	} {
+		if pc[k] != want {
+			t.Fatalf("publish context %q = %q, want %q", k, pc[k], want)
+		}
+	}
+}
+
+// TestSMBRestoreStampsClone catches the clone trap: a ZFS clone inherits neither
+// the ownership marker nor refquota, so a restored volume would leak forever and
+// report the whole pool.
+func TestSMBRestoreStampsClone(t *testing.T) {
+	n := newNAS(t)
+	n.put("Pool0/k8s/pvc-src", &fakeDataset{refquota: gib, marker: volume.OwnerValue, source: "LOCAL"})
+	b := newBackend(t, n)
+
+	r := testRequest("pvc-restored", 4*gib)
+	r.SourceSnapshot = "Pool0/k8s/pvc-src@snap-1"
+	vol, err := b.Create(context.Background(), r)
+	if err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	if vol.CapacityBytes != 4*gib {
+		t.Fatalf("CapacityBytes = %d, want %d", vol.CapacityBytes, 4*gib)
+	}
+	if got := n.CallsTo("pool.snapshot.clone"); got != 1 {
+		t.Fatalf("pool.snapshot.clone called %d times, want 1", got)
+	}
+	if got := n.CallsTo("pool.dataset.create"); got != 0 {
+		t.Fatalf("a restore must clone, not create: %d creates", got)
+	}
+
+	ds := n.dataset("Pool0/k8s/pvc-restored")
+	if ds == nil {
+		t.Fatal("clone was not created")
+	}
+	if ds.marker != volume.OwnerValue || ds.source != "LOCAL" {
+		t.Fatalf("clone marker = %q/%q — a restored volume would leak forever", ds.marker, ds.source)
+	}
+	if ds.refquota != 4*gib {
+		t.Fatalf("clone refquota = %d, want %d — the share would report the whole pool", ds.refquota, 4*gib)
+	}
+	if got := n.CallsTo("filesystem.setacl"); got != 1 {
+		t.Fatalf("filesystem.setacl ran %d times on the clone, want 1", got)
+	}
+	if err := b.Delete(context.Background(), testID("pvc-restored")); err != nil {
+		t.Fatalf("Delete restored volume: %v", err)
+	}
+}
+
+func TestSMBProtocolIsRegistered(t *testing.T) {
+	for _, p := range backend.Protocols() {
+		if p == Protocol {
+			return
+		}
+	}
+	t.Fatalf("smb is not registered: %v", backend.Protocols())
+}
