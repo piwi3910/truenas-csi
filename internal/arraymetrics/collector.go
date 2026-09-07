@@ -47,7 +47,7 @@ const probeTimeout = 30 * time.Second
 type Registry interface {
 	Names() []string
 	Backend(name string) (config.Backend, error)
-	Client(ctx context.Context, name string) (*truenas.Client, error)
+	Client(ctx context.Context, name string) (truenas.API, error)
 }
 
 // Label sets are fixed and small on purpose: backend and pool are configuration,

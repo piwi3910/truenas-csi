@@ -123,7 +123,7 @@ type NVMeHostSubsys struct {
 }
 
 // NVMeGlobalConfig returns the appliance-wide NVMe-oF configuration.
-func (c *Client) NVMeGlobalConfig(ctx context.Context) (*NVMeGlobal, error) {
+func (c *Ops) NVMeGlobalConfig(ctx context.Context) (*NVMeGlobal, error) {
 	var g NVMeGlobal
 	if err := c.CallJSON(ctx, &g, "nvmet.global.config"); err != nil {
 		return nil, err
@@ -132,7 +132,7 @@ func (c *Client) NVMeGlobalConfig(ctx context.Context) (*NVMeGlobal, error) {
 }
 
 // NVMeSubsysByName finds a subsystem, or (nil, nil) when absent.
-func (c *Client) NVMeSubsysByName(ctx context.Context, name string) (*NVMeSubsystem, error) {
+func (c *Ops) NVMeSubsysByName(ctx context.Context, name string) (*NVMeSubsystem, error) {
 	var out []NVMeSubsystem
 	err := c.CallJSON(ctx, &out, "nvmet.subsys.query",
 		[]any{[]any{"name", "=", name}}, map[string]any{})
@@ -151,7 +151,7 @@ func (c *Client) NVMeSubsysByName(ctx context.Context, name string) (*NVMeSubsys
 // NVMeSubsysCreate creates a subsystem. allowAnyHost true leaves it open to any
 // initiator; false means the caller MUST bind at least one host to it, because
 // a closed subsystem with an empty host list accepts nobody.
-func (c *Client) NVMeSubsysCreate(ctx context.Context, name string, allowAnyHost bool) (*NVMeSubsystem, error) {
+func (c *Ops) NVMeSubsysCreate(ctx context.Context, name string, allowAnyHost bool) (*NVMeSubsystem, error) {
 	var s NVMeSubsystem
 	if err := c.CallJSON(ctx, &s, "nvmet.subsys.create", map[string]any{
 		"name": name, "allow_any_host": allowAnyHost,
@@ -162,7 +162,7 @@ func (c *Client) NVMeSubsysCreate(ctx context.Context, name string, allowAnyHost
 }
 
 // NVMeSubsysDelete removes a subsystem. An absent subsystem is success.
-func (c *Client) NVMeSubsysDelete(ctx context.Context, id int) error {
+func (c *Ops) NVMeSubsysDelete(ctx context.Context, id int) error {
 	err := c.CallJSON(ctx, nil, "nvmet.subsys.delete", id)
 	if err != nil && IsNotFound(err) {
 		return nil
@@ -175,7 +175,7 @@ func (c *Client) NVMeSubsysDelete(ctx context.Context, id int) error {
 // The lookup is by device path rather than by subsystem id on purpose: the
 // device path is the volume's identity, and it stays meaningful even when a
 // previous attempt left a namespace attached to a subsystem that is gone.
-func (c *Client) NVMeNamespaceByDevice(ctx context.Context, devicePath string) (*NVMeNamespace, error) {
+func (c *Ops) NVMeNamespaceByDevice(ctx context.Context, devicePath string) (*NVMeNamespace, error) {
 	var out []NVMeNamespace
 	err := c.CallJSON(ctx, &out, "nvmet.namespace.query",
 		[]any{[]any{"device_path", "=", devicePath}}, map[string]any{})
@@ -193,7 +193,7 @@ func (c *Client) NVMeNamespaceByDevice(ctx context.Context, devicePath string) (
 
 // NVMeNamespaceCreate exports a zvol as a namespace of a subsystem. devicePath
 // is the middleware's "zvol/<dataset>" form, as verified live.
-func (c *Client) NVMeNamespaceCreate(ctx context.Context, subsysID int, devicePath string) (*NVMeNamespace, error) {
+func (c *Ops) NVMeNamespaceCreate(ctx context.Context, subsysID int, devicePath string) (*NVMeNamespace, error) {
 	var ns NVMeNamespace
 	if err := c.CallJSON(ctx, &ns, "nvmet.namespace.create", map[string]any{
 		"subsys_id": subsysID, "device_type": "ZVOL", "device_path": devicePath,
@@ -204,7 +204,7 @@ func (c *Client) NVMeNamespaceCreate(ctx context.Context, subsysID int, devicePa
 }
 
 // NVMeNamespaceDelete removes a namespace. An absent namespace is success.
-func (c *Client) NVMeNamespaceDelete(ctx context.Context, id int) error {
+func (c *Ops) NVMeNamespaceDelete(ctx context.Context, id int) error {
 	err := c.CallJSON(ctx, nil, "nvmet.namespace.delete", id)
 	if err != nil && IsNotFound(err) {
 		return nil
@@ -214,7 +214,7 @@ func (c *Client) NVMeNamespaceDelete(ctx context.Context, id int) error {
 
 // NVMePortFind returns the port listening on this transport, address and service
 // id, or (nil, nil) when there is none.
-func (c *Client) NVMePortFind(ctx context.Context, trtype, addr string, port int) (*NVMePort, error) {
+func (c *Ops) NVMePortFind(ctx context.Context, trtype, addr string, port int) (*NVMePort, error) {
 	ports, err := c.NVMePortList(ctx)
 	if err != nil {
 		return nil, err
@@ -229,7 +229,7 @@ func (c *Client) NVMePortFind(ctx context.Context, trtype, addr string, port int
 }
 
 // NVMePortList returns every configured port.
-func (c *Client) NVMePortList(ctx context.Context) ([]NVMePort, error) {
+func (c *Ops) NVMePortList(ctx context.Context) ([]NVMePort, error) {
 	var out []NVMePort
 	if err := c.CallJSON(ctx, &out, "nvmet.port.query"); err != nil {
 		if IsNotFound(err) {
@@ -241,7 +241,7 @@ func (c *Client) NVMePortList(ctx context.Context) ([]NVMePort, error) {
 }
 
 // NVMePortCreate adds a port. trtype is the middleware's spelling: TCP or RDMA.
-func (c *Client) NVMePortCreate(ctx context.Context, trtype, addr string, port int) (*NVMePort, error) {
+func (c *Ops) NVMePortCreate(ctx context.Context, trtype, addr string, port int) (*NVMePort, error) {
 	var p NVMePort
 	if err := c.CallJSON(ctx, &p, "nvmet.port.create", map[string]any{
 		"addr_trtype": trtype, "addr_traddr": addr, "addr_trsvcid": port,
@@ -252,7 +252,7 @@ func (c *Client) NVMePortCreate(ctx context.Context, trtype, addr string, port i
 }
 
 // NVMePortDelete removes a port. An absent port is success.
-func (c *Client) NVMePortDelete(ctx context.Context, id int) error {
+func (c *Ops) NVMePortDelete(ctx context.Context, id int) error {
 	err := c.CallJSON(ctx, nil, "nvmet.port.delete", id)
 	if err != nil && IsNotFound(err) {
 		return nil
@@ -261,7 +261,7 @@ func (c *Client) NVMePortDelete(ctx context.Context, id int) error {
 }
 
 // NVMePortSubsysList returns the port bindings of one subsystem.
-func (c *Client) NVMePortSubsysList(ctx context.Context, subsysID int) ([]NVMePortSubsys, error) {
+func (c *Ops) NVMePortSubsysList(ctx context.Context, subsysID int) ([]NVMePortSubsys, error) {
 	var out []NVMePortSubsys
 	err := c.CallJSON(ctx, &out, "nvmet.port_subsys.query",
 		[]any{[]any{"subsys_id", "=", subsysID}}, map[string]any{})
@@ -275,7 +275,7 @@ func (c *Client) NVMePortSubsysList(ctx context.Context, subsysID int) ([]NVMePo
 }
 
 // NVMePortSubsysCreate binds a subsystem to a port.
-func (c *Client) NVMePortSubsysCreate(ctx context.Context, portID, subsysID int) (*NVMePortSubsys, error) {
+func (c *Ops) NVMePortSubsysCreate(ctx context.Context, portID, subsysID int) (*NVMePortSubsys, error) {
 	var ps NVMePortSubsys
 	if err := c.CallJSON(ctx, &ps, "nvmet.port_subsys.create", map[string]any{
 		"port_id": portID, "subsys_id": subsysID,
@@ -286,7 +286,7 @@ func (c *Client) NVMePortSubsysCreate(ctx context.Context, portID, subsysID int)
 }
 
 // NVMePortSubsysDelete removes a port binding. An absent binding is success.
-func (c *Client) NVMePortSubsysDelete(ctx context.Context, id int) error {
+func (c *Ops) NVMePortSubsysDelete(ctx context.Context, id int) error {
 	err := c.CallJSON(ctx, nil, "nvmet.port_subsys.delete", id)
 	if err != nil && IsNotFound(err) {
 		return nil
@@ -295,7 +295,7 @@ func (c *Client) NVMePortSubsysDelete(ctx context.Context, id int) error {
 }
 
 // NVMeHostByNQN finds a registered host, or (nil, nil) when absent.
-func (c *Client) NVMeHostByNQN(ctx context.Context, nqn string) (*NVMeHost, error) {
+func (c *Ops) NVMeHostByNQN(ctx context.Context, nqn string) (*NVMeHost, error) {
 	var out []NVMeHost
 	err := c.CallJSON(ctx, &out, "nvmet.host.query",
 		[]any{[]any{"hostnqn", "=", nqn}}, map[string]any{})
@@ -312,7 +312,7 @@ func (c *Client) NVMeHostByNQN(ctx context.Context, nqn string) (*NVMeHost, erro
 }
 
 // NVMeHostCreate registers an initiator NQN.
-func (c *Client) NVMeHostCreate(ctx context.Context, nqn string) (*NVMeHost, error) {
+func (c *Ops) NVMeHostCreate(ctx context.Context, nqn string) (*NVMeHost, error) {
 	var h NVMeHost
 	if err := c.CallJSON(ctx, &h, "nvmet.host.create", map[string]any{"hostnqn": nqn}); err != nil {
 		return nil, err
@@ -321,7 +321,7 @@ func (c *Client) NVMeHostCreate(ctx context.Context, nqn string) (*NVMeHost, err
 }
 
 // NVMeHostSubsysList returns the host bindings of one subsystem.
-func (c *Client) NVMeHostSubsysList(ctx context.Context, subsysID int) ([]NVMeHostSubsys, error) {
+func (c *Ops) NVMeHostSubsysList(ctx context.Context, subsysID int) ([]NVMeHostSubsys, error) {
 	var out []NVMeHostSubsys
 	err := c.CallJSON(ctx, &out, "nvmet.host_subsys.query",
 		[]any{[]any{"subsys_id", "=", subsysID}}, map[string]any{})
@@ -335,7 +335,7 @@ func (c *Client) NVMeHostSubsysList(ctx context.Context, subsysID int) ([]NVMeHo
 }
 
 // NVMeHostSubsysCreate grants a host access to a subsystem.
-func (c *Client) NVMeHostSubsysCreate(ctx context.Context, hostID, subsysID int) (*NVMeHostSubsys, error) {
+func (c *Ops) NVMeHostSubsysCreate(ctx context.Context, hostID, subsysID int) (*NVMeHostSubsys, error) {
 	var hs NVMeHostSubsys
 	if err := c.CallJSON(ctx, &hs, "nvmet.host_subsys.create", map[string]any{
 		"host_id": hostID, "subsys_id": subsysID,
@@ -346,7 +346,7 @@ func (c *Client) NVMeHostSubsysCreate(ctx context.Context, hostID, subsysID int)
 }
 
 // NVMeHostSubsysDelete revokes a host's access. An absent binding is success.
-func (c *Client) NVMeHostSubsysDelete(ctx context.Context, id int) error {
+func (c *Ops) NVMeHostSubsysDelete(ctx context.Context, id int) error {
 	err := c.CallJSON(ctx, nil, "nvmet.host_subsys.delete", id)
 	if err != nil && IsNotFound(err) {
 		return nil

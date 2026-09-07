@@ -47,7 +47,7 @@ type Backend interface {
 }
 
 // Factory builds a Backend for one appliance.
-type Factory func(c *truenas.Client, pool, parent string) Backend
+type Factory func(c truenas.API, pool, parent string) Backend
 
 var (
 	factoriesMu sync.RWMutex

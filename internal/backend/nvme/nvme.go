@@ -104,13 +104,13 @@ func init() { backend.Register(Protocol, New) }
 
 // nvmeBackend provisions NVMe-oF volumes on one appliance.
 type nvmeBackend struct {
-	c      *truenas.Client
+	c      truenas.API
 	pool   string
 	parent string
 }
 
 // New builds the backend for one appliance. It matches backend.Factory.
-func New(c *truenas.Client, pool, parent string) backend.Backend {
+func New(c truenas.API, pool, parent string) backend.Backend {
 	return &nvmeBackend{c: c, pool: pool, parent: parent}
 }
 
@@ -437,7 +437,7 @@ var zvolReleaseTimeout = 30 * time.Second
 // behaviour observed for iSCSI extents against a real appliance, where the very
 // next attempt succeeds. Retrying is correct here precisely because the object
 // is ours and already unexported; giving up would leak a zvol on every delete.
-func deleteZvolWhenReleased(ctx context.Context, c *truenas.Client, dsPath string) error {
+func deleteZvolWhenReleased(ctx context.Context, c truenas.API, dsPath string) error {
 	deadline := time.Now().Add(zvolReleaseTimeout)
 	delay := 200 * time.Millisecond
 	for {

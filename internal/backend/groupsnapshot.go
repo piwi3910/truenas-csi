@@ -236,7 +236,7 @@ func (r *Registry) DeleteGroupSnapshot(ctx context.Context, id string, memberIDs
 
 // groupSnapshots returns every snapshot the recursive create made for a group:
 // the anchor on the parent dataset plus one per dataset beneath it.
-func (r *Registry) groupSnapshots(ctx context.Context, c *truenas.Client, groupZFS string) ([]truenas.Snapshot, error) {
+func (r *Registry) groupSnapshots(ctx context.Context, c truenas.API, groupZFS string) ([]truenas.Snapshot, error) {
 	parent, name := splitSnapshotID(groupZFS)
 	snaps, err := c.SnapshotList(ctx, parent)
 	if err != nil {

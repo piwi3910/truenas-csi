@@ -113,7 +113,7 @@ func init() { backend.Register(Protocol, New) }
 
 // Backend provisions SMB volumes on one appliance.
 type Backend struct {
-	c      *truenas.Client
+	c      truenas.API
 	pool   string
 	parent string
 
@@ -127,7 +127,7 @@ type Backend struct {
 }
 
 // New builds an SMB backend bound to one appliance, pool and parent dataset.
-func New(c *truenas.Client, pool, parent string) backend.Backend {
+func New(c truenas.API, pool, parent string) backend.Backend {
 	return &Backend{c: c, pool: pool, parent: parent, byVol: map[string]params{}}
 }
 

@@ -68,7 +68,7 @@ func AllowEntry(tag, perm, flag string) ACLEntry {
 // Like filesystem.setperm this is a JOB: it returns an integer job id which must
 // be polled through core.get_jobs until SUCCESS, FAILED or ABORTED. The two
 // calls are the only job-based methods the driver makes.
-func (c *Client) SetACL(ctx context.Context, path string, dacl []ACLEntry, uid, gid int) error {
+func (c *Ops) SetACL(ctx context.Context, path string, dacl []ACLEntry, uid, gid int) error {
 	if len(dacl) == 0 {
 		return fmt.Errorf("filesystem.setacl %s: refusing to apply an empty ACL", path)
 	}

@@ -12,7 +12,7 @@ import (
 // and connection detail. Only the count is kept: an initiator IQN or a target
 // name as a metric label would be unbounded, and it is not the driver's data to
 // publish.
-func (c *Client) ISCSISessionCount(ctx context.Context) (int, error) {
+func (c *Ops) ISCSISessionCount(ctx context.Context) (int, error) {
 	var out []json.RawMessage
 	if err := c.CallJSON(ctx, &out, "iscsi.global.sessions"); err != nil {
 		return 0, err

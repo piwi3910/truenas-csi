@@ -209,7 +209,7 @@ func (b *nvmeBackend) ensureHostACL(ctx context.Context, subsysID int, p Params,
 // APPLIANCE listens, not an address a node can dial — handing it to
 // `nvme connect` produces a connection refused against 0.0.0.0. The client's
 // own host is the fallback, exactly as the iSCSI backend does for portals.
-func portalAddress(c *truenas.Client, p *truenas.NVMePort) (string, error) {
+func portalAddress(c truenas.API, p *truenas.NVMePort) (string, error) {
 	port := p.Port()
 	if port == 0 {
 		port = DefaultPort
