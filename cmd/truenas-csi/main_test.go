@@ -74,6 +74,34 @@ func TestOrphanReconcilerIsWiredIntoTheController(t *testing.T) {
 	}
 }
 
+// TestArrayCollectorIsWiredIntoTheController guards the same gap for the
+// array-level collector: implemented but never started is dead code.
+func TestArrayCollectorIsWiredIntoTheController(t *testing.T) {
+	src, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"arraymetrics.New",
+		"arrayCollector.Start(ctx)",
+		"go arrayCollector.Run(ctx)",
+		"prometheus.MustRegister(arrayCollector)",
+	} {
+		if !strings.Contains(string(src), want) {
+			t.Errorf("main.go never calls %s: the array collector would be dead code "+
+				"in the shipped binary", want)
+		}
+	}
+	// The node plugin has no appliance client, so the collector must be started
+	// from the controller branch only.
+	ctrlIdx := strings.Index(string(src), `case "controller":`)
+	nodeIdx := strings.Index(string(src), `case "node":`)
+	collIdx := strings.Index(string(src), "arraymetrics.New")
+	if ctrlIdx < 0 || nodeIdx < 0 || collIdx < ctrlIdx || collIdx > nodeIdx {
+		t.Error("the array collector must be started in the controller branch only")
+	}
+}
+
 // TestMetricsAndHealthAreServed likewise checks the observability endpoints are
 // actually started, not merely implemented.
 func TestMetricsAndHealthAreServed(t *testing.T) {

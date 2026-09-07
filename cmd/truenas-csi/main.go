@@ -14,6 +14,7 @@ import (
 	"time"
 
 	csipb "github.com/container-storage-interface/spec/lib/go/csi"
+	"github.com/piwi3910/truenas-csi/internal/arraymetrics"
 	"github.com/piwi3910/truenas-csi/internal/backend"
 	_ "github.com/piwi3910/truenas-csi/internal/backend/iscsi"
 	_ "github.com/piwi3910/truenas-csi/internal/backend/nfs"
@@ -24,6 +25,7 @@ import (
 	"github.com/piwi3910/truenas-csi/internal/obs"
 	"github.com/piwi3910/truenas-csi/internal/reconcile"
 	"github.com/piwi3910/truenas-csi/internal/server"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
@@ -114,6 +116,21 @@ func run(mode, endpoint, configPath, nodeID, hostRoot string) error {
 		} else {
 			go reconcile.NewOrphanReconciler(reg, lister, orphanInterval).Run(ctx)
 			slog.Info("orphan reporting enabled", "interval", orphanInterval.String())
+		}
+
+		// Array-level metrics run on the controller only: the node plugin has
+		// no appliance client. If nothing answers at startup the collector is
+		// skipped with a log rather than failing the process — an appliance
+		// outage must not crash-loop the controller.
+		arrayCollector := arraymetrics.New(reg, cfg.MetricsPollInterval())
+		if aErr := arrayCollector.Start(ctx); aErr != nil {
+			slog.Warn("array metrics disabled: no reachable backend at startup",
+				"error", obs.Redact(aErr.Error()))
+		} else {
+			prometheus.MustRegister(arrayCollector)
+			go arrayCollector.Run(ctx)
+			slog.Info("array metrics enabled",
+				"interval", arrayCollector.Interval().String())
 		}
 		obs.MarkReady()
 

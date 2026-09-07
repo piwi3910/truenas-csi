@@ -4,6 +4,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -42,6 +43,29 @@ type Config struct {
 	LogLevel    string             `yaml:"logLevel"`
 	MetricsAddr string             `yaml:"metricsAddr"`
 	HealthAddr  string             `yaml:"healthAddr"`
+
+	// MetricsInterval is how often the controller polls each appliance for
+	// array-level metrics, as a Go duration ("60s", "5m"). Empty means the
+	// package default. Polling is deliberately decoupled from scraping, so
+	// this only bounds staleness, never scrape latency.
+	MetricsInterval string `yaml:"metricsInterval"`
+}
+
+// DefaultMetricsInterval is used when metricsInterval is unset.
+const DefaultMetricsInterval = 60 * time.Second
+
+// MetricsPollInterval is the configured array-metrics poll interval.
+// Load has already rejected an unparsable value, so the default here only
+// covers a Config built in code.
+func (c *Config) MetricsPollInterval() time.Duration {
+	if c.MetricsInterval == "" {
+		return DefaultMetricsInterval
+	}
+	d, err := time.ParseDuration(c.MetricsInterval)
+	if err != nil || d <= 0 {
+		return DefaultMetricsInterval
+	}
+	return d
 }
 
 // Load reads and validates a YAML configuration file.
@@ -68,6 +92,13 @@ func Load(path string) (*Config, error) {
 	}
 	if c.HealthAddr == "" {
 		c.HealthAddr = ":9808"
+	}
+	if c.MetricsInterval != "" {
+		d, dErr := time.ParseDuration(c.MetricsInterval)
+		if dErr != nil || d <= 0 {
+			return nil, fmt.Errorf("metricsInterval %q is not a positive Go duration (e.g. 60s, 5m)",
+				c.MetricsInterval)
+		}
 	}
 	if err := c.Validate(); err != nil {
 		return nil, err
