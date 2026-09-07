@@ -627,3 +627,28 @@ func TestSMBProtocolIsRegistered(t *testing.T) {
 	}
 	t.Fatalf("smb is not registered: %v", backend.Protocols())
 }
+
+// TestDACLOmitsZeroPermissionEntries pins a failure the live appliance produced:
+// mode 0770 gave everyone@ a "none" basic permission, and because no such preset
+// exists the middleware validated the entry against the ADVANCED schema and
+// rejected the whole ACL with
+// "NFS4ACE_AdvancedPerms.BASIC: Extra inputs are not permitted".
+func TestDACLOmitsZeroPermissionEntries(t *testing.T) {
+	entries := dacl("0770")
+	if len(entries) != 2 {
+		t.Fatalf("mode 0770 should yield owner@ and group@ only, got %d entries: %+v",
+			len(entries), entries)
+	}
+	for _, e := range entries {
+		if e.Tag == truenas.ACLTagEveryone {
+			t.Fatal("everyone@ is granted nothing by 0770 and must not appear in the ACL")
+		}
+		if p := e.Perms["BASIC"]; p == "" || p == truenas.ACLPermNone {
+			t.Fatalf("entry %+v carries no usable basic permission", e)
+		}
+	}
+	// A mode that does grant everyone something must still include it.
+	if got := len(dacl("0775")); got != 3 {
+		t.Fatalf("mode 0775 should yield three entries, got %d", got)
+	}
+}

@@ -91,9 +91,15 @@ const (
 
 // Defaults for the StorageClass parameters.
 const (
-	// defaultMode matches what share_type SMB already produces (0770): the
-	// owner and group may do everything, everyone else nothing.
-	defaultMode = "0770"
+	// defaultMode grants everyone@ as well as owner and group.
+	//
+	// share_type SMB produces 0770, which grants only the owning user and group
+	// — both root. An SMB client authenticates as an ordinary user, so a 0770
+	// ACL denies it outright: mounting gives "mount error(13): Permission
+	// denied", verified against a real appliance. The alternative to being
+	// permissive here is a share nobody can use, so the default matches the NFS
+	// backend's and operators tighten it with the `mode` parameter.
+	defaultMode = "0777"
 	// defaultFileMode / defaultDirMode are what the cifs client reported on the
 	// validated mount (file_mode=0755,dir_mode=0755).
 	defaultFileMode = "0755"
@@ -252,6 +258,14 @@ func dacl(mode string) []truenas.ACLEntry {
 	tags := []string{truenas.ACLTagOwner, truenas.ACLTagGroup, truenas.ACLTagEveryone}
 	out := make([]truenas.ACLEntry, 0, len(tags))
 	for i, tag := range tags {
+		// A principal granted nothing gets NO entry. There is no basic preset
+		// meaning "none": sending one makes the middleware fall through to the
+		// advanced-permission schema and reject the whole ACL with
+		// "NFS4ACE_AdvancedPerms.BASIC: Extra inputs are not permitted".
+		// Absence is how NFSv4 expresses no access anyway.
+		if digits[i] == '0' {
+			continue
+		}
 		out = append(out, truenas.AllowEntry(tag, permFor(digits[i]), truenas.ACLFlagInherit))
 	}
 	return out
