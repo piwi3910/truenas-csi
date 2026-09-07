@@ -103,9 +103,4 @@ func SetApplianceAlerts(backend string, byLevel map[string]int) {
 	}
 }
 
-func boolGauge(b bool) float64 {
-	if b {
-		return 1
-	}
-	return 0
-}
+// boolGauge lives in metrics.go; both files publish 1/0 gauges from booleans.
