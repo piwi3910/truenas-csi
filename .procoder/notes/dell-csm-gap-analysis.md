@@ -347,6 +347,27 @@ Ours is not clean either — `hostPID: true`, `hostNetwork: true`, `privileged: 
 requires it. But we do not grant CRD deletion, and our sidecar verbosity follows
 `logLevel`.
 
+### 4.7 Capacity reporting is more honest than theirs
+
+PowerStore's `GetCapacity` returns `PhysicalTotal - PhysicalUsed` from a
+`space_metrics_by_cluster` query at a five-minute interval: whole-cluster,
+**no pool granularity, no reserve, no overcommit model, and up to five minutes
+stale** (`pkg/controller/controller.go:1523-1552` → gopowerstore
+`metrics.go:346-377`). PowerFlex is worse in a subtler way — its thin/thick
+capacity basis reads the _global_ `X_CSI_VXFLEXOS_THICKPROVISIONING` option
+while CreateVolume honours the _per-StorageClass_ `thickprovisioning`
+parameter, so capacity can be reported under a different provisioning model
+than the volumes actually created. Neither subtracts anything for reserve.
+
+Ours (`internal/csi/capacity.go`) reports **per-pool** free space **less the
+operator's reservation**, clamped at zero — the clamp because a negative figure
+is read by external-provisioner as an enormous unsigned one — and backs it with
+`requireRoomOutsideReserve` in `CreateVolume`, because `CSIStorageCapacity` is
+advisory and a large enough PVC would otherwise walk straight through the
+reserve.
+
+We are missing `MaximumVolumeSize`, which four of their five drivers set. Minor.
+
 ---
 
 ## 5. Gaps that do not translate
