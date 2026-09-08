@@ -162,6 +162,40 @@ require `source == "LOCAL"`, not merely that the property is present.
 - Deletion ordering matters and `{"recursive": true, "force": true}` is needed; a wrong
   order returns `EBUSY` with "dataset is busy" / "snapshot is cloned".
 
+### Delete protection: what the method pages say (read 2026-09-08, docs only)
+
+Read before designing the feature, from the appliance's unauthenticated docs over https.
+
+- **`pool.dataset.rename(id, {new_name, recursive=false, force=false}) -> null`**, role
+  `DATASET_WRITE`. `new_name` is the FULL new path, not a leaf. The page states outright:
+  "No safety checks are performed when renaming ZFS resources. If the dataset is in use by
+  services such as SMB, iSCSI, snapshot tasks, replication, or cloud sync, renaming may
+  cause disruptions or service failures... Set Force to continue." `recursive` renames
+  CHILD DATASETS, which a volume dataset does not have; snapshots travel with their dataset
+  either way. **Consequence: the retire rename must follow share/extent teardown, and force
+  must never be passed** — a refusal is the appliance saying teardown did not finish.
+- **`pool.dataset.delete(id, {recursive, force}) -> true | null`**, role `DATASET_DELETE`.
+  It returns **null**, not an error, when zfs destroy fails with "dataset does not exist".
+  That is what makes both the retire and the reap safely repeatable across replicas.
+- **`pool.dataset.update`** takes `user_properties_update: [{key, value, remove}]` with the
+  key constrained to `namespace:property`. `pool.dataset.create` takes `user_properties:
+[{key, value}]`. Both already used by the driver.
+- **`pool.dataset.query`** returns `user_properties` as an object. The SCHEMA PAGE describes
+  it only as "key-value pairs" and does not document the `{value, source}` envelope; the
+  LIVE PROBE above did observe the envelope, and internal/truenas/types.go decodes it. The
+  live evidence wins, but note the doc page is not sufficient on its own here.
+- **`pool.dataset.promote(id) -> null`** takes the CLONE's id. Unchanged from the finding
+  above: it inverts the dependency, so the reaper never promotes anything.
+
+**ZFS naming, checked in the OpenZFS source rather than assumed** (module/zcommon/zfs_namecheck.c):
+`entity_namecheck()` validates each dataset component against `valid_char()` =
+`[A-Za-z0-9_.: ]` plus `-`, and additionally exempts `%`. It rejects only `.` and `..` as
+WHOLE components. There is no leading-character rule: `NAME_ERR_NOLETTER` is raised in
+`pool_namecheck()` alone, for POOL names. So `Pool0/k8s/.trash` is a legal dataset name —
+which TrueNAS itself relies on for `<pool>/.system`. The leading dot is what makes a
+collision with a namespace or PersistentVolume name structurally impossible, since a
+DNS-1123 name may not begin with one.
+
 ### Volume-from-volume cloning (not yet probed)
 
 CSI also allows cloning an existing volume, not just a snapshot. That requires an internal

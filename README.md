@@ -655,6 +655,10 @@ design more than any other requirement:
 - [docs/namespace-quotas.md](docs/namespace-quotas.md) — optional per-namespace capacity
   accounting: a ZFS quota per namespace dataset, what it costs to enable, and what it
   cannot tell the scheduler.
+- [docs/delete-protection.md](docs/delete-protection.md) — optional grace period between
+  `kubectl delete pvc` and the destruction of the data. Off by default, and read the
+  capacity trade before enabling it: **space is not reclaimed until the grace period
+  expires.**
 - [docs/metrics.md](docs/metrics.md) — every exported series, where the per-volume figures
   come from, and what they cannot show.
 - [docs/io-limits.md](docs/io-limits.md) — optional per-volume IOPS and bandwidth caps,

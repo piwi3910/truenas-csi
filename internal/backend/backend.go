@@ -8,6 +8,7 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/piwi3910/truenas-csi/internal/retention"
 	"github.com/piwi3910/truenas-csi/internal/truenas"
 	"github.com/piwi3910/truenas-csi/internal/volume"
 )
@@ -46,8 +47,27 @@ type Backend interface {
 	PublishContext(ctx context.Context, id volume.ID) (map[string]string, error)
 }
 
+// Options is everything a backend needs about the appliance it serves beyond
+// the connection itself.
+//
+// It is a struct rather than three positional strings because the third thing a
+// backend needs is a POLICY, not a name: whether DeleteVolume destroys a dataset
+// or retires it. A reader of `New(c, "Pool0", "k8s", 168*time.Hour, ".trash")`
+// would have had no chance.
+type Options struct {
+	// Pool and Parent are the operator-configured location the backend is
+	// confined to.
+	Pool   string
+	Parent string
+
+	// Retention is the delete-protection policy. Its zero value is "off", which
+	// is the default and takes exactly the code path the driver has always
+	// taken.
+	Retention retention.Policy
+}
+
 // Factory builds a Backend for one appliance.
-type Factory func(c truenas.API, pool, parent string) Backend
+type Factory func(c truenas.API, opts Options) Backend
 
 var (
 	factoriesMu sync.RWMutex

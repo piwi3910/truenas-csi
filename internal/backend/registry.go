@@ -3,10 +3,12 @@ package backend
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 
 	"github.com/piwi3910/truenas-csi/internal/config"
 	"github.com/piwi3910/truenas-csi/internal/obs"
+	"github.com/piwi3910/truenas-csi/internal/retention"
 	"github.com/piwi3910/truenas-csi/internal/truenas"
 	"github.com/piwi3910/truenas-csi/internal/truenas/core"
 )
@@ -120,7 +122,50 @@ func (r *Registry) For(ctx context.Context, name, protocol string) (Backend, err
 	if err != nil {
 		return nil, err
 	}
-	return f(c, cfgB.Pool, cfgB.ParentDataset), nil
+	return f(c, r.Options(cfgB)), nil
+}
+
+// Options resolves one appliance's configuration into what a backend needs.
+//
+// It is exported because the reaper is built from the same policy the backends
+// dispose through, and the two must not be able to disagree about where the
+// graveyard is or how long the grace period lasts.
+func (r *Registry) Options(b config.Backend) Options {
+	return Options{
+		Pool:      b.Pool,
+		Parent:    b.ParentDataset,
+		Retention: retention.PolicyFor(b),
+	}
+}
+
+// RetentionTargets is the reaper's view of the configured appliances: every
+// backend whose delete protection is on, with a connected client.
+//
+// An appliance that cannot be dialled is omitted rather than reported: the
+// reaper's only action is destructive, and "I could not reach the box" must
+// mean "destroy nothing", never "assume the graveyard is empty".
+func (r *Registry) RetentionTargets(ctx context.Context) []retention.Target {
+	names := r.Names()
+	sort.Strings(names)
+	out := make([]retention.Target, 0, len(names))
+	for _, name := range names {
+		cfgB, err := r.Backend(name)
+		if err != nil {
+			continue
+		}
+		policy := retention.PolicyFor(cfgB)
+		if !policy.On() {
+			continue
+		}
+		c, err := r.Client(ctx, name)
+		if err != nil {
+			obs.Logger(ctx).Warn("reaper skipping unreachable backend",
+				"backend", name, "error", obs.Redact(err.Error()))
+			continue
+		}
+		out = append(out, retention.Target{Name: name, Client: c, Policy: policy})
+	}
+	return out
 }
 
 // Close shuts every connection down.

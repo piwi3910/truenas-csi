@@ -75,7 +75,7 @@ func (b *countingBackend) live() int {
 var shared = newCounting()
 
 func init() {
-	backend.Register("counting", func(truenas.API, string, string) backend.Backend { return shared })
+	backend.Register("counting", func(truenas.API, backend.Options) backend.Backend { return shared })
 }
 
 func ctlWith(t *testing.T) (csipb.ControllerServer, *fake.Server) {

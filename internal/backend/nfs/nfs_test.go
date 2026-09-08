@@ -161,6 +161,29 @@ func newNAS(t *testing.T) *nas {
 		return ds.json(id), nil
 	})
 
+	// Renaming moves the dataset and everything on it, including its user
+	// properties. Modelling that is what makes the ownership marker's survival
+	// across a retire a fact rather than an assumption.
+	n.Handle("pool.dataset.rename", func(p []json.RawMessage) (any, error) {
+		var id string
+		var opts map[string]any
+		mustJSON(t, p[0], &id)
+		mustJSON(t, p[1], &opts)
+		dst, _ := opts["new_name"].(string)
+		n.mu.Lock()
+		defer n.mu.Unlock()
+		ds, ok := n.datasets[id]
+		if !ok {
+			return nil, &fake.RPCError{Code: -32602, ErrName: "EINVAL", Reason: "[ENOENT] " + id}
+		}
+		if _, taken := n.datasets[dst]; taken {
+			return nil, &fake.RPCError{Code: -32602, ErrName: "EINVAL", Reason: "[EEXIST] " + dst}
+		}
+		delete(n.datasets, id)
+		n.datasets[dst] = ds
+		return nil, nil
+	})
+
 	n.Handle("pool.dataset.delete", func(p []json.RawMessage) (any, error) {
 		var id string
 		mustJSON(t, p[0], &id)
@@ -321,7 +344,7 @@ func newBackend(t *testing.T, n *nas) backend.Backend {
 		t.Fatalf("Dial: %v", err)
 	}
 	t.Cleanup(func() { _ = c.Close() })
-	return New(c, "Pool0", "k8s")
+	return New(c, backend.Options{Pool: "Pool0", Parent: "k8s"})
 }
 
 const gib = int64(1) << 30

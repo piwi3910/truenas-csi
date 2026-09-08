@@ -216,6 +216,19 @@ outcome: an orphaned dataset is an operator's cleanup task; a deleted one is not
 recoverable. For the same reason the orphan reconciler only **reports** datasets with no
 matching PersistentVolume — it never deletes anything.
 
+### The one component that does destroy on its own initiative
+
+Optional delete protection (see [delete-protection.md](delete-protection.md)) adds a reaper
+that destroys retired datasets once their grace period has expired. It is scoped separately
+from the orphan reconciler, which stays report-only, and it re-checks **four** preconditions
+against the appliance's own answer before every single destroy: the dataset must be a direct
+child of the graveyard, must carry `io.truenas.csi:managed` with source `LOCAL`, must carry
+a parsable `io.truenas.csi:deletedAt`, and must be past its grace period. Failing any one of
+them means the dataset is left alone, indefinitely.
+
+It also needs no extra TrueNAS privilege: the rename is `DATASET_WRITE` and the destroy is
+`DATASET_DELETE`, both already in the documented 14-role set above.
+
 ---
 
 ## Secrets handling

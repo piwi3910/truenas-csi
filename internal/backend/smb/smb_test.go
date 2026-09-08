@@ -363,7 +363,7 @@ func newBackend(t *testing.T, n *nas) backend.Backend {
 		t.Fatalf("Dial: %v", err)
 	}
 	t.Cleanup(func() { _ = c.Close() })
-	return New(c, "Pool0", "k8s")
+	return New(c, backend.Options{Pool: "Pool0", Parent: "k8s"})
 }
 
 const gib = int64(1) << 30

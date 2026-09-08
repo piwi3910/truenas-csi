@@ -126,6 +126,18 @@ func (b Backend) validate() error {
 	if err := b.NamespaceQuotas.validate(); err != nil {
 		return err
 	}
+	if err := b.DeleteProtection.validate(); err != nil {
+		return err
+	}
+	if b.DeleteProtection.Grace() > 0 && flavour == FlavourCORE {
+		// Retiring a volume renames its dataset, and pool.dataset.rename is a
+		// method the CORE REST mapping in internal/truenas/core has never been
+		// exercised against. Refusing here is the honest answer: the
+		// alternative is a DeleteVolume that appears to protect the data and
+		// may instead fail — or, far worse, half-complete — on every delete.
+		return fmt.Errorf("deleteProtection is not supported on flavour %q: it renames datasets, "+
+			"and the CORE REST mapping for pool.dataset.rename is unverified", FlavourCORE)
+	}
 	if s := strings.TrimSpace(b.BreakerResetTimeout); s != "" {
 		d, err := time.ParseDuration(s)
 		if err != nil || d <= 0 {

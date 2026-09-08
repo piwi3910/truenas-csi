@@ -64,7 +64,7 @@ func (n *nas) client() *truenas.Client {
 }
 
 func (n *nas) backend() *nvmeBackend {
-	return New(n.client(), "Pool0", "k8s").(*nvmeBackend)
+	return New(n.client(), backend.Options{Pool: "Pool0", Parent: "k8s"}).(*nvmeBackend)
 }
 
 func (n *nas) failOn(method string, e *fake.RPCError) {
@@ -859,7 +859,7 @@ func TestNVMeExpandRejectsShrink(t *testing.T) {
 func TestNVMePortalNeverWildcard(t *testing.T) {
 	n := newNAS(t)
 	c := n.client()
-	b := New(c, "Pool0", "k8s").(*nvmeBackend)
+	b := New(c, backend.Options{Pool: "Pool0", Parent: "k8s"}).(*nvmeBackend)
 	ctx := context.Background()
 
 	n.seedPort("TCP", "0.0.0.0", 4420)
