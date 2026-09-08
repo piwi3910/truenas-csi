@@ -250,9 +250,15 @@ func (b *nvmeBackend) Create(ctx context.Context, r backend.CreateRequest) (*bac
 		undo()
 		return nil, err
 	}
-	if err := b.ensurePortBinding(ctx, port.ID, subsys.ID, &rollback); err != nil {
+	// The subsystem is deliberately NOT bound to the port here. That binding is
+	// the fence: a subsystem reachable through a port from the moment it is
+	// provisioned is discoverable by every node on the fabric, whether or not
+	// anything has attached it. ControllerPublishVolume creates the binding and
+	// ControllerUnpublishVolume removes it.
+	if err := b.c.SetUserProperty(ctx, r.ID.DatasetPath(), volume.NVMePortProperty,
+		strconv.Itoa(port.ID)); err != nil {
 		undo()
-		return nil, err
+		return nil, fmt.Errorf("recording the NVMe-oF port on %s: %w", r.ID.DatasetPath(), err)
 	}
 	if err := b.ensureHostACL(ctx, subsys.ID, p, &rollback); err != nil {
 		undo()

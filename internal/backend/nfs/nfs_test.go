@@ -27,11 +27,12 @@ type nas struct {
 	mu sync.Mutex
 	// datasets is id -> the dataset's observable state.
 	datasets map[string]*fakeDataset
-	shares   map[string]int
+	shares   map[string]*fakeExport
 	nextID   int
 
 	createPayloads []map[string]any
 	setperms       []map[string]any
+	sharePayloads  []map[string]any
 
 	shareCreateErr error
 }
@@ -40,12 +41,27 @@ type fakeDataset struct {
 	refquota int64
 	marker   string // "" when unmarked
 	source   string
+	props    map[string]string
+}
+
+// fakeExport mirrors the two fields that decide who may mount an NFS share.
+//
+// Both are modelled because the appliance ORs them: an export is reachable by
+// everyone only when BOTH are empty, and a fake that tracked hosts alone could
+// not tell a fenced export from an open one.
+type fakeExport struct {
+	id       int
+	hosts    []string
+	networks []string
 }
 
 func (d *fakeDataset) json(id string) map[string]any {
 	props := map[string]any{}
 	if d.marker != "" {
 		props[volume.OwnerProperty] = map[string]any{"value": d.marker, "source": d.source}
+	}
+	for k, v := range d.props {
+		props[k] = map[string]any{"value": v, "source": "LOCAL"}
 	}
 	return map[string]any{
 		"id":              id,
@@ -61,7 +77,7 @@ func newNAS(t *testing.T) *nas {
 	n := &nas{
 		Server:   fake.Start(t, fake.Options{}),
 		datasets: map[string]*fakeDataset{},
-		shares:   map[string]int{},
+		shares:   map[string]*fakeExport{},
 	}
 
 	n.Handle("pool.dataset.query", func(p []json.RawMessage) (any, error) {
@@ -89,10 +105,16 @@ func newNAS(t *testing.T) *nas {
 		if props, ok := payload["user_properties"].([]any); ok {
 			for _, raw := range props {
 				m, _ := raw.(map[string]any)
-				if m["key"] == volume.OwnerProperty {
-					ds.marker, _ = m["value"].(string)
-					ds.source = "LOCAL"
+				key, _ := m["key"].(string)
+				val, _ := m["value"].(string)
+				if key == volume.OwnerProperty {
+					ds.marker, ds.source = val, "LOCAL"
+					continue
 				}
+				if ds.props == nil {
+					ds.props = map[string]string{}
+				}
+				ds.props[key] = val
 			}
 		}
 		n.datasets[id] = ds
@@ -116,10 +138,16 @@ func newNAS(t *testing.T) *nas {
 		if props, ok := patch["user_properties_update"].([]any); ok {
 			for _, raw := range props {
 				m, _ := raw.(map[string]any)
-				if m["key"] == volume.OwnerProperty {
-					ds.marker, _ = m["value"].(string)
-					ds.source = "LOCAL"
+				key, _ := m["key"].(string)
+				val, _ := m["value"].(string)
+				if key == volume.OwnerProperty {
+					ds.marker, ds.source = val, "LOCAL"
+					continue
 				}
+				if ds.props == nil {
+					ds.props = map[string]string{}
+				}
+				ds.props[key] = val
 			}
 		}
 		return ds.json(id), nil
@@ -165,19 +193,49 @@ func newNAS(t *testing.T) *nas {
 		mustJSON(t, p[0], &payload)
 		path, _ := payload["path"].(string)
 		n.nextID++
-		n.shares[path] = n.nextID
-		return map[string]any{"id": n.nextID, "path": path}, nil
+		sh := &fakeExport{
+			id:       n.nextID,
+			hosts:    strList(payload["hosts"]),
+			networks: strList(payload["networks"]),
+		}
+		n.shares[path] = sh
+		n.sharePayloads = append(n.sharePayloads, payload)
+		return map[string]any{"id": sh.id, "path": path,
+			"hosts": sh.hosts, "networks": sh.networks}, nil
 	})
 
 	n.Handle("sharing.nfs.query", func(p []json.RawMessage) (any, error) {
 		path := filterValue(t, p)
 		n.mu.Lock()
 		defer n.mu.Unlock()
-		id, ok := n.shares[path]
+		sh, ok := n.shares[path]
 		if !ok {
 			return []any{}, nil
 		}
-		return []any{map[string]any{"id": id, "path": path}}, nil
+		return []any{map[string]any{"id": sh.id, "path": path,
+			"hosts": sh.hosts, "networks": sh.networks}}, nil
+	})
+
+	n.Handle("sharing.nfs.update", func(p []json.RawMessage) (any, error) {
+		var id int
+		var patch map[string]any
+		mustJSON(t, p[0], &id)
+		mustJSON(t, p[1], &patch)
+		n.mu.Lock()
+		defer n.mu.Unlock()
+		for _, sh := range n.shares {
+			if sh.id != id {
+				continue
+			}
+			if v, ok := patch["hosts"]; ok {
+				sh.hosts = strList(v)
+			}
+			if v, ok := patch["networks"]; ok {
+				sh.networks = strList(v)
+			}
+			return map[string]any{"id": sh.id, "hosts": sh.hosts, "networks": sh.networks}, nil
+		}
+		return nil, &fake.RPCError{Code: -32602, ErrName: "EINVAL", Reason: "[ENOENT] share"}
 	})
 
 	n.Handle("sharing.nfs.delete", func(p []json.RawMessage) (any, error) {
@@ -185,8 +243,8 @@ func newNAS(t *testing.T) *nas {
 		mustJSON(t, p[0], &id)
 		n.mu.Lock()
 		defer n.mu.Unlock()
-		for path, sid := range n.shares {
-			if sid == id {
+		for path, sh := range n.shares {
+			if sh.id == id {
 				delete(n.shares, path)
 			}
 		}
@@ -194,6 +252,25 @@ func newNAS(t *testing.T) *nas {
 	})
 
 	return n
+}
+
+// export returns the appliance's view of the share for a path.
+func (n *nas) export(path string) *fakeExport {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.shares[path]
+}
+
+// strList decodes a JSON string array the middleware would have received.
+func strList(v any) []string {
+	raw, _ := v.([]any)
+	out := make([]string, 0, len(raw))
+	for _, e := range raw {
+		if s, ok := e.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func (n *nas) dataset(id string) *fakeDataset {

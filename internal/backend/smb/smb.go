@@ -412,6 +412,11 @@ func (b *Backend) restore(ctx context.Context, snapshot, dsPath string, bytes in
 }
 
 // ensureShare publishes the mountpoint, tolerating a share that already exists.
+//
+// The share is created FENCED — hostsdeny=["ALL"] with an empty hostsallow —
+// so a volume nobody has published yet is reachable by nobody. Creating it open
+// and narrowing it afterwards would leave it world-reachable for as long as the
+// second call takes, and forever if the controller died in between.
 func (b *Backend) ensureShare(ctx context.Context, mountpoint, name string) error {
 	share, err := b.shareByPath(ctx, mountpoint)
 	if err != nil {
@@ -420,40 +425,30 @@ func (b *Backend) ensureShare(ctx context.Context, mountpoint, name string) erro
 	if share != nil {
 		return nil
 	}
-	err = b.c.CallJSON(ctx, nil, "sharing.smb.create", map[string]any{
-		"path":    mountpoint,
-		"name":    name,
-		"comment": "truenas-csi",
-	})
-	if err != nil {
+	if _, err := b.createShare(ctx, mountpoint, name, nil); err != nil {
 		return status.Errorf(codes.Internal, "create SMB share %s for %s: %v", name, mountpoint, err)
 	}
 	return nil
 }
 
-// smbShare is the subset of sharing.smb this package needs. It lives here rather
-// than in internal/truenas because nothing else in the driver speaks SMB.
-type smbShare struct {
-	ID   int    `json:"id"`
-	Path string `json:"path"`
-	Name string `json:"name"`
-}
-
-func (b *Backend) shareByPath(ctx context.Context, path string) (*smbShare, error) {
-	var out []smbShare
-	err := b.c.CallJSON(ctx, &out, "sharing.smb.query",
-		[]any{[]any{"path", "=", path}}, map[string]any{})
+// createShare publishes a path with its access lists already in place.
+func (b *Backend) createShare(ctx context.Context, mountpoint, name string, allow []string) (*smbShare, error) {
+	var out smbShare
+	err := b.c.CallJSON(ctx, &out, "sharing.smb.create", map[string]any{
+		"path":    mountpoint,
+		"name":    name,
+		"comment": "truenas-csi",
+		"options": accessOptions(nil, allow),
+	})
 	if err != nil {
-		if truenas.IsNotFound(err) {
-			return nil, nil
-		}
 		return nil, err
 	}
-	if len(out) == 0 {
-		return nil, nil
-	}
-	return &out[0], nil
+	return &out, nil
 }
+
+// isNotFound is truenas.IsNotFound, named locally so the access path reads the
+// same whether it is talking about a share or a dataset.
+func isNotFound(err error) bool { return truenas.IsNotFound(err) }
 
 // Delete removes a volume, refusing anything this driver did not create.
 //
@@ -656,5 +651,8 @@ func (b *Backend) forget(id volume.ID) {
 	delete(b.byVol, id.String())
 }
 
-// ensure the interface stays satisfied even if backend.Backend grows a method.
-var _ backend.Backend = (*Backend)(nil)
+// ensure the interfaces stay satisfied even if either grows a method.
+var (
+	_ backend.Backend   = (*Backend)(nil)
+	_ backend.Publisher = (*Backend)(nil)
+)

@@ -182,6 +182,9 @@ func (b *Backend) Create(ctx context.Context, r backend.CreateRequest) (*backend
 		if err := b.ensureShare(ctx, mountpointOf(existing, dsPath), p); err != nil {
 			return nil, err
 		}
+		if err := b.recordNetworkPolicy(ctx, dsPath, p); err != nil {
+			return nil, err
+		}
 		return b.volumeFor(r.ID, r.CapacityBytes, mountpointOf(existing, dsPath), p), nil
 	}
 
@@ -208,6 +211,9 @@ func (b *Backend) Create(ctx context.Context, r backend.CreateRequest) (*backend
 		return nil, rollback(status.Errorf(codes.Internal, "set permissions on %s: %v", mountpoint, err))
 	}
 	if err := b.ensureShare(ctx, mountpoint, p); err != nil {
+		return nil, rollback(err)
+	}
+	if err := b.recordNetworkPolicy(ctx, dsPath, p); err != nil {
 		return nil, rollback(err)
 	}
 	return b.volumeFor(r.ID, r.CapacityBytes, mountpoint, p), nil
@@ -266,23 +272,36 @@ func (b *Backend) restore(ctx context.Context, snapshot, dsPath string, bytes in
 }
 
 // ensureShare exports the mountpoint, tolerating an export that already exists.
+//
+// The export is created FENCED: its host list holds nothing but DenyHost, so a
+// volume nobody has published yet is reachable by nobody. Access arrives with
+// ControllerPublishVolume and leaves with ControllerUnpublishVolume.
 func (b *Backend) ensureShare(ctx context.Context, mountpoint string, p params) error {
-	share, err := b.c.NFSShareByPath(ctx, mountpoint)
+	share, err := b.shareByPath(ctx, mountpoint)
 	if err != nil {
 		return status.Errorf(codes.Internal, "query NFS share for %s: %v", mountpoint, err)
 	}
 	if share != nil {
 		return nil
 	}
-	_, err = b.c.NFSShareCreate(ctx, truenas.NFSShareSpec{
-		Path:         mountpoint,
-		Comment:      "truenas-csi",
-		Networks:     p.networks,
-		MaprootUser:  p.maproot,
-		MaprootGroup: p.maproot,
-	})
-	if err != nil {
+	if _, err := b.createShare(ctx, mountpoint, nil, p); err != nil {
 		return status.Errorf(codes.Internal, "create NFS share for %s: %v", mountpoint, err)
+	}
+	return nil
+}
+
+// recordNetworkPolicy stores the operator's `networks` value on the dataset.
+//
+// It has to outlive this process: ControllerPublishVolume receives no
+// StorageClass parameters, so a controller that restarted has no other way to
+// learn which networks the operator was willing to export to.
+func (b *Backend) recordNetworkPolicy(ctx context.Context, dsPath string, p params) error {
+	if len(p.networks) == 0 {
+		return nil
+	}
+	if err := b.c.SetUserProperty(ctx, dsPath, volume.NetworksProperty,
+		strings.Join(p.networks, ",")); err != nil {
+		return status.Errorf(codes.Internal, "recording the network policy on %s: %v", dsPath, err)
 	}
 	return nil
 }
@@ -306,7 +325,7 @@ func (b *Backend) Delete(ctx context.Context, id volume.ID) error {
 	}
 
 	mountpoint := mountpointOf(ds, dsPath)
-	share, err := b.c.NFSShareByPath(ctx, mountpoint)
+	share, err := b.shareByPath(ctx, mountpoint)
 	if err != nil {
 		return status.Errorf(codes.Internal, "query NFS share for %s: %v", mountpoint, err)
 	}
@@ -439,5 +458,8 @@ func (b *Backend) forget(id volume.ID) {
 	delete(b.versions, id.String())
 }
 
-// ensure the interface stays satisfied even if backend.Backend grows a method.
-var _ backend.Backend = (*Backend)(nil)
+// ensure the interfaces stay satisfied even if either grows a method.
+var (
+	_ backend.Backend   = (*Backend)(nil)
+	_ backend.Publisher = (*Backend)(nil)
+)

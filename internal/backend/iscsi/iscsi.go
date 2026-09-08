@@ -196,19 +196,19 @@ func (b *iscsiBackend) Create(ctx context.Context, r backend.CreateRequest) (*ba
 		rollback = append(rollback, func() { _ = b.c.ExtentDelete(context.WithoutCancel(ctx), id) })
 	}
 
-	targetID, iqn, err := ensureTarget(ctx, b.c, p)
+	// The target, its portal, its CHAP credential and its initiator group are
+	// still created here: they are appliance-wide objects every volume shares.
+	// The LUN MAPPING is not. It moved to ControllerPublishVolume, because that
+	// mapping is the fence — every node logged into the shared target can see
+	// every LUN on it, so a volume mapped from the moment it is provisioned is
+	// reachable by the whole cluster whether or not anything has attached it.
+	_, iqn, err := ensureTarget(ctx, b.c, p)
 	if err != nil {
 		undo()
 		return nil, err
 	}
 
-	lun, err := b.ensureMapping(ctx, targetID, extent.ID, &rollback)
-	if err != nil {
-		undo()
-		return nil, err
-	}
-
-	pc, err := b.publishContext(ctx, p, iqn, extent.NAA, lun)
+	pc, err := b.publishContext(ctx, p, iqn, extent.NAA, unmappedLUN)
 	if err != nil {
 		undo()
 		return nil, err
@@ -288,36 +288,6 @@ func (b *iscsiBackend) cloneZvol(ctx context.Context, r backend.CreateRequest, r
 		}
 	}
 	return nil
-}
-
-// ensureMapping returns the LUN this extent occupies on the shared target,
-// allocating one only when the extent is not mapped yet.
-func (b *iscsiBackend) ensureMapping(ctx context.Context, targetID, extentID int, rollback *[]func()) (int, error) {
-	mappings, err := b.c.TargetExtentList(ctx, targetID)
-	if err != nil {
-		return 0, fmt.Errorf("listing LUN mappings: %w", err)
-	}
-	for _, m := range mappings {
-		if m.Extent == extentID {
-			return m.LUNID, nil
-		}
-	}
-
-	lun, err := allocateLUN(ctx, b.c, targetID)
-	if err != nil {
-		return 0, err
-	}
-	te, err := b.c.TargetExtentCreate(ctx, targetID, extentID, lun)
-	if err != nil {
-		releaseLUN(targetID, lun)
-		return 0, fmt.Errorf("mapping extent %d to LUN %d: %w", extentID, lun, err)
-	}
-	id := te.ID
-	*rollback = append(*rollback, func() {
-		_ = b.c.TargetExtentDelete(context.WithoutCancel(ctx), id)
-		releaseLUN(targetID, lun)
-	})
-	return lun, nil
 }
 
 // Delete removes a volume, refusing anything this driver did not create.
@@ -535,8 +505,13 @@ func (b *iscsiBackend) publishContext(ctx context.Context, p Params, iqn, naa st
 	pc := map[string]string{
 		"portal": addr,
 		"iqn":    iqn,
-		"lun":    strconv.Itoa(lun),
 		"naa":    naa,
+	}
+	// An unmapped volume reports no LUN at all rather than a plausible-looking
+	// zero: the node resolves its device by NAA, and a LUN number for a mapping
+	// that does not exist is worse than its absence.
+	if lun != unmappedLUN {
+		pc["lun"] = strconv.Itoa(lun)
 	}
 	if p.CHAP {
 		auth, err := ensureCHAP(ctx, b.c, targetName(p.Pool, p.Parent))

@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/piwi3910/truenas-csi/internal/backend"
 	"github.com/piwi3910/truenas-csi/internal/obs"
 )
 
@@ -158,9 +159,10 @@ func TestCHAPGeneratedPerTarget(t *testing.T) {
 	if _, err := n.backendWith(c).Create(ctx, createReq("pvc-chap", 1<<30, map[string]string{"initiatorACL": "false"})); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	pc, err := n.backendWith(c).PublishContext(ctx, volID("pvc-chap"))
+	pc, err := n.backendWith(c).Publish(ctx, volID("pvc-chap"),
+		backend.NodeRef{ID: "worker-1", Addrs: []string{"10.0.0.1"}})
 	if err != nil {
-		t.Fatalf("PublishContext: %v", err)
+		t.Fatalf("Publish: %v", err)
 	}
 	if pc["chapUser"] == "" || pc["chapSecret"] != secret {
 		t.Fatalf("publish context must carry the CHAP credential, got %v", redactedKeys(pc))

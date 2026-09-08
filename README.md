@@ -364,6 +364,64 @@ can see every LUN. RWO is enforced by Kubernetes, not below it.
 
 ---
 
+## Node access is granted at attach and revoked at detach
+
+Appliance-side access is **per node and per attachment**, not permanent:
+
+| Protocol | Granted by `ControllerPublishVolume`          | Revoked by `ControllerUnpublishVolume` |
+| -------- | --------------------------------------------- | -------------------------------------- |
+| iSCSI    | the `iscsi.targetextent` LUN mapping          | the mapping is deleted                 |
+| NVMe-oF  | the subsystem's binding to the transport port | the binding is deleted                 |
+| NFS      | the node's addresses in the export's `hosts`  | those addresses are removed            |
+| SMB      | the node's addresses in `options.hostsallow`  | those addresses are removed            |
+
+The revoke is a **fence**: after it returns the named node cannot reach the volume's data
+whatever state its kernel is in. That is what makes automated recovery from a stuck node
+possible, and it is why the CSIDriver object declares `attachRequired: true` — a container
+orchestrator only calls `ControllerUnpublishVolume` for a driver that has an attach step.
+
+Two consequences worth knowing:
+
+- **A file share is never left with an empty access list.** On TrueNAS an NFS export is
+  reachable by everyone when its `hosts` **and** `networks` lists are both empty, so
+  removing the last node would open the volume to the world rather than close it. Every
+  export this driver manages therefore keeps one unroutable sentinel host (`192.0.2.1`,
+  RFC 5737) that no client can present, and every SMB share it manages carries
+  `hostsdeny: ["ALL"]` so its `hostsallow` list is authoritative.
+- **The `networks` StorageClass parameter is a policy filter, not an export field.** The
+  appliance ORs `hosts` with `networks`, so a network left on the export would let any
+  address inside it through and defeat the per-node fence. The driver keeps the export's
+  `networks` empty and instead refuses to grant a node whose addresses fall outside the
+  configured networks. Restricting a volume to `10.0.0.0/8` still means "only nodes in
+  10.0.0.0/8" — it just no longer means "and anything else in 10.0.0.0/8 as well".
+
+### Upgrading to the fenced attach model
+
+`spec.attachRequired` on a CSIDriver object is **immutable**, so `helm upgrade` alone
+cannot switch it on. The object has to be deleted and recreated:
+
+```sh
+kubectl delete csidriver csi.truenas.watteel.com
+helm upgrade truenas-csi deploy/helm/truenas-csi -n truenas-csi
+```
+
+During the window between those two commands:
+
+- **Safe:** volumes that are already mounted. The mount is a node-side fact; reads and
+  writes continue uninterrupted, and nothing revokes access to a running workload.
+- **Not safe:** anything needing a _new_ attachment — a pod starting or rescheduling, a
+  new PVC being bound. These fail while the object is absent and retry on their own once
+  it is back, so keep the window short rather than draining the cluster.
+
+Volumes provisioned before this change already have their iSCSI LUN mapping or NVMe port
+binding. The first publish **adopts** what is there instead of creating a second one, and
+records its LUN id so it stays stable, so no running workload has to be restarted. Their
+NFS and SMB shares are, however, still open as they were created: they are narrowed to the
+attaching node the first time each is published, and until then they remain reachable as
+before.
+
+---
+
 ## Capabilities
 
 Controller: `CREATE_DELETE_VOLUME`, `PUBLISH_UNPUBLISH_VOLUME`, `CREATE_DELETE_SNAPSHOT`,
@@ -539,6 +597,7 @@ responds.
 `iosInProgress` is evidence, not proof: it reports whether the volume's mount point was
 modified within the sample window, so "no I/O observed" means no evidence of activity, not
 a guarantee of idleness. Weigh it alongside `connected` rather than acting on it alone.
+
 - [docs/replication.md](docs/replication.md) — StorageProtectionGroup: cross-appliance
   replication, failover, test failover and failback, their safety rules, and what has
   not been verified against real hardware.
