@@ -163,6 +163,58 @@ metrics:
 #       perNamespace:
 #         team-a: 536870912000 # 500 GiB
 #         kube-system: 0
+#     # Delete protection: a grace period between `kubectl delete pvc` and the
+#     # destruction of the data. OFF by default, because turning it on changes
+#     # what deleting a PVC means.
+#     #
+#     # When it is on, DeleteVolume tears down the volume's shares, extents and
+#     # target mappings exactly as before, then RENAMES the dataset into
+#     # <pool>/<parentDataset>/<graveyardDataset>/ instead of destroying it,
+#     # stamping it with when it was deleted and which volume it was. A reaper
+#     # inside the controller destroys graveyard datasets once their grace
+#     # period has expired.
+#     #
+#     # READ BEFORE ENABLING — CAPACITY IS NOT RECLAIMED DURING THE GRACE
+#     # PERIOD. Deleting ten PVCs to free space leaves the pool exactly as full
+#     # as it was for the whole gracePeriod. That space keeps counting against
+#     # reservedBytes/reservedPercent and against the capacity reported to the
+#     # scheduler, because it is genuinely still allocated. This is the trade
+#     # the feature IS, not a bug. Size the graveyard into your pool headroom,
+#     # and watch truenas_dataset_used for the graveyard's datasets.
+#     #
+#     # Also true:
+#     #  * Per-namespace accounting is the one exception: a retired volume
+#     #    leaves its namespace dataset, so the namespace's `zfs used` drops
+#     #    immediately even though the pool's does not.
+#     #  * A retired volume's snapshots travel with it and are destroyed with it
+#     #    at the end of the grace period, exactly as they are destroyed with
+#     #    the volume today.
+#     #  * A retired volume that a live volume was CLONED from cannot be
+#     #    destroyed by ZFS. The reaper leaves it and retries; it never promotes
+#     #    the live clone, because that would make the live volume depend on a
+#     #    dataset queued for destruction.
+#     #  * Turning this off again leaves whatever is already in the graveyard.
+#     #    The reaper only runs while it is on, so remove the leftovers by hand.
+#     #  * The driver must be restarted for a change here to take effect; the
+#     #    hot-reload path refuses it (see controller.restartOnConfigChange).
+#     #  * Not available on flavour "core": it renames datasets, and the CORE
+#     #    REST mapping for pool.dataset.rename is unverified. Enabling it there
+#     #    is refused at startup.
+#     deleteProtection:
+#       enabled: false
+#       # How long a deleted volume is kept before the reaper may destroy it, as
+#       # a Go duration. A zero or absent value is the same as enabled: false.
+#       gracePeriod: 168h # one week
+#       # The dataset retired volumes are moved into, relative to parentDataset.
+#       # Defaults to ".trash". The leading dot is legal in a ZFS dataset name
+#       # (only "." and ".." are refused) and is what makes a collision with a
+#       # namespace or a PersistentVolume name impossible, since neither may
+#       # begin with one.
+#       graveyardDataset: ".trash"
+#       # How often the controller looks for expired graveyard datasets.
+#       # Defaults to 1h. It only bounds how long past its grace period a
+#       # dataset survives; it never decides whether one may be destroyed.
+#       reapInterval: 1h
 backends: {}
 
 # Credential hot-reload
@@ -175,8 +227,8 @@ backends: {}
 #
 # These fields require a RESTART and are refused at runtime, loudly:
 #   endpoint, flavour, pool, parentDataset, the set of backend names,
-#   reservedBytes, reservedPercent, namespaceQuotas, rateLimit, breaker
-#   settings, metricsAddr, healthAddr, metricsInterval.
+#   reservedBytes, reservedPercent, namespaceQuotas, deleteProtection,
+#   rateLimit, breaker settings, metricsAddr, healthAddr, metricsInterval.
 #
 # They are identity or startup wiring: every PersistentVolume records which
 # appliance and dataset it lives on, so swapping one in place would silently

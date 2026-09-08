@@ -39,6 +39,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/piwi3910/truenas-csi/internal/backend"
+	"github.com/piwi3910/truenas-csi/internal/retention"
 	"github.com/piwi3910/truenas-csi/internal/truenas"
 	"github.com/piwi3910/truenas-csi/internal/volume"
 )
@@ -116,6 +117,9 @@ type Backend struct {
 	c      truenas.API
 	pool   string
 	parent string
+	// retire is the delete-protection policy. Its zero value is "off", which is
+	// the default and takes exactly the destroy path this driver always took.
+	retire retention.Policy
 
 	// mu guards the caches below. They are conveniences, never a source of
 	// truth: a controller restart empties them, and every value they hold has a
@@ -127,8 +131,9 @@ type Backend struct {
 }
 
 // New builds an SMB backend bound to one appliance, pool and parent dataset.
-func New(c truenas.API, pool, parent string) backend.Backend {
-	return &Backend{c: c, pool: pool, parent: parent, byVol: map[string]params{}}
+func New(c truenas.API, opts backend.Options) backend.Backend {
+	return &Backend{c: c, pool: opts.Pool, parent: opts.Parent, retire: opts.Retention,
+		byVol: map[string]params{}}
 }
 
 // Protocol implements backend.Backend.
@@ -503,7 +508,15 @@ func (b *Backend) Delete(ctx context.Context, id volume.ID) error {
 			return status.Errorf(codes.Internal, "delete SMB share %d: %v", share.ID, err)
 		}
 	}
-	if err := b.c.DatasetDelete(ctx, dsPath, true, false); err != nil {
+	// The share is gone; only the dataset is left. Dispose destroys it, exactly
+	// as this line always did, unless delete protection is on — in which case it
+	// is renamed into the graveyard instead. The rename can only happen HERE,
+	// after the SMB share is removed: pool.dataset.rename performs no safety
+	// checks and the middleware's own documentation names SMB as a service a
+	// rename can disrupt.
+	if err := retention.Dispose(ctx, b.c, b.retire, id, func(ctx context.Context) error {
+		return b.c.DatasetDelete(ctx, dsPath, true, false)
+	}); err != nil {
 		return status.Errorf(codes.Internal, "delete dataset %s: %v", dsPath, err)
 	}
 	b.forget(id)

@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/piwi3910/truenas-csi/internal/backend"
 	"github.com/piwi3910/truenas-csi/internal/config"
 	"github.com/piwi3910/truenas-csi/internal/truenas"
 	"github.com/piwi3910/truenas-csi/internal/truenas/fake"
@@ -62,7 +63,7 @@ func (n *nas) client() *truenas.Client {
 }
 
 func (n *nas) backend() *iscsiBackend {
-	return New(n.client(), "Pool0", "k8s").(*iscsiBackend)
+	return New(n.client(), backend.Options{Pool: "Pool0", Parent: "k8s"}).(*iscsiBackend)
 }
 
 func (n *nas) failOn(method string, e *fake.RPCError) {

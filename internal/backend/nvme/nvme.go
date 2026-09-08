@@ -42,6 +42,7 @@ import (
 
 	"github.com/piwi3910/truenas-csi/internal/backend"
 	"github.com/piwi3910/truenas-csi/internal/obs"
+	"github.com/piwi3910/truenas-csi/internal/retention"
 	"github.com/piwi3910/truenas-csi/internal/truenas"
 	"github.com/piwi3910/truenas-csi/internal/volume"
 )
@@ -107,11 +108,14 @@ type nvmeBackend struct {
 	c      truenas.API
 	pool   string
 	parent string
+	// retire is the delete-protection policy. Its zero value is "off", which is
+	// the default and takes exactly the destroy path this driver always took.
+	retire retention.Policy
 }
 
 // New builds the backend for one appliance. It matches backend.Factory.
-func New(c truenas.API, pool, parent string) backend.Backend {
-	return &nvmeBackend{c: c, pool: pool, parent: parent}
+func New(c truenas.API, opts backend.Options) backend.Backend {
+	return &nvmeBackend{c: c, pool: opts.Pool, parent: opts.Parent, retire: opts.Retention}
 }
 
 // Protocol implements backend.Backend.
@@ -432,8 +436,15 @@ func (b *nvmeBackend) Delete(ctx context.Context, id volume.ID) error {
 	if ds == nil {
 		return nil // already gone: DeleteVolume is idempotent by contract
 	}
-	if err := deleteZvolWhenReleased(ctx, b.c, dsPath); err != nil {
-		return fmt.Errorf("deleting zvol %s: %w", dsPath, err)
+	// The namespace and its subsystem are gone; only the zvol is left. Dispose
+	// destroys it, exactly as this line always did, unless delete protection is
+	// on — in which case it is renamed into the graveyard instead. The rename
+	// can only happen HERE, after the export is removed: pool.dataset.rename
+	// performs no safety checks of its own.
+	if err := retention.Dispose(ctx, b.c, b.retire, id, func(ctx context.Context) error {
+		return deleteZvolWhenReleased(ctx, b.c, dsPath)
+	}); err != nil {
+		return fmt.Errorf("disposing of zvol %s: %w", dsPath, err)
 	}
 	obs.Logger(ctx).Info("deleted NVMe-oF volume", "dataset", dsPath, "subsystem", name)
 	return nil
@@ -473,17 +484,9 @@ func deleteZvolWhenReleased(ctx context.Context, c truenas.API, dsPath string) e
 }
 
 // isBusy reports whether the appliance refused because the dataset is still in
-// use. errname is unreliable, so the reason text is consulted as well.
-func isBusy(err error) bool {
-	var ce *truenas.CallError
-	if errors.As(err, &ce) {
-		if ce.ErrName == "EBUSY" || strings.Contains(ce.Reason, "dataset is busy") {
-			return true
-		}
-	}
-	return strings.Contains(err.Error(), "EBUSY") ||
-		strings.Contains(err.Error(), "dataset is busy")
-}
+// use. The rule lives in internal/truenas so that the retire path, which faces
+// the same post-teardown window, cannot answer it differently.
+func isBusy(err error) bool { return truenas.IsBusy(err) }
 
 // verifyOwned adapts the middleware's dataset to the ownership guard, which
 // deliberately knows nothing about the client.

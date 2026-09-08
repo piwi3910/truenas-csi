@@ -78,7 +78,7 @@ func (b *fencingBackend) revokes() []string {
 var fencing = newFencing()
 
 func init() {
-	f := func(truenas.API, string, string) backend.Backend { return fencing }
+	f := func(truenas.API, backend.Options) backend.Backend { return fencing }
 	backend.Register("fencing", f)
 	// Registered under "nfs" as well because supportsAccessMode keys on the
 	// protocol name: only nfs admits a MULTI_NODE mode, and the single-writer

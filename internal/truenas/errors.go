@@ -3,6 +3,7 @@ package truenas
 import (
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // ErrAuthFailed means the appliance rejected our credentials.
@@ -45,4 +46,27 @@ func IsNotFound(err error) bool {
 		return false
 	}
 	return len(ce.Reason) >= 8 && ce.Reason[:8] == "[ENOENT]"
+}
+
+// IsBusy reports whether the appliance refused an operation because ZFS
+// considers the dataset busy: a mount or a zvol device the kernel has not
+// released yet, or a snapshot that still has dependent clones.
+//
+// It reads Reason as well as ErrName for the same reason IsNotFound does — the
+// middleware reports EINVAL for conditions whose real errno appears only inside
+// the text — and it lives here rather than in each backend because "busy"
+// decides whether a destructive operation is retried or abandoned, and that
+// decision must be identical everywhere it is taken.
+func IsBusy(err error) bool {
+	if err == nil {
+		return false
+	}
+	var ce *CallError
+	if errors.As(err, &ce) {
+		if ce.ErrName == "EBUSY" || strings.Contains(ce.Reason, "dataset is busy") {
+			return true
+		}
+	}
+	return strings.Contains(err.Error(), "EBUSY") ||
+		strings.Contains(err.Error(), "dataset is busy")
 }

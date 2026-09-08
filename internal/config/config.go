@@ -59,6 +59,12 @@ type Backend struct {
 	// created after it is switched on; see NamespaceQuotas.
 	NamespaceQuotas NamespaceQuotas `yaml:"namespaceQuotas"`
 
+	// DeleteProtection is an optional grace period between DeleteVolume and the
+	// destruction of the data. It is off by default, and turning it on means
+	// capacity is NOT reclaimed until the grace period expires; see
+	// DeleteProtection.
+	DeleteProtection DeleteProtection `yaml:"deleteProtection"`
+
 	// CACert, when set, is the only certificate trusted for this appliance.
 	CACert []byte `yaml:"caCert"`
 	// InsecureSkipVerify disables certificate verification. A stock TrueNAS

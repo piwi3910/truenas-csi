@@ -78,7 +78,16 @@ func (o *OrphanReconciler) RunOnce(ctx context.Context) ([]string, error) {
 			// A namespace's parent dataset is driver-owned and has no
 			// PersistentVolume by design; reporting it as an orphan would be a
 			// permanent false positive on every scan.
-			if volume.IsNamespaceDataset(d.LocalProperty(volume.NamespaceProperty)) {
+			// Delete protection's graveyard, and the volumes retired into it,
+			// are driver-owned and have no PersistentVolume BY DESIGN — the CO
+			// was told those volumes were deleted. Reporting them would turn
+			// every delete into a permanent orphan warning, which is how an
+			// operator learns to ignore this report. They are recognised by
+			// their LOCAL markers rather than by the configured graveyard name,
+			// so leftovers stay recognised after delete protection is turned
+			// off or the graveyard is renamed.
+			if volume.IsGraveyard(d.LocalProperty(volume.GraveyardProperty)) ||
+				volume.IsRetired(d.LocalProperty(volume.DeletedAtProperty)) {
 				continue
 			}
 			leaf := d.ID[len(prefix):]

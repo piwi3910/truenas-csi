@@ -212,3 +212,60 @@ func TestOperationalHardeningIsWiredIn(t *testing.T) {
 		}
 	}
 }
+
+// TestReaperIsWiredIntoTheController is the same guard as the reconciler's,
+// applied to the one component in this driver that destroys data on its own
+// initiative.
+//
+// It matters in BOTH directions. A reaper nothing starts means delete
+// protection retires volumes into a graveyard that then grows for ever, and an
+// operator discovers it when the pool fills. And a reaper started from
+// somewhere other than the controller would be running without the appliance
+// connections its guards are checked against.
+func TestReaperIsWiredIntoTheController(t *testing.T) {
+	main, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(main), "startReaper(") {
+		t.Error("main.go never calls startReaper: volumes would be retired into a graveyard " +
+			"that is never emptied")
+	}
+
+	src, err := os.ReadFile("reaper.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		// The reaper itself, and the only source of appliance clients its
+		// guards can be checked against.
+		"retention.NewReaper", "reg.RetentionTargets",
+		// It must actually be started, not merely constructed.
+		"go r.Run(ctx)",
+	} {
+		if !strings.Contains(string(src), want) {
+			t.Errorf("reaper.go never references %s: the reaper would never destroy anything", want)
+		}
+	}
+}
+
+// TestReaperIsSilentUntilAnOperatorAsksForIt guards the default. startReaper
+// must return before starting anything when no backend has a grace period,
+// because a goroutine sweeping for datasets to destroy has no business running
+// in a driver whose operator never enabled delete protection.
+func TestReaperIsSilentUntilAnOperatorAsksForIt(t *testing.T) {
+	src, err := os.ReadFile("reaper.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(src)
+	guard := strings.Index(body, "if len(on) == 0 {")
+	start := strings.Index(body, "go r.Run(ctx)")
+	if guard < 0 {
+		t.Fatal("startReaper has no early return for the disabled case")
+	}
+	if start < guard {
+		t.Error("startReaper starts the reaper before checking whether any backend enabled " +
+			"delete protection")
+	}
+}

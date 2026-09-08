@@ -221,6 +221,22 @@ func (c *controller) ListVolumes(ctx context.Context, req *csipb.ListVolumesRequ
 			if volume.IsNamespaceDataset(d.LocalProperty(volume.NamespaceProperty)) {
 				continue
 			}
+			// Delete protection's two shapes, skipped for the same reason and
+			// by their LOCAL markers rather than by the configured graveyard
+			// name, so that leftovers keep being skipped after an operator
+			// turns delete protection off or renames the graveyard:
+			//
+			//   - the graveyard itself, a driver-owned container with no
+			//     PersistentVolume, which is not a volume;
+			//   - a retired volume, whose handle the CO has already been told
+			//     is gone. Listing it would resurrect a handle DeleteVolume
+			//     reported as deleted, and its dataset sits one level deeper
+			//     than this driver provisions, so the handle would name the
+			//     wrong thing anyway.
+			if volume.IsGraveyard(d.LocalProperty(volume.GraveyardProperty)) ||
+				volume.IsRetired(d.LocalProperty(volume.DeletedAtProperty)) {
+				continue
+			}
 			leaf := d.ID[len(prefix):]
 			// Fall back to the historical guess only for volumes created
 			// before the protocol was recorded; a zvol may be iscsi or nvme.

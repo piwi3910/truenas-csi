@@ -197,6 +197,12 @@ func run(o options) error {
 			slog.Info("orphan reporting enabled", "interval", orphanInterval.String())
 		}
 
+		// The reaper. It is the one thing in this driver that destroys data on
+		// its own initiative, so it is started only where its four preconditions
+		// can be enforced, and it is a no-op unless an operator turned delete
+		// protection on. See startReaper.
+		startReaper(ctx, reg, cfg)
+
 		// Credentials arrive as a mounted Secret and can be rotated under a
 		// running driver. Only the controller holds appliance connections, so
 		// only the controller has anything to swap.

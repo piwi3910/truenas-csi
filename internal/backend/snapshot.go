@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/piwi3910/truenas-csi/internal/retention"
 	"github.com/piwi3910/truenas-csi/internal/truenas"
 	"github.com/piwi3910/truenas-csi/internal/volume"
 	"google.golang.org/grpc/codes"
@@ -111,8 +112,17 @@ func (r *Registry) ListSnapshots(ctx context.Context, backendName string) ([]Sna
 	if err != nil {
 		return nil, err
 	}
+	graveyard := retention.PolicyFor(cfgB)
 	out := make([]Snapshot, 0, len(snaps))
 	for _, s := range snaps {
+		// A retired volume's snapshots travel with it into the graveyard — ZFS
+		// renames a dataset's snapshots along with the dataset. Listing them
+		// would report snapshots whose source volume no longer exists, so they
+		// are omitted; the recursive destroy at the end of the grace period
+		// takes them with the dataset.
+		if graveyard.On() && graveyard.ConfineToGraveyard(s.Dataset) == nil {
+			continue
+		}
 		out = append(out, Snapshot{
 			ID: snapshotID(backendName, s.ID), SourceVolumeID: s.Dataset, ReadyToUse: true,
 		})

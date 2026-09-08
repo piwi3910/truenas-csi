@@ -43,6 +43,10 @@ type API interface {
 	DatasetList(ctx context.Context, prefix string) ([]Dataset, error)
 	DatasetUpdate(ctx context.Context, id string, patch map[string]any) (*Dataset, error)
 	DatasetDelete(ctx context.Context, id string, recursive, force bool) error
+	// DatasetRename moves a dataset to a new full path. It performs NO safety
+	// checks of its own, so it must only ever follow the share, extent and
+	// namespace teardown that releases the dataset.
+	DatasetRename(ctx context.Context, id, newName string, force bool) error
 	SetUserProperty(ctx context.Context, id, key, value string) error
 	RecommendedZvolBlocksize(ctx context.Context, pool string) (string, error)
 	PoolQuery(ctx context.Context, name string) (*Pool, error)

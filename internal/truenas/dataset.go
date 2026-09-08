@@ -107,6 +107,25 @@ func (c *Ops) SetUserProperty(ctx context.Context, id, key, value string) error 
 	return err
 }
 
+// DatasetRename moves a dataset to newName, which is a FULL dataset path
+// ("Pool0/k8s/.trash/entry"), not a leaf.
+//
+// The middleware's own words: "No safety checks are performed when renaming ZFS
+// resources. If the dataset is in use by services such as SMB, iSCSI, snapshot
+// tasks, replication, or cloud sync, renaming may cause disruptions or service
+// failures." That is why force is a caller's decision and why the driver never
+// passes true: a rename refused because something still holds the dataset is
+// the appliance telling us the share, extent or namespace teardown that was
+// supposed to precede this call did not finish. Overriding that would leave a
+// live export pointing at a path that no longer exists.
+//
+// recursive is not exposed: it renames CHILD DATASETS, which a volume dataset
+// does not have. Snapshots always travel with their dataset regardless.
+func (c *Ops) DatasetRename(ctx context.Context, id, newName string, force bool) error {
+	return c.CallJSON(ctx, nil, "pool.dataset.rename", id,
+		map[string]any{"new_name": newName, "force": force})
+}
+
 // DatasetDelete removes a dataset. A dataset that is already gone is success.
 func (c *Ops) DatasetDelete(ctx context.Context, id string, recursive, force bool) error {
 	err := c.CallJSON(ctx, nil, "pool.dataset.delete", id,

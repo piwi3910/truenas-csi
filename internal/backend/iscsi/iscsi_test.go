@@ -25,7 +25,7 @@ func createReq(name string, size int64, params map[string]string) backend.Create
 }
 
 func (n *nas) backendWith(c *truenas.Client) *iscsiBackend {
-	return New(c, "Pool0", "k8s").(*iscsiBackend)
+	return New(c, backend.Options{Pool: "Pool0", Parent: "k8s"}).(*iscsiBackend)
 }
 
 // TestISCSIRegistersItself pins the wiring: the registry finds this backend by

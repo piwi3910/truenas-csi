@@ -17,8 +17,8 @@ import (
 //	reloadable   username, apiKey, caCert, insecureSkipVerify
 //	restart      endpoint, flavour, pool, parentDataset, the set of backend
 //	             names, nodeID, metricsAddr, healthAddr, metricsInterval,
-//	             reservedBytes, reservedPercent, namespaceQuotas, rate limit and
-//	             breaker settings
+//	             reservedBytes, reservedPercent, namespaceQuotas,
+//	             deleteProtection, rate limit and breaker settings
 //
 // Everything in the second group is identity or wiring that other components
 // captured at startup: the backend registry copied each Backend by value, the
@@ -86,6 +86,12 @@ func CheckReloadable(cur, next *Config) error {
 		// two volumes of the same namespace in two different places depending
 		// on which side of the reload they were created.
 		add(name, "namespaceQuotas", !cb.NamespaceQuotas.Equal(nb.NamespaceQuotas))
+		// Startup wiring, not credential: the reaper is started once, from the
+		// configuration the controller booted with, and it is the one thing in
+		// this driver that destroys data. Adopting a shortened grace period
+		// live would make datasets reapable that an operator's earlier
+		// configuration had promised to keep.
+		add(name, "deleteProtection", !cb.DeleteProtection.Equal(nb.DeleteProtection))
 	}
 	for name := range next.Backends {
 		if _, ok := cur.Backends[name]; !ok {

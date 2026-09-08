@@ -24,6 +24,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/piwi3910/truenas-csi/internal/backend"
+	"github.com/piwi3910/truenas-csi/internal/retention"
 	"github.com/piwi3910/truenas-csi/internal/truenas"
 	"github.com/piwi3910/truenas-csi/internal/volume"
 )
@@ -62,6 +63,9 @@ type Backend struct {
 	c      truenas.API
 	pool   string
 	parent string
+	// retire is the delete-protection policy. Its zero value is "off", which is
+	// the default and takes exactly the destroy path this driver always took.
+	retire retention.Policy
 
 	// mu guards the caches below. They are conveniences, never a source of
 	// truth: everything they hold can be recomputed from the appliance or from
@@ -73,8 +77,9 @@ type Backend struct {
 }
 
 // New builds an NFS backend bound to one appliance, pool and parent dataset.
-func New(c truenas.API, pool, parent string) backend.Backend {
-	return &Backend{c: c, pool: pool, parent: parent, versions: map[string]string{}}
+func New(c truenas.API, opts backend.Options) backend.Backend {
+	return &Backend{c: c, pool: opts.Pool, parent: opts.Parent, retire: opts.Retention,
+		versions: map[string]string{}}
 }
 
 // Protocol implements backend.Backend.
@@ -347,7 +352,15 @@ func (b *Backend) Delete(ctx context.Context, id volume.ID) error {
 			return status.Errorf(codes.Internal, "delete NFS share %d: %v", share.ID, err)
 		}
 	}
-	if err := b.c.DatasetDelete(ctx, dsPath, true, false); err != nil {
+	// The share is gone; only the dataset is left. Dispose destroys it, exactly
+	// as this line always did, unless delete protection is on — in which case it
+	// is renamed into the graveyard instead. The rename can only happen HERE,
+	// after the export is removed: pool.dataset.rename performs no safety checks
+	// and would happily leave a live export pointing at a path that no longer
+	// exists.
+	if err := retention.Dispose(ctx, b.c, b.retire, id, func(ctx context.Context) error {
+		return b.c.DatasetDelete(ctx, dsPath, true, false)
+	}); err != nil {
 		return status.Errorf(codes.Internal, "delete dataset %s: %v", dsPath, err)
 	}
 	b.forget(id)

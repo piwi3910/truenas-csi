@@ -157,3 +157,48 @@ func TestProtocolIsReadFromTheDatasetNotGuessed(t *testing.T) {
 			"iscsi, got %v", orphans)
 	}
 }
+
+// graveyardListing is what the appliance returns for a driver whose delete
+// protection has retired one volume: the graveyard container, the retired
+// volume inside it (INHERITING the graveyard's marker, as ZFS does), and one
+// live volume with no PersistentVolume.
+const graveyardListing = `[
+ {"id":"Pool0/k8s/.trash","type":"FILESYSTEM",
+  "user_properties":{"io.truenas.csi:managed":{"value":"truenas-csi","source":"LOCAL"},
+                     "io.truenas.csi:graveyard":{"value":"truenas-csi","source":"LOCAL"}}},
+ {"id":"Pool0/k8s/.trash/20260801T000000Z-pvc-dead","type":"FILESYSTEM",
+  "user_properties":{"io.truenas.csi:managed":{"value":"truenas-csi","source":"LOCAL"},
+                     "io.truenas.csi:graveyard":{"value":"truenas-csi","source":"INHERITED"},
+                     "io.truenas.csi:deletedAt":{"value":"2026-08-01T00:00:00Z","source":"LOCAL"},
+                     "io.truenas.csi:retiredFrom":{"value":"nas1/nfs/Pool0/k8s/pvc-dead","source":"LOCAL"}}},
+ {"id":"Pool0/k8s/pvc-a","type":"FILESYSTEM","refquota":{"parsed":1073741824},
+  "user_properties":{"io.truenas.csi:managed":{"value":"truenas-csi","source":"LOCAL"}}}]`
+
+// TestOrphanReconcilerIgnoresTheGraveyard. Both shapes are driver-owned and
+// neither will ever have a PersistentVolume — that is what delete protection
+// means — so reporting them would put a permanent false positive on every
+// scan, which is how an operator learns to ignore this report entirely.
+//
+// The retired volume is the interesting one: it sits at a depth this driver
+// never provisions into, so a handle derived from it would name ".trash" as a
+// Kubernetes namespace.
+func TestOrphanReconcilerIgnoresTheGraveyard(t *testing.T) {
+	s := fake.Start(t, fake.Options{})
+	s.Handle("pool.dataset.query", datasetsJSON(t, graveyardListing))
+	r := regFor(t, s)
+
+	got, err := NewOrphanReconciler(r, stubLister{handles: map[string]struct{}{}}, 0).
+		RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	want := "nas1/nfs/Pool0/k8s/pvc-a"
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("reported %v, want only the live volume %q", got, want)
+	}
+	for _, unwanted := range got {
+		if strings.Contains(unwanted, ".trash") {
+			t.Errorf("the orphan report names a graveyard dataset: %q", unwanted)
+		}
+	}
+}
