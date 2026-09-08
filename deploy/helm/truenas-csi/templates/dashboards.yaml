@@ -1,0 +1,25 @@
+{{- if .Values.metrics.dashboards.enabled }}
+# The Grafana dashboard, shipped as a ConfigMap for the Grafana sidecar to pick
+# up. It is NOT applied to Grafana by this chart: the sidecar's label is a
+# property of the monitoring stack, so it is a value rather than a constant.
+#
+# The dashboard is a plain file in the chart (dashboards/), not an inlined blob,
+# so it can be edited in Grafana and diffed back.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "truenas-csi.fullname" . }}-dashboards
+  namespace: {{ default .Release.Namespace .Values.metrics.dashboards.namespace }}
+  labels:
+    {{- include "truenas-csi.labels" . | nindent 4 }}
+    {{- range $k, $v := .Values.metrics.dashboards.labels }}
+    {{ $k }}: {{ $v | quote }}
+    {{- end }}
+  {{- with .Values.metrics.dashboards.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+data:
+  truenas-csi-volumes.json: |-
+    {{- .Files.Get "dashboards/truenas-csi-volumes.json" | nindent 4 }}
+{{- end }}

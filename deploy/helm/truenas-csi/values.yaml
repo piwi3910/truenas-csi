@@ -39,6 +39,49 @@ dynamicLogging:
 # path, so this bounds staleness only, never scrape latency.
 metricsInterval: "60s"
 
+# metrics wires the driver's Prometheus output into a monitoring stack.
+#
+# WHERE THE PER-VOLUME NUMBERS COME FROM. Dell's CSM polls the array for
+# per-volume IOPS, bandwidth and latency. TrueNAS publishes no per-dataset or
+# per-zvol series at all — verified against the appliance, `reporting` exposes
+# 40 graphs and every one of them is appliance-wide or per physical disk — so
+# this driver measures on the NODE instead, from /proc/diskstats (iSCSI, NVMe)
+# and /proc/self/mountstats (NFS, SMB). That costs the appliance NOTHING, where
+# an array-polling design spends its small concurrency budget every 10-20s.
+#
+# The two limitations are honest and worth reading before building an alert on
+# these series:
+#
+#   1. only MOUNTED volumes are visible. A volume that is attached but not
+#      mounted, or bound but unused, reports nothing at all.
+#   2. a volume's series MOVES between node exporters when its pod reschedules.
+#      The counters restart from the new node's kernel, so the move looks like a
+#      counter reset on a new series. Use sum(rate(...)), never rate(sum(...)).
+#
+# See docs/metrics.md for the full metric list.
+metrics:
+  # podMonitor creates PodMonitors for the node and controller pods. It needs
+  # the Prometheus Operator CRDs; leave it off and scrape by pod annotation if
+  # you run Prometheus without the operator.
+  podMonitor:
+    enabled: false
+    interval: 30s
+    scrapeTimeout: 10s
+    # labels the Prometheus instance selects PodMonitors by, e.g.
+    # release: kube-prometheus-stack.
+    labels: {}
+  # dashboards ships the Grafana dashboard as a ConfigMap for the Grafana
+  # sidecar to import. The label is the sidecar's, so it is configurable: the
+  # kube-prometheus-stack default is grafana_dashboard: "1".
+  dashboards:
+    enabled: false
+    # namespace defaults to the release namespace; set it when Grafana's
+    # sidecar only watches its own.
+    namespace: ""
+    labels:
+      grafana_dashboard: "1"
+    annotations: {}
+
 # backends maps a StorageClass `backend` parameter to one TrueNAS appliance.
 # Every field mirrors internal/config.Backend. The whole map is rendered into a
 # Secret and mounted at /etc/truenas-csi/config.yaml — credentials never appear

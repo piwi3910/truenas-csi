@@ -561,6 +561,12 @@ per-zvol or per-pool I/O**:
 appliance; it must be measured node-side from `/proc/diskstats` and
 `/proc/self/mountstats`. Do not go looking for a dataset graph again.
 
+That node-side measurement is now implemented (`internal/podmon/volumeio.go`,
+`internal/obs/volumeio.go`): counters per volume labelled with the PV, pod and
+namespace, exported by the node plugin. Its two inherent limits — only mounted
+volumes are visible, and a volume's series moves between node exporters when its
+pod reschedules — are documented in `docs/metrics.md`.
+
 Request shape is `[[{"name":"cpu"}], {"start":<unix>,"end":<unix>}]` — the window is
 one object, not two positional arguments. Response:
 `[{"name","identifier","data":[[unix_ts, v1, v2, ...], ...]}]`.

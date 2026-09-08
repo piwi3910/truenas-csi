@@ -1,0 +1,7 @@
+sysfs /sys sysfs rw,nosuid,nodev,noexec,relatime 0 0
+proc /proc proc rw,nosuid,nodev,noexec,relatime 0 0
+/dev/sdc /var/lib/kubelet/plugins/kubernetes.io/csi/csi.truenas.watteel.com/iscsi/globalmount ext4 rw,relatime 0 0
+/dev/mapper/mpatha /var/lib/kubelet/plugins/kubernetes.io/csi/csi.truenas.watteel.com/mp/globalmount xfs rw,relatime 0 0
+192.168.10.253:/mnt/tank/k8s/pvc-4d7f /var/lib/kubelet/plugins/kubernetes.io/csi/csi.truenas.watteel.com/nfs/globalmount nfs4 rw,relatime,vers=4.2 0 0
+//192.168.10.253/pvc-9ab1 /var/lib/kubelet/plugins/kubernetes.io/csi/csi.truenas.watteel.com/smb/globalmount cifs rw,relatime 0 0
+tmpfs /run/with\040space tmpfs rw 0 0

@@ -297,6 +297,12 @@ type Node struct {
 	// step with what is actually mounted, rather than parsing /proc/mounts and
 	// picking up another storage system's mounts.
 	health *HealthMonitor
+
+	// ioMetricsState carries the per-volume performance metrics, off unless
+	// EnableIOMetrics was called. Its target set is kept in step with Stage and
+	// Unstage for the same reason the monitor's is: a volume this driver did
+	// not stage is not this driver's to report.
+	ioMetricsState
 }
 
 // NewNode builds the node plugin for one node from its identity, the startup
@@ -369,6 +375,7 @@ func (n *Node) Stage(ctx context.Context, req StageRequest) error {
 		Backend:  backendOf(req.VolumeID),
 		DataAddr: dataAddrOf(req.PublishContext),
 	})
+	n.trackIO(ctx, req, proto)
 	return nil
 }
 
@@ -399,6 +406,7 @@ func (n *Node) Unstage(ctx context.Context, req UnstageRequest) error {
 	// Stop watching the volume only once it is genuinely detached; forgetting it
 	// earlier would hide a data path that is still half up.
 	n.health.Forget(req.VolumeID)
+	n.forgetIO(req.VolumeID)
 	return nil
 }
 
@@ -410,6 +418,11 @@ func (n *Node) Publish(ctx context.Context, req PublishRequest) error {
 		return fmt.Errorf("%w: no target path", ErrInvalidRequest)
 	}
 	ctx = obs.WithVolume(ctx, req.VolumeID)
+
+	// The pod's identity arrives here and nowhere else — podInfoOnMount puts it
+	// in the volume context of this call only — so this is where a volume's
+	// metrics learn which workload they belong to.
+	n.attachIO(req)
 
 	if req.VolumeCapability.Block {
 		return n.publishBlock(ctx, req)

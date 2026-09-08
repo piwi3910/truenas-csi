@@ -1,0 +1,56 @@
+{{- if .Values.metrics.podMonitor.enabled }}
+# PodMonitor rather than ServiceMonitor: the per-volume series live on the NODE
+# plugin, which is a DaemonSet with no Service in front of it. A Service would
+# load-balance scrapes across nodes and each scrape would return one arbitrary
+# node's volumes, which is not a sampling error so much as a different metric.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: {{ include "truenas-csi.fullname" . }}-node
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "truenas-csi.labels" . | nindent 4 }}
+    app.kubernetes.io/component: node
+    {{- with .Values.metrics.podMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "truenas-csi.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: node
+  podMetricsEndpoints:
+    - port: metrics
+      path: /metrics
+      interval: {{ .Values.metrics.podMonitor.interval }}
+      scrapeTimeout: {{ .Values.metrics.podMonitor.scrapeTimeout }}
+      relabelings:
+        # The node name is what makes "this volume's series moved" legible: a
+        # pod rescheduling moves the volume's counters to another exporter, and
+        # without the node label the move looks like a counter reset with no
+        # explanation.
+        - sourceLabels: [__meta_kubernetes_pod_node_name]
+          targetLabel: node
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: {{ include "truenas-csi.fullname" . }}-controller
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "truenas-csi.labels" . | nindent 4 }}
+    app.kubernetes.io/component: controller
+    {{- with .Values.metrics.podMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "truenas-csi.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: controller
+  podMetricsEndpoints:
+    - port: metrics
+      path: /metrics
+      interval: {{ .Values.metrics.podMonitor.interval }}
+      scrapeTimeout: {{ .Values.metrics.podMonitor.scrapeTimeout }}
+{{- end }}
