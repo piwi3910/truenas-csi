@@ -18,6 +18,14 @@ import (
 //
 // Nothing may remove it. Every write of a share's access lists goes through
 // accessOptions, which puts it back.
+// purposeDefaultShare is the share preset this driver creates.
+//
+// The middleware requires `purpose` alongside `options`, and every share this
+// driver creates carries options because it is created fenced. DEFAULT_SHARE is
+// the minimal preset; LEGACY_SHARE would drag in a large option set the driver
+// does not manage and would then have to preserve on every access update.
+const purposeDefaultShare = "DEFAULT_SHARE"
+
 const DenyAll = "ALL"
 
 // Option keys inside sharing.smb's nested `options` object.

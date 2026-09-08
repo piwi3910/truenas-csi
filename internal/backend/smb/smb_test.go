@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -222,6 +223,17 @@ func newNAS(t *testing.T) *nas {
 		}
 		var payload map[string]any
 		mustJSON(t, p[0], &payload)
+		// The appliance rejects options without purpose:
+		//   [EINVAL] data: Value error, You must set `purpose` if you set `options`.
+		// A hardware run caught this after the fake had happily accepted it, so
+		// the fake now enforces it -- a mock that is more permissive than the
+		// real thing turns an integration failure into a release failure.
+		if _, hasOpts := payload["options"]; hasOpts {
+			if purpose, _ := payload["purpose"].(string); purpose == "" {
+				return nil, fmt.Errorf(
+					"[EINVAL] data: Value error, You must set `purpose` if you set `options`")
+			}
+		}
 		n.sharePayloads = append(n.sharePayloads, payload)
 		path, _ := payload["path"].(string)
 		name, _ := payload["name"].(string)

@@ -451,6 +451,14 @@ func (b *Backend) createShare(ctx context.Context, mountpoint, name string, allo
 		"path":    mountpoint,
 		"name":    name,
 		"comment": "truenas-csi",
+		// purpose is REQUIRED whenever options is sent: 25.10 answers a share
+		// carrying options without it with
+		//   [EINVAL] data: Value error, You must set `purpose` if you set `options`.
+		// The share is created fenced, so options is always present, so purpose
+		// always has to be. DEFAULT_SHARE is the plain preset -- LEGACY_SHARE
+		// pulls in a much larger option set (recyclebin, shadowcopy, timemachine
+		// and a dozen more) that this driver neither sets nor wants to inherit.
+		"purpose": purposeDefaultShare,
 		"options": accessOptions(nil, allow),
 	})
 	if err != nil {
