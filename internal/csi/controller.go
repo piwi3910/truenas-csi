@@ -57,6 +57,25 @@ func (c *controller) ControllerGetCapabilities(context.Context, *csipb.Controlle
 		// without it the CO never calls ControllerUnpublishVolume, and nothing
 		// ever revokes a node's appliance-side access to a volume.
 		rpc(csipb.ControllerServiceCapability_RPC_PUBLISH_UNPUBLISH_VOLUME),
+		// SINGLE_NODE_MULTI_WRITER declares that the SINGLE_NODE_SINGLE_WRITER
+		// and SINGLE_NODE_MULTI_WRITER access modes are understood. The driver
+		// has always HONOURED them; a CO that reads this capability is the only
+		// one that will ever send them, so without it a ReadWriteOncePod PVC
+		// never reaches the driver at all.
+		rpc(csipb.ControllerServiceCapability_RPC_SINGLE_NODE_MULTI_WRITER),
+		// GET_VOLUME lets the CO ask this driver what the APPLIANCE says about
+		// one volume — its real size, and which nodes hold a grant on it.
+		rpc(csipb.ControllerServiceCapability_RPC_GET_VOLUME),
+		// GET_VOLUME_HEALTH is CSI v1.13's controller-side successor to the
+		// alpha `volume_condition` field. It reports only what the controller
+		// can actually observe from the appliance; a node's mount is the node
+		// plugin's business and is reported through its own GET_VOLUME_HEALTH.
+		rpc(csipb.ControllerServiceCapability_RPC_GET_VOLUME_HEALTH),
+		// LIST_VOLUMES_PUBLISHED_NODES is answerable because each volume
+		// carries its own publish ledger: ListVolumes already reads every
+		// owned dataset's user properties, so the node ids come out of the
+		// listing it has in hand rather than from a per-volume round trip.
+		rpc(csipb.ControllerServiceCapability_RPC_LIST_VOLUMES_PUBLISHED_NODES),
 	}}, nil
 }
 
@@ -468,18 +487,6 @@ func (c *controller) publisher(ctx context.Context, id volume.ID) (backend.Publi
 	return pub, nil
 }
 
-// singleNode reports whether an access mode admits at most one node.
-func singleNode(m csipb.VolumeCapability_AccessMode_Mode) bool {
-	switch m {
-	case csipb.VolumeCapability_AccessMode_SINGLE_NODE_WRITER,
-		csipb.VolumeCapability_AccessMode_SINGLE_NODE_READER_ONLY,
-		csipb.VolumeCapability_AccessMode_SINGLE_NODE_SINGLE_WRITER,
-		csipb.VolumeCapability_AccessMode_SINGLE_NODE_MULTI_WRITER:
-		return true
-	}
-	return false
-}
-
 // union merges two address lists without duplicates, in a stable order.
 func union(a, b []string) []string {
 	set := map[string]bool{}
@@ -522,24 +529,6 @@ func (c *controller) ValidateVolumeCapabilities(ctx context.Context, req *csipb.
 		Confirmed: &csipb.ValidateVolumeCapabilitiesResponse_Confirmed{
 			VolumeCapabilities: req.GetVolumeCapabilities()},
 	}, nil
-}
-
-// supportsAccessMode reflects the storage reality: a zvol behind iSCSI is a
-// single block device and cannot be safely shared, while an NFS export can.
-func supportsAccessMode(protocol string, m csipb.VolumeCapability_AccessMode_Mode) bool {
-	switch protocol {
-	case "nfs":
-		return true
-	default:
-		switch m {
-		case csipb.VolumeCapability_AccessMode_SINGLE_NODE_WRITER,
-			csipb.VolumeCapability_AccessMode_SINGLE_NODE_READER_ONLY,
-			csipb.VolumeCapability_AccessMode_SINGLE_NODE_SINGLE_WRITER,
-			csipb.VolumeCapability_AccessMode_SINGLE_NODE_MULTI_WRITER:
-			return true
-		}
-		return false
-	}
 }
 
 func (c *controller) CreateSnapshot(ctx context.Context, req *csipb.CreateSnapshotRequest) (resp *csipb.CreateSnapshotResponse, err error) {

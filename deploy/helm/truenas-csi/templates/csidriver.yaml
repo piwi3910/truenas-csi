@@ -24,5 +24,23 @@ spec:
   # File: apply fsGroup only when the volume's access mode allows it. Chowning
   # a shared NFS export recursively on every mount would be both slow and wrong.
   fsGroupPolicy: {{ .Values.csidriver.fsGroupPolicy }}
+  # Persistent only, deliberately.
+  #
+  # An Ephemeral (CSI inline) volume is provisioned inside NodePublishVolume,
+  # with no CreateVolume and no ControllerPublishVolume at all. This driver's
+  # safety properties all live in the controller: the reserve check that keeps
+  # PVCs from filling the pool, the publish ledger that makes a single-writer
+  # volume enforceable, and above all the FENCE — ControllerUnpublishVolume is
+  # what revokes a node's appliance-side access, and it is never called for a
+  # volume the controller never published. An inline volume on a node that has
+  # stopped answering would be unfenceable by construction.
+  #
+  # It would also need the node plugin to hold appliance credentials in order
+  # to create datasets and shares, which is exactly the privilege split this
+  # deployment keeps: only the controller talks to the middleware.
+  #
+  # If a workload wants scratch space that dies with the pod, an emptyDir or a
+  # generic ephemeral volume (a normal PVC with the pod's lifetime) gets that
+  # through the controller, with every check above still applied.
   volumeLifecycleModes:
     - Persistent

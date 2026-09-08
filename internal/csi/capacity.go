@@ -14,6 +14,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
 // GetCapacity reports the real free space of the pool behind a StorageClass, so
@@ -45,8 +46,22 @@ func (c *controller) GetCapacity(ctx context.Context, req *csipb.GetCapacityRequ
 	if err != nil {
 		return nil, toStatus(err)
 	}
+	usable := usableCapacity(p.Free.Parsed, b.Reserve(p.Size.Parsed))
 	return &csipb.GetCapacityResponse{
-		AvailableCapacity: usableCapacity(p.Free.Parsed, b.Reserve(p.Size.Parsed)),
+		AvailableCapacity: usable,
+		// The largest volume this driver would actually create is the same
+		// figure, and for a real reason rather than for want of a better one:
+		// CreateVolume refuses anything that would eat into the reserve
+		// (requireRoomOutsideReserve), so a request above this is not merely
+		// unlikely to fit, it is guaranteed to be rejected. Reporting it lets
+		// the scheduler leave such a claim Pending rather than bind it and
+		// discover the refusal at provisioning time.
+		//
+		// Neither ZFS nor the middleware imposes a lower per-volume ceiling:
+		// refquota and volsize are 64-bit byte counts, and a thin zvol may even
+		// be created larger than the pool. That last case is exactly why the
+		// reserve check, and not the appliance, is the binding constraint here.
+		MaximumVolumeSize: wrapperspb.Int64(usable),
 	}, nil
 }
 
@@ -144,7 +159,18 @@ func (c *controller) ListVolumes(ctx context.Context, req *csipb.ListVolumesRequ
 			}
 			proto := volume.ProtocolOr(d.LocalProperty(volume.ProtocolProperty), fallback)
 			vid := volume.ID{Backend: name, Protocol: proto, Pool: b.Pool, Parent: b.ParentDataset, Name: leaf}
-			all = append(all, volEntry{id: vid.String(), size: size})
+			// The publish ledger is already in this dataset's user properties,
+			// so LIST_VOLUMES_PUBLISHED_NODES costs nothing beyond decoding it.
+			// A ledger that will not decode is reported as no published nodes
+			// rather than failing the listing: the CO is required to tolerate
+			// an incomplete published-node list, and is not required to
+			// tolerate ListVolumes failing outright.
+			grants, gErr := volume.DecodeGrants(d.LocalProperty(volume.PublishedProperty))
+			if gErr != nil {
+				obs.Logger(ctx).Warn("volume has an unreadable publish ledger",
+					"volume", vid.String(), "error", obs.Redact(gErr.Error()))
+			}
+			all = append(all, volEntry{id: vid.String(), size: size, published: grants.Nodes()})
 		}
 	}
 	sort.Slice(all, func(i, j int) bool { return all[i].id < all[j].id })
@@ -172,7 +198,9 @@ func (c *controller) ListVolumes(ctx context.Context, req *csipb.ListVolumesRequ
 	out := &csipb.ListVolumesResponse{}
 	for _, e := range page {
 		out.Entries = append(out.Entries, &csipb.ListVolumesResponse_Entry{
-			Volume: &csipb.Volume{VolumeId: e.id, CapacityBytes: e.size}})
+			Volume: &csipb.Volume{VolumeId: e.id, CapacityBytes: e.size},
+			Status: &csipb.ListVolumesResponse_VolumeStatus{PublishedNodeIds: e.published},
+		})
 	}
 	if next := startIdx + max; next < len(all) {
 		out.NextToken = all[next].id
@@ -182,8 +210,9 @@ func (c *controller) ListVolumes(ctx context.Context, req *csipb.ListVolumesRequ
 
 // volEntry is one owned volume discovered while listing.
 type volEntry struct {
-	id   string
-	size int64
+	id        string
+	size      int64
+	published []string // node ids holding an access grant, from the publish ledger
 }
 
 // ListSnapshots enumerates snapshots, honouring the spec's optional filters.
