@@ -32,6 +32,11 @@ const (
 	CapXFS Capability = "xfs"
 	// CapNVMe is the ability to attach NVMe-oF namespaces.
 	CapNVMe Capability = "nvme"
+	// CapSMB is the ability to mount SMB shares with the kernel's cifs client.
+	// Its string value is the protocol name, not the filesystem name, because
+	// the controller derives the topology requirement for a volume straight from
+	// its StorageClass protocol.
+	CapSMB Capability = "smb"
 	// CapMultipath is the ability to use device-mapper multipath for iSCSI.
 	CapMultipath Capability = "multipath"
 )
@@ -60,16 +65,20 @@ type requirement struct {
 // host. Module names use the /proc/modules spelling (underscores); the .ko search also
 // tries the hyphenated file name.
 var requirements = map[Capability]requirement{
-	CapNFS:       {bins: []string{"mount.nfs"}, pkg: "nfs-common"},
-	CapISCSI:     {bins: []string{"iscsiadm", "iscsid"}, mods: []string{"iscsi_tcp"}, pkg: "open-iscsi"},
-	CapExt4:      {bins: []string{"mkfs.ext4", "resize2fs"}, pkg: "e2fsprogs"},
-	CapXFS:       {bins: []string{"mkfs.xfs", "xfs_growfs"}, pkg: "xfsprogs"},
-	CapNVMe:      {bins: []string{"nvme"}, mods: []string{"nvme_tcp"}, pkg: "nvme-cli"},
+	CapNFS:   {bins: []string{"mount.nfs"}, pkg: "nfs-common"},
+	CapISCSI: {bins: []string{"iscsiadm", "iscsid"}, mods: []string{"iscsi_tcp"}, pkg: "open-iscsi"},
+	CapExt4:  {bins: []string{"mkfs.ext4", "resize2fs"}, pkg: "e2fsprogs"},
+	CapXFS:   {bins: []string{"mkfs.xfs", "xfs_growfs"}, pkg: "xfsprogs"},
+	CapNVMe:  {bins: []string{"nvme"}, mods: []string{"nvme_tcp"}, pkg: "nvme-cli"},
+	// mount.cifs is the binary that matters: mount(8) hands a -t cifs mount
+	// straight to it, and without it the mount fails with "unknown filesystem
+	// type" no matter what the kernel supports.
+	CapSMB:       {bins: []string{"mount.cifs"}, mods: []string{"cifs"}, pkg: "cifs-utils"},
 	CapMultipath: {bins: []string{"multipath", "multipathd"}, mods: []string{"dm_multipath"}, pkg: "multipath-tools"},
 }
 
 // capabilityOrder fixes the iteration order so labels and log lines are stable.
-var capabilityOrder = []Capability{CapNFS, CapISCSI, CapNVMe, CapExt4, CapXFS, CapMultipath}
+var capabilityOrder = []Capability{CapNFS, CapISCSI, CapNVMe, CapSMB, CapExt4, CapXFS, CapMultipath}
 
 // Preflight is the result of probing one node.
 type Preflight struct {

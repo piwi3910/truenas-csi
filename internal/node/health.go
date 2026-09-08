@@ -61,7 +61,8 @@ type HealthTarget struct {
 	// VolumeID is the CSI volume handle. It is logged in full and hashed for
 	// metrics; it never becomes a label value.
 	VolumeID string
-	// Protocol is ProtocolNFS or ProtocolISCSI, and is a metric label.
+	// Protocol is one of the ProtocolNFS, ProtocolSMB, ProtocolISCSI or
+	// ProtocolNVMe constants, and is a metric label.
 	Protocol string
 	// Path is the staging path, checked with a bounded statfs. Empty for a raw
 	// block volume, which has no filesystem to stat.
@@ -367,12 +368,20 @@ func (m *HealthMonitor) now() time.Time {
 }
 
 // dataAddrOf derives the appliance data address from a publish context: the NFS
-// server on port 2049, or the iSCSI portal with its default port filled in.
+// server on port 2049, the SMB server on port 445, or the iSCSI portal with its
+// default port filled in.
 func dataAddrOf(pc map[string]string) string {
 	switch protocolOf(pc) {
 	case ProtocolNFS:
 		if s := pc[KeyServer]; s != "" {
 			return net.JoinHostPort(s, "2049")
+		}
+	case ProtocolSMB:
+		if s := pc[KeyServer]; s != "" {
+			// 445 only: this driver never speaks the NetBIOS-over-TCP
+			// transport on 139, so an answer there would not mean the
+			// volume is reachable.
+			return net.JoinHostPort(s, "445")
 		}
 	case ProtocolISCSI:
 		if p := pc[KeyPortal]; p != "" {
