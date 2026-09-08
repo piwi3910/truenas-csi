@@ -647,6 +647,9 @@ design more than any other requirement:
   cannot tell the scheduler.
 - [docs/metrics.md](docs/metrics.md) — every exported series, where the per-volume figures
   come from, and what they cannot show.
+- [docs/io-limits.md](docs/io-limits.md) — optional per-volume IOPS and bandwidth caps,
+  applied node-side with cgroup v2 `io.max` for the block protocols: what they throttle,
+  what they deliberately refuse, and why this is not appliance-side QoS.
 
 ## Observability
 
