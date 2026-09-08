@@ -1,6 +1,6 @@
 apiVersion: v2
 name: truenas-csi
-description: CSI driver provisioning NFS and iSCSI volumes on TrueNAS SCALE appliances
+description: CSI driver provisioning NFS, iSCSI, SMB and NVMe/TCP volumes on TrueNAS SCALE appliances
 type: application
 # version is the chart version; appVersion tracks the default driver image tag.
 version: 0.1.0
@@ -15,6 +15,9 @@ keywords:
   - zfs
   - nfs
   - iscsi
+  - smb
+  - nvme-of
+  - storage
 maintainers:
   - name: Pascal Watteel
     url: https://github.com/piwi3910

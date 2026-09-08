@@ -403,12 +403,17 @@ jobs:
           } > notes.md
           cat notes.md
 
+      # The GIT tag, not the image tag. docker/metadata-action strips the "v"
+      # for the image (0.1.0, 0.1, latest), which is the registry convention --
+      # but handing that to `gh release create` makes GitHub CREATE a second,
+      # unannotated tag named 0.1.0 beside the real v0.1.0, and attach the
+      # release to the wrong one.
       - name: Create the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ needs.publish.outputs.version }}
+          GIT_TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
           prerelease=""
-          case "$VERSION" in *-*) prerelease="--prerelease" ;; esac
-          gh release create "$VERSION" dist/*.tgz \
-            --title "$VERSION" --notes-file notes.md $prerelease
+          case "$GIT_TAG" in *-*) prerelease="--prerelease" ;; esac
+          gh release create "$GIT_TAG" dist/*.tgz \
+            --title "$GIT_TAG" --notes-file notes.md --verify-tag $prerelease
