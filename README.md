@@ -10,9 +10,19 @@ UNVERIFIED against real CORE hardware.
 Driver name: `csi.truenas.watteel.com` (immutable once PersistentVolumes exist — changing
 it orphans every PV). Go module: `github.com/piwi3910/truenas-csi`. Licence: Apache 2.0.
 
-**Protocols: NFS, iSCSI and NVMe/TCP**, all three validated end to end against a live
-appliance and real cluster nodes. SMB was validated too but does not ship yet. **NVMe over
-RDMA/RoCE is implemented but UNVALIDATED**: the target appliance reports
+**Protocols: NFS, iSCSI, SMB and NVMe/TCP.** NFS, iSCSI and NVMe/TCP are validated end to
+end against a live appliance and real cluster nodes.
+
+SMB now has a complete data path — `internal/node/cifs.go` mounts it and the preflight
+probes `mount.cifs`, so an SMB PVC schedules and mounts. Earlier releases provisioned an
+SMB share that **no pod could consume**: the node plugin had no cifs path and published no
+`smb` capability label, while the controller's topology requirement demanded exactly that
+label, so every SMB PVC was unschedulable. The integration test missed it by issuing its
+own `mount -t cifs` instead of calling `NodeStageVolume`. It is fixed, and the test now
+drives the real node plugin — but the SMB end-to-end path has not yet had a hardware run
+of its own, so treat it as implemented-and-unit-tested rather than field-proven.
+
+**NVMe over RDMA/RoCE is implemented but UNVALIDATED**: the target appliance reports
 `nvmet.global.rdma = false` and the arm64 nodes have no RDMA-capable NICs, so the driver
 refuses `transport: rdma` on an appliance that reports no RDMA rather than exporting a
 volume nothing can connect to.
@@ -98,15 +108,15 @@ deliver, and logs exactly what an operator must install for anything missing. A
 StorageClass asking for a capability a node lacks fails fast with a message naming the
 missing package instead of a cryptic mount error.
 
-| Capability              | Debian/Ubuntu package | Needs                                            |
-| ----------------------- | --------------------- | ------------------------------------------------ |
-| iSCSI                   | `open-iscsi`          | `iscsiadm`, `iscsid`, module `iscsi_tcp`         |
-| NFS                     | `nfs-common`          | `mount.nfs`                                      |
-| ext4                    | `e2fsprogs`           | `mkfs.ext4`, `resize2fs`                         |
-| XFS                     | `xfsprogs`            | `mkfs.xfs`, `xfs_growfs`                         |
-| multipath               | `multipath-tools`     | `multipath`, `multipathd`, module `dm_multipath` |
-| NVMe-oF                 | `nvme-cli`            | `nvme`, module `nvme_tcp`                        |
-| SMB (deferred protocol) | `cifs-utils`          | `mount.cifs`, module `cifs`                      |
+| Capability | Debian/Ubuntu package | Needs                                            |
+| ---------- | --------------------- | ------------------------------------------------ |
+| iSCSI      | `open-iscsi`          | `iscsiadm`, `iscsid`, module `iscsi_tcp`         |
+| NFS        | `nfs-common`          | `mount.nfs`                                      |
+| ext4       | `e2fsprogs`           | `mkfs.ext4`, `resize2fs`                         |
+| XFS        | `xfsprogs`            | `mkfs.xfs`, `xfs_growfs`                         |
+| multipath  | `multipath-tools`     | `multipath`, `multipathd`, module `dm_multipath` |
+| NVMe-oF    | `nvme-cli`            | `nvme`, module `nvme_tcp`                        |
+| SMB        | `cifs-utils`          | `mount.cifs`, module `cifs`                      |
 
 Notes:
 
@@ -243,6 +253,46 @@ parameters:
   uid: "1000"
   gid: "1000"
 ```
+
+SMB needs one thing the others do not: a credential. The driver never handles the password
+itself — the StorageClass names a Secret, only a _reference_ to it is published, and the
+node reads it at stage time and writes it to a `0600` file on tmpfs so it never reaches a
+process argument list where `/proc` would expose it node-wide.
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: truenas-smb
+  namespace: truenas-csi
+type: Opaque
+stringData:
+  username: csi
+  password: "..." # an SMB-enabled user on the appliance
+  # domain: WORKGROUP   # optional
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: truenas-smb
+provisioner: csi.truenas.watteel.com
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+parameters:
+  backend: nas1
+  protocol: smb
+  secretName: truenas-smb
+  secretNamespace: truenas-csi
+  # SMB ownership is a mount-time property, not a property of the files.
+  uid: "1000"
+  gid: "1000"
+  fileMode: "0644"
+  dirMode: "0755"
+```
+
+The Secret must be readable by the node plugin's ServiceAccount, and the nodes need
+`cifs-utils` installed before the driver first registers there — the same immutable-label
+rule as every other capability.
 
 ---
 
