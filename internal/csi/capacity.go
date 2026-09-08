@@ -19,6 +19,20 @@ import (
 
 // GetCapacity reports the real free space of the pool behind a StorageClass, so
 // the scheduler leaves an oversized claim Pending instead of failing at attach.
+//
+// It reports POOL capacity even when per-namespace quotas are in force, and
+// deliberately says nothing about them. GetCapacityRequest carries the
+// StorageClass parameters, the topology and the volume capabilities — it does
+// not carry a namespace, and it cannot: the external-provisioner produces one
+// CSIStorageCapacity object per StorageClass and topology segment, which every
+// namespace in the cluster then reads. There is no per-namespace answer to
+// give, and folding the smallest or the largest namespace quota into a
+// cluster-wide figure would be a number that is wrong for every namespace but
+// one. So the scheduler keeps being told what the pool can hold, and the
+// namespace ceiling is enforced where it can be answered honestly:
+// requireRoomInNamespaceQuota, and the ZFS quota underneath it. The visible
+// consequence is that a PVC over its namespace quota binds and then fails
+// provisioning with ResourceExhausted, rather than staying Pending.
 func (c *controller) GetCapacity(ctx context.Context, req *csipb.GetCapacityRequest) (resp *csipb.GetCapacityResponse, err error) {
 	start := time.Now()
 	defer func() { obs.ObserveCSI("GetCapacity", err, time.Since(start)) }()
@@ -116,6 +130,56 @@ func (c *controller) requireRoomOutsideReserve(ctx context.Context, backendName 
 	return nil
 }
 
+// requireRoomInNamespaceQuota reconciles the namespace's parent dataset and
+// refuses a volume that would take the namespace past its quota.
+//
+// It refuses rather than reports, for the same reason requireRoomOutsideReserve
+// does: GetCapacity is advisory, and nothing stops a user creating a PVC larger
+// than any figure the scheduler saw. Unlike the pool reserve, though, this is
+// the driver's SECOND line rather than its only one — the ZFS quota on the
+// namespace dataset is the first, and it is the one that holds against bytes
+// the driver never saw. What this check adds is a clear ResourceExhausted at
+// provisioning time instead of an EDQUOT surfacing as a middleware error, and
+// a ceiling on THIN volumes, whose provisioned size ZFS does not charge against
+// the quota until the data is actually written.
+//
+// A flat volume — the feature off, or no namespace in the request — returns
+// immediately and costs no appliance round trip.
+func (c *controller) requireRoomInNamespaceQuota(ctx context.Context, id volume.ID, size int64) error {
+	if id.Namespace == "" {
+		return nil
+	}
+	b, err := c.reg.Backend(id.Backend)
+	if err != nil {
+		return toStatus(err)
+	}
+	cl, err := c.reg.Client(ctx, id.Backend)
+	if err != nil {
+		return toStatus(err)
+	}
+	quota := b.NamespaceQuotas.QuotaFor(id.Namespace)
+	ns, err := backend.EnsureNamespace(ctx, cl, id.Pool, id.Parent, id.Namespace, quota)
+	if err != nil {
+		return toStatus(err)
+	}
+	room, limited := ns.Room()
+	if !limited || size <= room {
+		return nil
+	}
+	// The deferred case is called out because the operator's own quota edit is
+	// the reason the namespace has no room, and the message is the only place
+	// they will see that the ZFS quota still reads the old, higher figure.
+	deferred := ""
+	if ns.QuotaDeferred {
+		deferred = " (this quota is below current usage and was therefore not applied to ZFS, " +
+			"so existing workloads keep writing while new volumes are refused)"
+	}
+	return status.Errorf(codes.ResourceExhausted,
+		"namespace %q on backend %q has a quota of %d bytes and already uses %d, leaving %d; "+
+			"the request for %d bytes does not fit%s",
+		id.Namespace, id.Backend, ns.QuotaBytes, ns.UsedBytes, room, size, deferred)
+}
+
 // ListVolumes returns only volumes this driver owns, paginated by dataset id.
 //
 // Ownership is checked with source == "LOCAL": a dataset that merely inherited
@@ -150,6 +214,13 @@ func (c *controller) ListVolumes(ctx context.Context, req *csipb.ListVolumesRequ
 			if !d.Owned(volume.OwnerProperty, volume.OwnerValue) {
 				continue
 			}
+			// A namespace's parent dataset is driver-owned but holds no data of
+			// its own. Listing it would hand the CO a handle for something that
+			// is not a volume, and DeleteVolume on that handle would then try
+			// to destroy a dataset full of other people's volumes.
+			if volume.IsNamespaceDataset(d.LocalProperty(volume.NamespaceProperty)) {
+				continue
+			}
 			leaf := d.ID[len(prefix):]
 			// Fall back to the historical guess only for volumes created
 			// before the protocol was recorded; a zvol may be iscsi or nvme.
@@ -158,7 +229,14 @@ func (c *controller) ListVolumes(ctx context.Context, req *csipb.ListVolumesRequ
 				fallback, size = "iscsi", d.VolSize.Parsed
 			}
 			proto := volume.ProtocolOr(d.LocalProperty(volume.ProtocolProperty), fallback)
-			vid := volume.ID{Backend: name, Protocol: proto, Pool: b.Pool, Parent: b.ParentDataset, Name: leaf}
+			vid, leafErr := volume.IDFromLeaf(name, proto, b.Pool, b.ParentDataset, leaf)
+			if leafErr != nil {
+				// A dataset at a depth this driver never creates: report
+				// nothing rather than a handle that names the wrong thing.
+				obs.Logger(ctx).Warn("skipping a driver-owned dataset at an unexpected depth",
+					"dataset", d.ID, "error", leafErr)
+				continue
+			}
 			// The publish ledger is already in this dataset's user properties,
 			// so LIST_VOLUMES_PUBLISHED_NODES costs nothing beyond decoding it.
 			// A ledger that will not decode is reported as no published nodes
@@ -320,8 +398,14 @@ func snapshotPB(id, sourceDataset, backendName string) *csipb.Snapshot {
 	if b, err := csiRegistryBackend(backendName); err == nil {
 		prefix := b.pool + "/" + b.parent + "/"
 		if strings.HasPrefix(sourceDataset, prefix) {
-			source = (volume.ID{Backend: backendName, Protocol: "nfs", Pool: b.pool,
-				Parent: b.parent, Name: strings.TrimPrefix(sourceDataset, prefix)}).String()
+			// A namespaced volume's dataset is one level deeper, so the leaf is
+			// split rather than taken whole. A leaf that will not split leaves
+			// the raw dataset path in place, which is what this did before any
+			// mapping existed.
+			if vid, leafErr := volume.IDFromLeaf(backendName, "nfs", b.pool, b.parent,
+				strings.TrimPrefix(sourceDataset, prefix)); leafErr == nil {
+				source = vid.String()
+			}
 		}
 	}
 	return &csipb.Snapshot{

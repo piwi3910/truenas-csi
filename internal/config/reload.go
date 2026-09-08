@@ -17,7 +17,8 @@ import (
 //	reloadable   username, apiKey, caCert, insecureSkipVerify
 //	restart      endpoint, flavour, pool, parentDataset, the set of backend
 //	             names, nodeID, metricsAddr, healthAddr, metricsInterval,
-//	             reservedBytes, reservedPercent, rate limit and breaker settings
+//	             reservedBytes, reservedPercent, namespaceQuotas, rate limit and
+//	             breaker settings
 //
 // Everything in the second group is identity or wiring that other components
 // captured at startup: the backend registry copied each Backend by value, the
@@ -80,6 +81,11 @@ func CheckReloadable(cur, next *Config) error {
 		add(name, "rateLimit", cb.RateLimit != nb.RateLimit)
 		add(name, "breakerThreshold", cb.BreakerThreshold != nb.BreakerThreshold)
 		add(name, "breakerResetTimeout", cb.BreakerReset() != nb.BreakerReset())
+		// Layout, not credential: the controller captured this configuration at
+		// startup, and switching the layout under a running driver would put
+		// two volumes of the same namespace in two different places depending
+		// on which side of the reload they were created.
+		add(name, "namespaceQuotas", !cb.NamespaceQuotas.Equal(nb.NamespaceQuotas))
 	}
 	for name := range next.Backends {
 		if _, ok := cur.Backends[name]; !ok {

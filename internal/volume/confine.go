@@ -26,14 +26,20 @@ func Confine(id ID, allowedPool, allowedParent string) error {
 		return fmt.Errorf("configured parent dataset: %w", err)
 	}
 
-	for _, c := range []struct {
+	components := []struct {
 		field string
 		value string
 	}{
 		{"pool", id.Pool},
 		{"parent", id.Parent},
 		{"name", id.Name},
-	} {
+	}
+	// The namespace is only a component when there is one; an empty Namespace
+	// is the flat layout, not a malformed handle.
+	if id.Namespace != "" {
+		components = append(components, struct{ field, value string }{"namespace", id.Namespace})
+	}
+	for _, c := range components {
 		if err := validComponent(c.value); err != nil {
 			return fmt.Errorf("%w: %s: %w", ErrOutsideParent, c.field, err)
 		}
