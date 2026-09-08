@@ -46,12 +46,13 @@ const DefaultHostRoot = "/host"
 // them back verbatim on every node call. They are the node plugin's only channel of
 // information about a volume, which is why this package needs no backend imports.
 const (
-	// KeyProtocol selects the data path: ProtocolNFS, ProtocolISCSI or
-	// ProtocolNVMe.
+	// KeyProtocol selects the data path: ProtocolNFS, ProtocolISCSI,
+	// ProtocolNVMe or ProtocolSMB.
 	KeyProtocol = "protocol"
-	// KeyServer is the NFS server address.
+	// KeyServer is the NFS server or SMB server address.
 	KeyServer = "server"
-	// KeyShare is the exported NFS path. KeyExport is accepted as a synonym.
+	// KeyShare is the exported NFS path, or the SMB share NAME. KeyExport is
+	// accepted as a synonym for the NFS spelling.
 	KeyShare = "share"
 	// KeyExport is a synonym for KeyShare.
 	KeyExport = "export"
@@ -80,6 +81,35 @@ const (
 	// KeyFSType overrides the filesystem type when the volume capability does not
 	// carry one.
 	KeyFSType = "fsType"
+	// KeyUID and KeyGID are the owner the cifs client presents to the pod. For
+	// SMB, ownership is a mount option rather than an on-disk change, which is
+	// why it travels to the node at all.
+	KeyUID = "uid"
+	KeyGID = "gid"
+	// KeyFileMode and KeyDirMode are the cifs client's file_mode and dir_mode.
+	KeyFileMode = "fileMode"
+	KeyDirMode  = "dirMode"
+	// KeyNodeStageSecretName and KeyNodeStageSecretNamespace are the external
+	// provisioner's own keys, naming the Secret whose contents the kubelet
+	// resolves and hands back as StageRequest.Secrets. The SMB backend sets them
+	// so that no credential is ever written into the PersistentVolume; the node
+	// never reads them itself, and names them only in the error it raises when
+	// the resolved secret turns out to be empty.
+	KeyNodeStageSecretName      = "csi.storage.k8s.io/node-stage-secret-name"
+	KeyNodeStageSecretNamespace = "csi.storage.k8s.io/node-stage-secret-namespace"
+)
+
+// Node-stage secret keys for SMB. They follow the convention every SMB CSI
+// driver uses, so an existing Secret works unchanged.
+const (
+	// KeySMBUsername is the SMB account name.
+	KeySMBUsername = "username"
+	// KeySMBPassword is that account's password. It is accepted ONLY from the
+	// node-stage secrets, never from the publish context, which is persisted in
+	// the PersistentVolume.
+	KeySMBPassword = "password"
+	// KeySMBDomain is the optional workgroup or AD domain.
+	KeySMBDomain = "domain"
 )
 
 // Protocol values for KeyProtocol.
@@ -87,6 +117,7 @@ const (
 	ProtocolNFS   = "nfs"
 	ProtocolISCSI = "iscsi"
 	ProtocolNVMe  = "nvme"
+	ProtocolSMB   = "smb"
 )
 
 // DefaultNFSVersion is the NFS version used when the publish context names none.
@@ -320,6 +351,8 @@ func (n *Node) Stage(ctx context.Context, req StageRequest) error {
 		err = n.stageISCSI(ctx, req)
 	case ProtocolNVMe:
 		err = n.stageNVMe(ctx, req)
+	case ProtocolSMB:
+		err = n.stageSMB(ctx, req)
 	default:
 		return fmt.Errorf("%w: publish context names no supported protocol", ErrInvalidRequest)
 	}
@@ -351,9 +384,14 @@ func (n *Node) Unstage(ctx context.Context, req UnstageRequest) error {
 	if err := n.unmountIfMounted(ctx, req.StagingPath); err != nil {
 		return err
 	}
+	// Every protocol's teardown is a no-op for a context that is not its own, so
+	// an unparseable or empty publish context still unmounts and still succeeds.
 	detach := n.unstageISCSI
-	if protocolOf(req.PublishContext) == ProtocolNVMe {
+	switch protocolOf(req.PublishContext) {
+	case ProtocolNVMe:
 		detach = n.unstageNVMe
+	case ProtocolSMB:
+		detach = n.unstageSMB
 	}
 	if err := detach(ctx, req); err != nil {
 		return err
@@ -404,9 +442,14 @@ func (n *Node) Unpublish(ctx context.Context, req UnpublishRequest) error {
 
 // protocolOf reads the protocol out of a publish context, inferring it from the keys
 // present when the controller did not name one.
+// The two file protocols are told apart by the SHAPE of the share: the NFS
+// backend publishes an export, which is an absolute path on the appliance
+// (/mnt/<pool>/…), while the SMB backend publishes a share NAME, which is not a
+// path at all. Both are hand-written only for a static PersistentVolume — every
+// volume this driver provisions carries an explicit protocol.
 func protocolOf(pc map[string]string) string {
 	switch p := strings.ToLower(pc[KeyProtocol]); p {
-	case ProtocolNFS, ProtocolISCSI, ProtocolNVMe:
+	case ProtocolNFS, ProtocolISCSI, ProtocolNVMe, ProtocolSMB:
 		return p
 	}
 	if pc[KeyNQN] != "" {
@@ -416,6 +459,9 @@ func protocolOf(pc map[string]string) string {
 		return ProtocolISCSI
 	}
 	if pc[KeyServer] != "" {
+		if share := pc[KeyShare]; share != "" && !strings.HasPrefix(share, "/") {
+			return ProtocolSMB
+		}
 		return ProtocolNFS
 	}
 	return ""

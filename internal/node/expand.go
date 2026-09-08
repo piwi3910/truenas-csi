@@ -35,9 +35,9 @@ func (n *Node) Expand(ctx context.Context, req ExpandRequest) (ExpandResponse, e
 		rescan func() error
 	)
 	switch protocolOf(req.PublishContext) {
-	case ProtocolNFS:
-		// Nothing to do on the node. The dataset's refquota is the size the pod
-		// sees, and it changed on the appliance.
+	case ProtocolNFS, ProtocolSMB:
+		// Nothing to do on the node. Both file protocols serve a dataset whose
+		// refquota is the size the pod sees, and it changed on the appliance.
 		return resp, nil
 	case ProtocolISCSI:
 		portal, iqn, naa := req.PublishContext[KeyPortal], req.PublishContext[KeyIQN], req.PublishContext[KeyNAA]
