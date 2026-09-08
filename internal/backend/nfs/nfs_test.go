@@ -42,6 +42,7 @@ type fakeDataset struct {
 	marker   string // "" when unmarked
 	source   string
 	props    map[string]string
+	comments string // the ZFS comments field the TrueNAS UI shows
 }
 
 // fakeExport mirrors the two fields that decide who may mount an NFS share.
@@ -69,6 +70,7 @@ func (d *fakeDataset) json(id string) map[string]any {
 		"mountpoint":      "/mnt/" + id,
 		"refquota":        map[string]any{"parsed": d.refquota},
 		"user_properties": props,
+		"comments":        map[string]any{"value": d.comments, "source": "LOCAL"},
 	}
 }
 
@@ -102,6 +104,9 @@ func newNAS(t *testing.T) *nas {
 		if q, ok := payload["refquota"].(float64); ok {
 			ds.refquota = int64(q)
 		}
+		if c, ok := payload["comments"].(string); ok {
+			ds.comments = c
+		}
 		if props, ok := payload["user_properties"].([]any); ok {
 			for _, raw := range props {
 				m, _ := raw.(map[string]any)
@@ -134,6 +139,9 @@ func newNAS(t *testing.T) *nas {
 		}
 		if q, ok := patch["refquota"].(float64); ok {
 			ds.refquota = int64(q)
+		}
+		if c, ok := patch["comments"].(string); ok {
+			ds.comments = c
 		}
 		if props, ok := patch["user_properties_update"].([]any); ok {
 			for _, raw := range props {

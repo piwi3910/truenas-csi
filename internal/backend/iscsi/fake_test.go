@@ -225,6 +225,9 @@ func (n *nas) install() {
 		if v, ok := patch["volsize"]; ok {
 			ds["volsize"] = map[string]any{"parsed": v}
 		}
+		if v, ok := patch["comments"]; ok {
+			ds["comments"] = map[string]any{"value": v, "source": "LOCAL"}
+		}
 		if raw, ok := patch["user_properties_update"].([]any); ok {
 			props, _ := ds["user_properties"].(map[string]any)
 			if props == nil {
