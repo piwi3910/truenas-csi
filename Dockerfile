@@ -17,7 +17,7 @@ COPY . .
 
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -trimpath \
-    -ldflags "-s -w -X github.com/pwatteel/truenas-csi/internal/driver.Version=${VERSION}" \
+    -ldflags "-s -w -X github.com/piwi3910/truenas-csi/internal/driver.Version=${VERSION}" \
     -o /out/truenas-csi ./cmd/truenas-csi
 
 # Runtime stage. The node plugin drives the HOST's iscsiadm, mount.nfs and
@@ -28,7 +28,7 @@ FROM gcr.io/distroless/static-debian12:nonroot
 
 LABEL org.opencontainers.image.title="truenas-csi" \
       org.opencontainers.image.description="CSI driver for TrueNAS SCALE (NFS and iSCSI)" \
-      org.opencontainers.image.source="https://github.com/pwatteel/truenas-csi" \
+      org.opencontainers.image.source="https://github.com/piwi3910/truenas-csi" \
       org.opencontainers.image.licenses="Apache-2.0"
 
 COPY --from=build /out/truenas-csi /truenas-csi

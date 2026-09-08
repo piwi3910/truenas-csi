@@ -22,7 +22,7 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: pwatteel/truenas-csi
+  IMAGE_NAME: piwi3910/truenas-csi
   GO_VERSION: "1.26"
 
 jobs:

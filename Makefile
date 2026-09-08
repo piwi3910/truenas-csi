@@ -1,7 +1,7 @@
 GO      ?= go
 BIN     := bin/truenas-csi
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-LDFLAGS := -X github.com/pwatteel/truenas-csi/internal/driver.Version=$(VERSION)
+LDFLAGS := -X github.com/piwi3910/truenas-csi/internal/driver.Version=$(VERSION)
 
 # E2E_GOTIMEOUT must outlast the ginkgo timeout inside run.sh, or `go test`
 # kills the suite mid-run and the report is worthless.
