@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -26,6 +28,7 @@ import (
 	"github.com/piwi3910/truenas-csi/operator/internal/chartrender"
 	"github.com/piwi3910/truenas-csi/operator/internal/credentials"
 	"github.com/piwi3910/truenas-csi/operator/internal/health"
+	"github.com/piwi3910/truenas-csi/operator/internal/upgrade"
 )
 
 // chartDir is the ONE copy of the driver's manifests in this repository. The
@@ -463,6 +466,230 @@ func TestReconcileRefusesMissingSecret(t *testing.T) {
 	}
 	if !strings.Contains(degraded.Message, "truenas-credentials") {
 		t.Errorf("message %q does not name the missing Secret", degraded.Message)
+	}
+}
+
+// upgradeTable is a table with more than one release in it, so the refusal
+// branches have something to refuse. The shipped table has a single entry
+// because a single version has shipped; the mechanism, not that table's current
+// contents, is what these tests are about.
+var upgradeTable = upgrade.Table{
+	"0.1.0": {},
+	"0.3.0": {},
+	"0.5.0": {MinUpgradeFrom: "0.3.0", MinDowngradeTo: "0.3.0"},
+	"0.9.0": {MinUpgradeFrom: "0.5.0", MinDowngradeTo: "0.5.0"},
+}
+
+// upgradeCase drives one reconcile of a driver moving between two versions.
+type upgradeCase struct {
+	name string
+	// previous is the version recorded on the CR; empty means a fresh install.
+	previous string
+	// requested is the version in spec.image.tag.
+	requested string
+	// wantRefused is true when the operator must apply nothing at all.
+	wantRefused bool
+	// wantMessage is a substring the refusal has to contain, so the message
+	// stays something an administrator can act on rather than a bare "no".
+	wantMessage string
+	// wantRecorded is the version the CR should carry afterwards.
+	wantRecorded string
+}
+
+// TestUpgradePathGating is the table for the whole mechanism: which steps are
+// allowed, which are refused, and what the resource says afterwards.
+//
+// The failure being prevented is a version skipped over a release whose
+// migration a later driver depends on. That leaves volumes on the appliance in
+// a shape the running driver does not understand, and it is discovered one
+// workload at a time. An unchanged cluster with a Degraded condition is
+// strictly better, which is the same trade the sidecar skew check makes.
+func TestUpgradePathGating(t *testing.T) {
+	tests := []upgradeCase{
+		{
+			name:         "fresh install is never gated",
+			previous:     "",
+			requested:    "0.9.0",
+			wantRecorded: "0.9.0",
+		},
+		{
+			name:         "supported single step",
+			previous:     "0.5.0",
+			requested:    "0.9.0",
+			wantRecorded: "0.9.0",
+		},
+		{
+			name:         "no change at all",
+			previous:     "0.9.0",
+			requested:    "0.9.0",
+			wantRecorded: "0.9.0",
+		},
+		{
+			name:         "skipping the migration release is refused",
+			previous:     "0.3.0",
+			requested:    "0.9.0",
+			wantRefused:  true,
+			wantMessage:  "upgrade to v0.5.0 first",
+			wantRecorded: "0.3.0",
+		},
+		{
+			name:         "downgrade past the release's own floor is refused",
+			previous:     "0.9.0",
+			requested:    "0.3.0",
+			wantRefused:  true,
+			wantMessage:  "downgrade from v0.9.0 to v0.3.0 is not supported",
+			wantRecorded: "0.9.0",
+		},
+		{
+			name:         "downgrade within the declared window",
+			previous:     "0.9.0",
+			requested:    "0.5.0",
+			wantRecorded: "0.5.0",
+		},
+		{
+			name:         "a development tag is not gated in either direction",
+			previous:     "0.3.0",
+			requested:    "main",
+			wantRecorded: "main",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			driver := testDriver()
+			driver.Spec.Image.Tag = tt.requested
+			if tt.previous != "" {
+				driver.Annotations = map[string]string{PreviousVersionAnnotation: tt.previous}
+			}
+
+			applier := &recordingApplier{}
+			recorder := record.NewFakeRecorder(16)
+			r := newReconciler(t, applier, nil, driver, credentialSecret("1", "1-secret-key"))
+			r.Recorder = recorder
+			r.UpgradeTable = upgradeTable
+			got := reconcileOnce(t, r)
+
+			degraded := meta.FindStatusCondition(got.Status.Conditions, truenasv1alpha1.ConditionDegraded)
+			if tt.wantRefused {
+				if len(applier.applied) != 0 {
+					t.Fatalf("a refused upgrade applied %d object(s): %v", len(applier.applied), applier.kinds())
+				}
+				if degraded == nil || degraded.Status != metav1.ConditionTrue ||
+					degraded.Reason != truenasv1alpha1.ReasonUpgradeNotSupported {
+					t.Fatalf("Degraded condition = %+v, want True/%s", degraded, truenasv1alpha1.ReasonUpgradeNotSupported)
+				}
+				if !strings.Contains(degraded.Message, tt.wantMessage) {
+					t.Errorf("refusal message %q does not say %q", degraded.Message, tt.wantMessage)
+				}
+				ready := meta.FindStatusCondition(got.Status.Conditions, truenasv1alpha1.ConditionReady)
+				if ready == nil || ready.Status != metav1.ConditionFalse {
+					t.Errorf("Ready condition = %+v, want False", ready)
+				}
+				if got.Status.AppliedVersion == tt.requested {
+					t.Errorf("status reports appliedVersion %q, but nothing was applied", got.Status.AppliedVersion)
+				}
+				assertEvent(t, recorder, "Warning", truenasv1alpha1.ReasonUpgradeNotSupported)
+			} else {
+				if len(applier.applied) == 0 {
+					t.Fatal("an allowed upgrade applied nothing")
+				}
+				if degraded != nil && degraded.Status == metav1.ConditionTrue {
+					t.Errorf("Degraded condition = %+v, want False for an allowed upgrade", degraded)
+				}
+			}
+
+			if recorded := got.Annotations[PreviousVersionAnnotation]; recorded != tt.wantRecorded {
+				t.Errorf("recorded version = %q, want %q", recorded, tt.wantRecorded)
+			}
+		})
+	}
+}
+
+// TestFailedUpgradeDoesNotRecordTheVersion is the reason the annotation is
+// written at the end of a reconcile rather than at the start.
+//
+// If the requested version were recorded before it was known to work, a failed
+// upgrade would leave the CR claiming a version that never ran — and the next
+// attempt, including the attempt to go back, would be judged from a version
+// that was never on the cluster.
+func TestFailedUpgradeDoesNotRecordTheVersion(t *testing.T) {
+	driver := testDriver()
+	driver.Spec.Image.Tag = "0.9.0"
+	driver.Annotations = map[string]string{PreviousVersionAnnotation: "0.5.0"}
+
+	applier := &recordingApplier{err: errors.New("the API server said no")}
+	r := newReconciler(t, applier, nil, driver, credentialSecret("1", "1-secret-key"))
+	r.UpgradeTable = upgradeTable
+
+	if _, err := r.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "truenas"},
+	}); err == nil {
+		t.Fatal("reconcile returned no error although every apply failed")
+	}
+
+	got := &truenasv1alpha1.TrueNASCSIDriver{}
+	if err := r.Get(context.Background(), types.NamespacedName{Name: "truenas"}, got); err != nil {
+		t.Fatalf("read back resource: %v", err)
+	}
+	if recorded := got.Annotations[PreviousVersionAnnotation]; recorded != "0.5.0" {
+		t.Errorf("recorded version = %q after a failed apply, want the version that actually ran (0.5.0)", recorded)
+	}
+}
+
+// TestSuccessfulUpgradeEmitsAnEvent checks the other half of "visible": a
+// completed version change is something an operator can find in
+// `kubectl describe` without diffing annotations.
+func TestSuccessfulUpgradeEmitsAnEvent(t *testing.T) {
+	driver := testDriver()
+	driver.Spec.Image.Tag = "0.9.0"
+	driver.Annotations = map[string]string{PreviousVersionAnnotation: "0.5.0"}
+
+	recorder := record.NewFakeRecorder(16)
+	r := newReconciler(t, &recordingApplier{}, nil, driver, credentialSecret("1", "1-secret-key"))
+	r.Recorder = recorder
+	r.UpgradeTable = upgradeTable
+	reconcileOnce(t, r)
+
+	assertEvent(t, recorder, "Normal", truenasv1alpha1.ReasonUpgraded)
+}
+
+// TestFreshInstallEmitsNoUpgradeEvent: a first install is not an upgrade, and
+// an event claiming otherwise would be noise in exactly the place an operator
+// looks during a real one.
+func TestFreshInstallEmitsNoUpgradeEvent(t *testing.T) {
+	driver := testDriver()
+	driver.Spec.Image.Tag = "0.9.0"
+
+	recorder := record.NewFakeRecorder(16)
+	r := newReconciler(t, &recordingApplier{}, nil, driver, credentialSecret("1", "1-secret-key"))
+	r.Recorder = recorder
+	r.UpgradeTable = upgradeTable
+	reconcileOnce(t, r)
+
+	select {
+	case e := <-recorder.Events:
+		t.Errorf("a fresh install emitted the event %q", e)
+	default:
+	}
+}
+
+// assertEvent drains the recorder looking for one event of the given type and
+// reason.
+func assertEvent(t *testing.T, recorder *record.FakeRecorder, eventType, reason string) {
+	t.Helper()
+	var seen []string
+	for {
+		select {
+		case e := <-recorder.Events:
+			seen = append(seen, e)
+			if strings.HasPrefix(e, eventType+" "+reason+" ") {
+				return
+			}
+		default:
+			t.Errorf("no %s/%s event; a refusal only visible in a status condition is easy to miss. Saw: %v",
+				eventType, reason, seen)
+			return
+		}
 	}
 }
 

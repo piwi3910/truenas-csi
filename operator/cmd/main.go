@@ -85,6 +85,9 @@ func main() {
 		Scheme:      mgr.GetScheme(),
 		Chart:       ch,
 		KubeVersion: discoverKubeVersion(mgr),
+		// A refused upgrade has to be visible without reading the CR's status
+		// by hand, so every refusal is also an event on the resource.
+		Recorder: mgr.GetEventRecorderFor("truenas-csi-operator"),
 	}
 	if backendHealth {
 		reconciler.Probe = health.NewScraper()

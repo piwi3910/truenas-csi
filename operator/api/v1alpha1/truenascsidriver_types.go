@@ -9,7 +9,8 @@ import (
 //
 // This is not stylistic and it is not a duplicate of the driver's own check.
 // TrueNAS 25.10 REVOKES an API key the moment it is presented over a plaintext
-// connection, so a `ws://` endpoint does not merely fail to connect — it
+// connection, so an endpoint whose scheme is plain `ws` rather than `wss`
+// does not merely fail to connect — it
 // destroys the credential and an administrator has to issue a new one by hand.
 // Rejecting it in the CRD schema means `kubectl apply` fails before the
 // operator ever renders a Secret, let alone before a pod dials the appliance.
@@ -132,11 +133,28 @@ type ImageSpec struct {
 	// +optional
 	Repository string `json:"repository,omitempty"`
 
-	// Tag is the driver version. Empty means the chart's appVersion. The
-	// operator refuses to apply a tag whose version is incompatible with the
-	// CSI sidecars the chart pins; see the VersionSkew condition reason.
+	// Tag is the driver version. Empty means the chart's appVersion.
+	//
+	// Two rules apply, and both are enforced here rather than in the
+	// controller, because a value the API server accepts is a value someone has
+	// to discover is wrong from a condition on a resource that did nothing.
+	//
+	// The pattern is the tag grammar a registry accepts at all. The CEL rule
+	// below is the one that catches the real mistake: a tag that *looks* like a
+	// version must actually be one. "v0.5" and "0.1.0.2" are typos a human
+	// makes and a registry happily 404s on hours later; a floating tag such as
+	// "main" or "pr-412" is a deliberate development build and stays legal,
+	// which is the same line internal/skew and internal/upgrade draw when they
+	// decline to gate an unparseable version.
+	//
+	// The operator additionally refuses to apply a version incompatible with
+	// the CSI sidecars the chart pins (the VersionSkew reason), or one that
+	// cannot be reached from the release already installed (the
+	// UpgradeNotSupported reason). Neither is expressible in a schema: both
+	// depend on state outside this resource.
 	// +kubebuilder:validation:MaxLength=128
 	// +kubebuilder:validation:Pattern=`^[A-Za-z0-9_][-A-Za-z0-9_.]*$`
+	// +kubebuilder:validation:XValidation:rule=`!self.matches("^v?[0-9]") || self.matches("^v?(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?([+][0-9A-Za-z.-]+)?$")`,message="a tag that starts with a digit or v<digit> must be a semantic version such as 0.1.0, v0.1.0 or 0.2.0-rc.1"
 	// +optional
 	Tag string `json:"tag,omitempty"`
 
@@ -512,6 +530,17 @@ const (
 	// nothing in this state: a half-applied release with a driver that cannot
 	// talk to its own sidecars is worse than an unchanged one.
 	ReasonVersionSkew = "VersionSkew"
+	// ReasonUpgradeNotSupported is set when the requested driver version cannot
+	// be reached directly from the one already installed — a step that skips a
+	// release whose migration the newer driver depends on. Nothing is applied:
+	// the previous release keeps running, and the message names the version to
+	// move through first.
+	ReasonUpgradeNotSupported = "UpgradeNotSupported"
+	// ReasonUpgraded accompanies the event emitted when a version change has
+	// finished applying and rolling out. It is not a condition reason; it names
+	// the event a `kubectl describe` reader looks for to confirm the upgrade
+	// actually completed rather than merely being accepted.
+	ReasonUpgraded = "Upgraded"
 	// ReasonRenderFailed is set when the chart could not be rendered.
 	ReasonRenderFailed = "RenderFailed"
 	// ReasonApplyFailed is set when a rendered object could not be applied.

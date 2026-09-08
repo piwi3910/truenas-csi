@@ -207,3 +207,105 @@ func TestCRDRejectsBothReserveForms(t *testing.T) {
 		t.Error("backend has no rule forbidding reservedBytes and reservedPercent together")
 	}
 }
+
+// imageSchema returns the generated schema for spec.image.
+func imageSchema(t *testing.T) apiextv1.JSONSchemaProps {
+	t.Helper()
+	spec := specSchema(t, loadCRD(t))
+	image, ok := spec.Properties["image"]
+	if !ok {
+		t.Fatal("spec has no image property")
+	}
+	return image
+}
+
+// selfMatches pulls the argument of every `self.matches("…")` call out of a CEL
+// rule.
+//
+// The rule is evaluated below rather than merely inspected, because a rule that
+// is present but wrong is indistinguishable from a rule that is absent. CEL's
+// matches() is RE2 and, like the API server's `pattern` handling, performs an
+// UNANCHORED search — which is Go's regexp.MatchString exactly, so the tags in
+// the table are judged the way a cluster would judge them.
+func selfMatches(t *testing.T, rule string) []*regexp.Regexp {
+	t.Helper()
+	call := regexp.MustCompile(`self\.matches\("((?:[^"\\]|\\.)*)"\)`)
+	var out []*regexp.Regexp
+	for _, m := range call.FindAllStringSubmatch(rule, -1) {
+		re, err := regexp.Compile(m[1])
+		if err != nil {
+			t.Fatalf("regex %q in the tag rule does not compile the way CEL compiles it: %v", m[1], err)
+		}
+		out = append(out, re)
+	}
+	return out
+}
+
+// TestCRDRejectsMalformedDriverVersion guards the rule that makes a mistyped
+// driver version fail at `kubectl apply` rather than several minutes later, as
+// an image pull failure on a pod nobody is watching.
+//
+// Dell's equivalent CRD accepts any string in this field and fails late; a typo
+// like "v0.5" costs the administrator a rollout to discover. The floating tags
+// a developer uses on purpose ("main", "pr-412") must still be accepted,
+// because the operator deliberately declines to gate a version it cannot parse.
+func TestCRDRejectsMalformedDriverVersion(t *testing.T) {
+	tag, ok := imageSchema(t).Properties["tag"]
+	if !ok {
+		t.Fatal("image schema has no tag property")
+	}
+	if tag.Pattern == "" {
+		t.Fatal("image tag has no pattern")
+	}
+	pattern, err := regexp.Compile(tag.Pattern)
+	if err != nil {
+		t.Fatalf("tag pattern %q does not compile: %v", tag.Pattern, err)
+	}
+	if len(tag.XValidations) != 1 {
+		t.Fatalf("image tag has %d CEL rules, want exactly the one asserting that a version-shaped tag is a version",
+			len(tag.XValidations))
+	}
+	if tag.XValidations[0].Message == "" {
+		t.Error("the tag rule has no message; a rejection an administrator cannot read is one they cannot act on")
+	}
+	res := selfMatches(t, tag.XValidations[0].Rule)
+	if len(res) != 2 {
+		t.Fatalf("the tag rule contains %d self.matches() calls, want the version-shaped test and the semver test", len(res))
+	}
+	looksLikeAVersion, isAVersion := res[0], res[1]
+
+	// accepted mirrors `pattern && (!looksLikeAVersion || isAVersion)`, which
+	// is the conjunction the API server applies.
+	accepted := func(v string) bool {
+		return pattern.MatchString(v) && (!looksLikeAVersion.MatchString(v) || isAVersion.MatchString(v))
+	}
+
+	tests := []struct {
+		tag  string
+		want bool
+		why  string
+	}{
+		{tag: "0.1.0", want: true, why: "the shipped release form"},
+		{tag: "v0.1.0", want: true, why: "the v-prefixed form of the same version"},
+		{tag: "0.2.0-rc.1", want: true, why: "a release candidate"},
+		{tag: "v1.10.12", want: true, why: "double-digit components"},
+		{tag: "main", want: true, why: "a development build off the default branch"},
+		{tag: "pr-412", want: true, why: "a per-pull-request image"},
+		{tag: "latest", want: true, why: "not advisable, but a deliberate choice this rule is not about"},
+		{tag: "v0.5", want: false, why: "the typo this rule exists for: version-shaped, missing a component"},
+		{tag: "0.1", want: false, why: "the same typo without the v"},
+		{tag: "0.1.0.2", want: false, why: "a fourth component is not a semantic version"},
+		{tag: "v01.2.3", want: false, why: "leading zeroes are not a semantic version"},
+		{tag: "1.2.3-", want: false, why: "an empty pre-release"},
+		{tag: "v", want: true, why: "not version-shaped at all, so the rule does not apply"},
+		{tag: "-0.1.0", want: false, why: "the pattern refuses a leading dash"},
+		{tag: "0.1.0 ", want: false, why: "trailing whitespace is not a tag"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.tag, func(t *testing.T) {
+			if got := accepted(tt.tag); got != tt.want {
+				t.Errorf("tag %q accepted = %v, want %v (%s)", tt.tag, got, tt.want, tt.why)
+			}
+		})
+	}
+}
