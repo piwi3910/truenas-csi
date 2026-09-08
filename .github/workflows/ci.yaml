@@ -103,7 +103,7 @@ jobs:
       - name: golangci-lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
-          version: v2.6.2
+          version: v2.13.2
           args: --timeout=10m
 
   # The chart tests only assert anything when helm is installed, so CI installs
@@ -221,6 +221,12 @@ jobs:
 
       - name: Install the driver CRDs
         run: kubectl apply -f deploy/crds/
+
+      # A server-side dry run of a namespaced object still resolves its
+      # namespace, so the namespace has to exist for real even though nothing
+      # else will.
+      - name: Create the namespace
+        run: kubectl create namespace truenas-csi
 
       # A server-side dry run validates every rendered object against the API
       # server without creating anything. The driver cannot become healthy here
