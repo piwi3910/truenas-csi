@@ -9,3 +9,10 @@ coverage.out
 # a bare `go build ./cmd/...` drops the executable here
 /truenas-csi
 site/
+
+# procoder's machine-generated working data. The code index alone is ~24 MB and
+# is rebuilt from source by `procoder index build`, so committing it adds
+# nothing a checkout cannot regenerate and everything a clone has to download.
+.procoder/index/
+.procoder/state/
+.lycheecache

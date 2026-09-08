@@ -7,7 +7,7 @@ body:
     attributes:
       label: The problem
       description: What are you trying to do that you cannot do today?
-    validations: {required: true}
+    validations: { required: true }
   - type: textarea
     id: proposal
     attributes:

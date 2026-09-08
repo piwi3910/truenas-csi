@@ -664,7 +664,7 @@ which is an NFS server refusing to admit the export exists to a host that is not
 in its access list — not a missing dataset. Those tests must publish first.
 
 Note this needs a node resolver that can see real Node objects:
-`LocalNodeResolver` returns *this process's* interface addresses, so publishing
+`LocalNodeResolver` returns _this process's_ interface addresses, so publishing
 from a laptop grants the laptop and the cluster node still cannot mount. That is
 correct and safe, and it is why `csi.NewController` needs the resolver to be
 injectable for the node-side suite to run outside the cluster.
