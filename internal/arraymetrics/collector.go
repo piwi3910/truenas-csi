@@ -80,6 +80,14 @@ var (
 		"Open iSCSI sessions on the appliance, across every target.",
 		[]string{"backend"}, nil)
 
+	// The NFS counterpart of iscsiSessionsDesc. Both are appliance-wide: the
+	// middleware counts clients and sessions for the whole box, never per share
+	// or per dataset, so neither can be attributed to a volume. Per-volume I/O
+	// is measured node-side instead -- see internal/podmon.
+	nfsClientsDesc = prometheus.NewDesc("truenas_nfs_clients",
+		"NFS clients currently holding a mount on the appliance, across every export.",
+		[]string{"backend"}, nil)
+
 	collectionDurationDesc = prometheus.NewDesc("truenas_collection_duration_seconds",
 		"Duration of the last array metrics collection for a backend.",
 		[]string{"backend"}, nil)
@@ -98,13 +106,14 @@ type datasetUsage struct {
 // snapshot is one appliance's last successful collection. It is replaced whole
 // on success and left untouched on failure — see Collector.collectBackend.
 type snapshot struct {
-	pool     string
-	size     float64
-	free     float64
-	healthy  bool
-	datasets []datasetUsage
-	sessions float64
-	duration float64
+	pool       string
+	size       float64
+	free       float64
+	healthy    bool
+	datasets   []datasetUsage
+	sessions   float64
+	nfsClients float64
+	duration   float64
 }
 
 // Collector polls every configured appliance and serves the results from cache.
@@ -280,6 +289,12 @@ func (c *Collector) pollBackend(ctx context.Context, name string) (*snapshot, er
 		return nil, fmt.Errorf("iscsi sessions: %w", err)
 	}
 	snap.sessions = float64(sessions)
+
+	clients, err := cl.NFSClientCount(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("nfs clients: %w", err)
+	}
+	snap.nfsClients = float64(clients)
 	return snap, nil
 }
 
@@ -287,7 +302,7 @@ func (c *Collector) pollBackend(ctx context.Context, name string) (*snapshot, er
 func (c *Collector) Describe(ch chan<- *prometheus.Desc) {
 	for _, d := range []*prometheus.Desc{
 		poolSizeDesc, poolFreeDesc, poolUsedDesc, poolHealthyDesc,
-		datasetUsedDesc, datasetQuotaDesc, iscsiSessionsDesc,
+		datasetUsedDesc, datasetQuotaDesc, iscsiSessionsDesc, nfsClientsDesc,
 		collectionDurationDesc, collectionErrorsDesc,
 	} {
 		ch <- d
@@ -319,6 +334,7 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 		}
 		ch <- prometheus.MustNewConstMetric(poolHealthyDesc, prometheus.GaugeValue, healthy, name, s.pool)
 		ch <- prometheus.MustNewConstMetric(iscsiSessionsDesc, prometheus.GaugeValue, s.sessions, name)
+		ch <- prometheus.MustNewConstMetric(nfsClientsDesc, prometheus.GaugeValue, s.nfsClients, name)
 		ch <- prometheus.MustNewConstMetric(collectionDurationDesc, prometheus.GaugeValue, s.duration, name)
 
 		for _, d := range s.datasets {

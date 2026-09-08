@@ -51,7 +51,13 @@ func serveAppliance(s *fake.Server, datasets []map[string]any, sessions int) {
 		list[i] = map[string]any{"initiator": "iqn.example:host"}
 	}
 	s.HandleValue("iscsi.global.sessions", list)
+	// The NFS counterpart. Seeded unconditionally so a collector that stops
+	// reading it fails on the assertion rather than on a missing method.
+	s.HandleValue("nfs.client_count", nfsClientsSeed)
 }
+
+// nfsClientsSeed is the appliance-wide NFS client count the fake reports.
+const nfsClientsSeed = 3
 
 func testRegistry(t *testing.T, backends map[string]string) *backend.Registry {
 	t.Helper()
