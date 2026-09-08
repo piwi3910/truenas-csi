@@ -3,6 +3,19 @@
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project uses [semantic versioning](https://semver.org/).
 
+## [0.1.1] - 2026-09-08
+
+### Changed
+
+- Every module, image and workflow now builds with **Go 1.27**, the current
+  stable release. The `go` directive is `1.27.0` rather than `1.27.1` on
+  purpose: it is a minimum, and golangci-lint refuses a module targeting a Go
+  newer than the one it was itself built with, so `1.27.1` would fail lint on
+  every run while changing nothing about the language version.
+
+No functional change. Rebuilt so the published binary is the one the source
+tree is tested against.
+
 ## [0.1.0] - 2026-09-08
 
 First release. Validated end to end against a live TrueNAS SCALE 25.10.6
@@ -86,4 +99,5 @@ Not applicable — this is the first release. Note for later: `attachRequired` o
 the CSIDriver object is immutable, so any future change to it requires the
 object to be recreated.
 
+[0.1.1]: https://github.com/piwi3910/truenas-csi/releases/tag/v0.1.1
 [0.1.0]: https://github.com/piwi3910/truenas-csi/releases/tag/v0.1.0

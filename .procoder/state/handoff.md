@@ -1,10 +1,10 @@
 # procoder handoff
 
 <!-- procoder:facts -->
-generated: 2026-09-08T06:09:26Z
-branch: feat/foundation — default branch unknown (no origin/HEAD, no main or master)
-head: 2106acd
-dirty files: 1
+generated: 2026-09-08T09:08:48Z
+branch: main — 6 ahead, 0 behind feat/foundation
+head: ca2200f
+dirty files: none (clean tree)
 sprint: none — no backlog yet (`procoder backlog` starts one)
 open tasks: none
 unlearned lessons: none — no ledger at .procoder/github/LESSONS.md
