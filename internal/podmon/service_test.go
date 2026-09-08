@@ -5,8 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -194,5 +197,104 @@ func TestPodmonServesOnItsOwnListener(t *testing.T) {
 	}
 	if !out.Connected || out.NodeID != "worker-1" {
 		t.Errorf("unexpected response %+v", out)
+	}
+}
+
+// TestIOCountersDetectWritesToExistingFiles pins the reason the mount point's
+// mtime was abandoned. Verified against a real NFS mount on a cluster node:
+// writing 4 MiB to an existing file left the directory's mtime untouched,
+// because a directory's mtime tracks entries appearing and disappearing, not
+// writes to files already in it. Every steady writer would have reported no
+// I/O — the one case the answer exists for.
+func TestIOCountersDetectWritesToExistingFiles(t *testing.T) {
+	root := t.TempDir()
+	mounts := "192.168.10.253:/mnt/Pool0/vol /var/lib/kubelet/x nfs4 rw 0 0\n"
+	stats := func(bytes uint64) string {
+		return "device 192.168.10.253:/mnt/Pool0/vol mounted on /var/lib/kubelet/x with fstype nfs4\n" +
+			"\tbytes: " + strconv.FormatUint(bytes, 10) + " 0 0 0 0 0 0 0\n"
+	}
+
+	current := stats(1000)
+	c := newIOCounters(root)
+	c.readFn = func(p string) ([]byte, error) {
+		switch {
+		case strings.HasSuffix(p, "mounts"):
+			return []byte(mounts), nil
+		case strings.HasSuffix(p, "mountstats"):
+			return []byte(current), nil
+		}
+		return nil, os.ErrNotExist
+	}
+
+	// The first sample can only establish a baseline: reporting I/O from one
+	// reading would be a guess, and guessing "active" keeps a dead pod alive.
+	if _, ok := c.Active("/var/lib/kubelet/x"); ok {
+		t.Fatal("the first sample must not claim activity")
+	}
+	// A write to an EXISTING file moves the byte counter even though no
+	// directory entry changed. This is what mtime missed.
+	current = stats(1000 + 4<<20)
+	at, ok := c.Active("/var/lib/kubelet/x")
+	if !ok || at.IsZero() {
+		t.Fatal("a 4 MiB write to an existing file must register as I/O")
+	}
+	// An idle interval must not.
+	before := at
+	if at2, ok := c.Active("/var/lib/kubelet/x"); !ok || !at2.Equal(before) {
+		t.Fatalf("an idle interval must keep the last active time %v, got %v", before, at2)
+	}
+}
+
+// TestIOCountersUseDiskstatsForBlockVolumes covers the iSCSI and NVMe path,
+// where the volume is a block device and mountstats says nothing.
+func TestIOCountersUseDiskstatsForBlockVolumes(t *testing.T) {
+	root := t.TempDir()
+	mounts := "/dev/sdc /var/lib/kubelet/blk ext4 rw 0 0\n"
+	sectors := uint64(100)
+	c := newIOCounters(root)
+	c.readFn = func(p string) ([]byte, error) {
+		switch {
+		case strings.HasSuffix(p, "mounts"):
+			return []byte(mounts), nil
+		case strings.HasSuffix(p, "diskstats"):
+			return []byte(fmt.Sprintf("   8      32 sdc 10 0 %d 0 20 0 %d 0 0 0 0\n", sectors, sectors)), nil
+		}
+		return nil, os.ErrNotExist
+	}
+	if _, ok := c.Active("/var/lib/kubelet/blk"); ok {
+		t.Fatal("first sample is a baseline")
+	}
+	sectors += 8192
+	if _, ok := c.Active("/var/lib/kubelet/blk"); !ok {
+		t.Fatal("advancing sector counters must register as I/O")
+	}
+}
+
+// TestLastIOProbeDoesNotUseModTime guards the WIRING, not just the counter
+// reader. Testing newIOCounters alone let a revert to the mtime proxy pass
+// unnoticed: the counters were correct and simply not used.
+//
+// The mtime approach was disproved empirically against a real NFS mount — 4 MiB
+// written to an existing file, directory mtime unchanged — so its reappearance
+// in this probe is a regression whatever the counter code says.
+func TestLastIOProbeDoesNotUseModTime(t *testing.T) {
+	src, err := os.ReadFile("service.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(src)
+	i := strings.Index(body, "func lastIOProbe(")
+	if i < 0 {
+		t.Fatal("lastIOProbe is gone; this guard needs updating")
+	}
+	end := strings.Index(body[i:], "\n}")
+	fn := body[i : i+end]
+	if strings.Contains(fn, "ModTime") || strings.Contains(fn, "os.Stat") {
+		t.Fatal("lastIOProbe is reading a file's mtime again. A directory's mtime does " +
+			"not change when a process writes to a file already inside it, so every " +
+			"steady writer reports no I/O — the exact case this answer exists for.")
+	}
+	if !strings.Contains(fn, "Active(") {
+		t.Fatal("lastIOProbe no longer delegates to the I/O counters")
 	}
 }

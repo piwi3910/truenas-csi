@@ -162,12 +162,19 @@ func statfsProbe(path string) error {
 // rewriting one file in place does not move it, so "no I/O observed" means
 // exactly what it says — no evidence, not proof of idleness — and the caller
 // weighs it alongside Connected rather than acting on it alone.
+// defaultIOCounters backs the production LastIO probe.
+var defaultIOCounters = newIOCounters("/host")
+
+// lastIOProbe reports when the volume at path last moved bytes.
+//
+// It reads kernel I/O counters rather than the mount point's mtime. The mtime
+// looks like a reasonable proxy and is not one: verified against a real NFS
+// mount, writing 4 MiB to an existing file left the directory's mtime
+// unchanged, because a directory's mtime tracks entries appearing and
+// disappearing, not writes to files already in it. Every steady writer — a
+// database being the obvious one — would have reported no I/O at all.
 func lastIOProbe(path string) (time.Time, bool) {
-	fi, err := os.Stat(path)
-	if err != nil {
-		return time.Time{}, false
-	}
-	return fi.ModTime(), true
+	return defaultIOCounters.Active(path)
 }
 
 // ValidateVolumeHostConnectivity answers the extension's RPC. Every probe it
