@@ -1,0 +1,26 @@
+device rootfs mounted on / with fstype rootfs
+device /dev/sdc mounted on /var/lib/kubelet/plugins/kubernetes.io/csi/csi.truenas.watteel.com/iscsi/globalmount with fstype ext4
+device 192.168.10.253:/mnt/tank/k8s/pvc-4d7f mounted on /var/lib/kubelet/plugins/kubernetes.io/csi/csi.truenas.watteel.com/nfs/globalmount with fstype nfs4 statvers=1.1
+	opts:	rw,vers=4.2,rsize=131072,wsize=131072,namlen=255,acregmin=3,acregmax=60,hard,proto=tcp,timeo=600,retrans=2,sec=sys
+	age:	3721
+	impl_id:	name='',domain='',date='0,0'
+	caps:	caps=0xf,wtmult=512,dtsize=32768,bsize=0,namlen=255
+	nfsv4:	bm0=0xfdffbfff,bm1=0x40f9be3e,bm2=0x803,acl=0x3,sessions,pnfs=not configured
+	sec:	flavor=1,pseudoflavor=1
+	events:	52 1043 0 0 0 30 4331 0 0 22 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+	bytes:	104857600 52428800 0 0 98566144 50331648 25625 12288
+	RPC iostats version: 1.1  p/v: 100003 (nfs)
+	xprt:	tcp 903 1 6 0 2 1298 1297 0 1332 0 2 0 0
+	per-op statistics
+	        NULL: 1 1 0 44 24 0 0 0 0
+	      GETATTR: 4102 4102 0 700000 900000 8 1230 1400 0
+	        READ: 3125 3125 0 500000 98566144 12 9351 9902 0
+	       WRITE: 1536 1536 0 50331648 245760 55 24010 24880 0
+	      COMMIT: 12 12 0 2400 1440 0 40 44 0
+
+device //192.168.10.253/pvc-9ab1 mounted on /var/lib/kubelet/plugins/kubernetes.io/csi/csi.truenas.watteel.com/smb/globalmount with fstype cifs
+Stats:
+	SMBs: 4123 Oplocks breaks: 0
+	Bytes read: 20971520  Bytes written: 10485760
+	Open files: 3 total (local), 0 open on server
+	TreeConnects: 1 total 0 failed

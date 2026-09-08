@@ -1,0 +1,272 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "graphTooltip": 1,
+  "title": "TrueNAS CSI — per-volume performance",
+  "uid": "truenas-csi-volumes",
+  "tags": ["truenas", "csi", "storage"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {},
+        "hide": 0
+      },
+      {
+        "name": "namespace",
+        "label": "Namespace",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "query": "label_values(truenas_csi_volume_read_bytes_total, namespace)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
+      },
+      {
+        "name": "volume",
+        "label": "PersistentVolume",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "query": "label_values(truenas_csi_volume_read_bytes_total{namespace=~\"$namespace\"}, persistentvolume)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
+      },
+      {
+        "name": "pvc",
+        "label": "PVC (when known)",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "query": "label_values(truenas_csi_volume_read_bytes_total{namespace=~\"$namespace\"}, pvc)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
+      },
+      {
+        "name": "range",
+        "label": "Rate window",
+        "type": "interval",
+        "query": "1m,5m,15m,1h",
+        "current": { "text": "5m", "value": "5m" },
+        "auto": false
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "text",
+      "title": "What these numbers are, and what they are not",
+      "gridPos": { "h": 5, "w": 24, "x": 0, "y": 0 },
+      "options": {
+        "mode": "markdown",
+        "content": "Measured on the **node**, from `/proc/diskstats` (iSCSI, NVMe) and `/proc/self/mountstats` (NFS, SMB) — the TrueNAS appliance publishes no per-dataset or per-zvol series, so there is nothing array-side to poll. Two consequences: **only mounted volumes appear** (an attached-but-unmounted volume reports nothing), and **a volume's series moves between node exporters when its pod reschedules**, which reads as a counter reset on a new series. Always `sum(rate(...))`, never `rate(sum(...))`. SMB reports bytes only — the cifs client counts no operations and no latency. `pvc` is empty unless the PersistentVolume carries the claim name; join on `persistentvolume` with `kube_persistentvolume_claim_ref` to recover it."
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Read IOPS",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 5 },
+      "fieldConfig": {
+        "defaults": { "unit": "iops", "custom": { "fillOpacity": 8 } },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum by (namespace, persistentvolume, pvc, pod) (rate(truenas_csi_volume_read_ops_total{namespace=~\"$namespace\", persistentvolume=~\"$volume\", pvc=~\"$pvc\"}[$range]))",
+          "legendFormat": "{{namespace}}/{{pod}} {{persistentvolume}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Write IOPS",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 5 },
+      "fieldConfig": {
+        "defaults": { "unit": "iops", "custom": { "fillOpacity": 8 } },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum by (namespace, persistentvolume, pvc, pod) (rate(truenas_csi_volume_write_ops_total{namespace=~\"$namespace\", persistentvolume=~\"$volume\", pvc=~\"$pvc\"}[$range]))",
+          "legendFormat": "{{namespace}}/{{pod}} {{persistentvolume}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Read bandwidth",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 13 },
+      "fieldConfig": {
+        "defaults": { "unit": "Bps", "custom": { "fillOpacity": 8 } },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum by (namespace, persistentvolume, pvc, pod) (rate(truenas_csi_volume_read_bytes_total{namespace=~\"$namespace\", persistentvolume=~\"$volume\", pvc=~\"$pvc\"}[$range]))",
+          "legendFormat": "{{namespace}}/{{pod}} {{persistentvolume}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Write bandwidth",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 13 },
+      "fieldConfig": {
+        "defaults": { "unit": "Bps", "custom": { "fillOpacity": 8 } },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum by (namespace, persistentvolume, pvc, pod) (rate(truenas_csi_volume_write_bytes_total{namespace=~\"$namespace\", persistentvolume=~\"$volume\", pvc=~\"$pvc\"}[$range]))",
+          "legendFormat": "{{namespace}}/{{pod}} {{persistentvolume}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Read latency (mean per operation)",
+      "description": "Cumulative time divided by cumulative operations over the same window — the division is done here, in PromQL, because the exporter publishes only the raw counters. Block volumes report device service time; NFS reports RPC round-trip time. SMB reports neither and is absent.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 21 },
+      "fieldConfig": {
+        "defaults": { "unit": "s", "custom": { "fillOpacity": 0 } },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum by (namespace, persistentvolume, pvc, pod) (rate(truenas_csi_volume_read_seconds_total{namespace=~\"$namespace\", persistentvolume=~\"$volume\", pvc=~\"$pvc\"}[$range]))\n/\nsum by (namespace, persistentvolume, pvc, pod) (rate(truenas_csi_volume_read_ops_total{namespace=~\"$namespace\", persistentvolume=~\"$volume\", pvc=~\"$pvc\"}[$range]))",
+          "legendFormat": "{{namespace}}/{{pod}} {{persistentvolume}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Write latency (mean per operation)",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 21 },
+      "fieldConfig": {
+        "defaults": { "unit": "s", "custom": { "fillOpacity": 0 } },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum by (namespace, persistentvolume, pvc, pod) (rate(truenas_csi_volume_write_seconds_total{namespace=~\"$namespace\", persistentvolume=~\"$volume\", pvc=~\"$pvc\"}[$range]))\n/\nsum by (namespace, persistentvolume, pvc, pod) (rate(truenas_csi_volume_write_ops_total{namespace=~\"$namespace\", persistentvolume=~\"$volume\", pvc=~\"$pvc\"}[$range]))",
+          "legendFormat": "{{namespace}}/{{pod}} {{persistentvolume}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Block device utilisation",
+      "description": "The rate of io_ticks: the fraction of wall-clock time the volume's block device had at least one request in flight. Block volumes only; a value approaching 1 means the device is never idle.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 29 },
+      "fieldConfig": {
+        "defaults": { "unit": "percentunit", "max": 1, "min": 0 },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum by (namespace, persistentvolume, pvc, pod) (rate(truenas_csi_volume_io_busy_seconds_total{namespace=~\"$namespace\", persistentvolume=~\"$volume\", pvc=~\"$pvc\"}[$range]))",
+          "legendFormat": "{{namespace}}/{{pod}} {{persistentvolume}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Volumes reporting on each node",
+      "description": "How many volumes each node exporter currently reports. A volume moving between nodes moves its series with it; this panel is where that shows up.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 29 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        {
+          "expr": "count by (node, instance) (truenas_csi_volume_read_bytes_total)",
+          "legendFormat": "{{node}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Capacity exhaustion (from the appliance, collected by the controller)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 37 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Pool free space, with a 7-day linear projection",
+      "description": "The projection is predict_linear over the last 6 hours. It is a straight line through recent history, not a forecast: a pool that has just started filling will be predicted to exhaust far sooner than it will.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 38 },
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "targets": [
+        {
+          "expr": "truenas_pool_free_bytes",
+          "legendFormat": "{{backend}}/{{pool}} free",
+          "refId": "A"
+        },
+        {
+          "expr": "predict_linear(truenas_pool_free_bytes[6h], 7 * 24 * 3600)",
+          "legendFormat": "{{backend}}/{{pool}} in 7 days",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "Datasets projected to exhaust their quota within 7 days",
+      "description": "predict_linear over 6 hours of used bytes, compared with the dataset's provisioned capacity. Dell's CSM ships the same panel; the difference is that these figures cost the appliance one collection a minute rather than a poll per volume.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 38 },
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "options": { "showHeader": true },
+      "targets": [
+        {
+          "expr": "predict_linear(truenas_dataset_used_bytes[6h], 7 * 24 * 3600) >= on (backend, dataset) truenas_dataset_quota_bytes",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Dataset usage against provisioned capacity",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 47 },
+      "fieldConfig": {
+        "defaults": { "unit": "percentunit", "max": 1, "min": 0 },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "truenas_dataset_used_bytes / on (backend, dataset) truenas_dataset_quota_bytes",
+          "legendFormat": "{{backend}} {{dataset}}",
+          "refId": "A"
+        }
+      ]
+    }
+  ]
+}

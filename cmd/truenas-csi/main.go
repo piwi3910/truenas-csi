@@ -243,6 +243,20 @@ func run(o options) error {
 			"timeout", node.DefaultHealthTimeout.String())
 		nd = csi.NewNode(nn)
 
+		// Per-volume performance metrics. They are measured HERE rather than
+		// polled from the appliance because the appliance has no per-dataset or
+		// per-zvol series to poll (verified on hardware; see
+		// internal/obs/volumeio.go). The reader only ever reads procfs, so a
+		// scrape cannot be blocked by a hung mount, and the appliance is not
+		// touched at all.
+		volumeIO := obs.NewVolumeIOCollector(nn.SampleVolumeIO)
+		nn.EnableIOMetrics(volumeIO, podmon.NewIOStats(hostRoot).Sample)
+		if err := obs.RegisterVolumeIO(volumeIO); err != nil {
+			slog.Warn("per-volume I/O metrics disabled", "error", obs.Redact(err.Error()))
+		} else {
+			slog.Info("per-volume I/O metrics enabled", "source", "node kernel counters")
+		}
+
 		// The node self-check answers from the node plugin's own state and its
 		// own bounded probes. It is given a lookup function, not the driver's
 		// client or its socket, so that it keeps answering when the driver it

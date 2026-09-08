@@ -561,6 +561,12 @@ per-zvol or per-pool I/O**:
 appliance; it must be measured node-side from `/proc/diskstats` and
 `/proc/self/mountstats`. Do not go looking for a dataset graph again.
 
+That node-side measurement is now implemented (`internal/podmon/volumeio.go`,
+`internal/obs/volumeio.go`): counters per volume labelled with the PV, pod and
+namespace, exported by the node plugin. Its two inherent limits — only mounted
+volumes are visible, and a volume's series moves between node exporters when its
+pod reschedules — are documented in `docs/metrics.md`.
+
 Request shape is `[[{"name":"cpu"}], {"start":<unix>,"end":<unix>}]` — the window is
 one object, not two positional arguments. Response:
 `[{"name","identifier","data":[[unix_ts, v1, v2, ...], ...]}]`.
@@ -610,12 +616,12 @@ unverified** and needs a run with a LUN actually attached.
 
 Of the 913 documented methods, these are the only per-client session sources:
 
-| Protocol | Method | Notes |
-|---|---|---|
-| iSCSI | `iscsi.global.sessions` | fields `initiator`, `initiator_addr`, `initiator_alias`, `target`, `target_alias`. Returns `[]` with nothing attached; **populated element shape still unverified** |
-| NFS | `nfs.get_nfs4_clients` | the real one for v4 exports; carries `seconds from last renew` |
-| NVMe-oF | `nvmet.global.sessions` | exists on the appliance, **not yet wrapped** in `internal/truenas`, so NVMe-oF cannot be fenced until it is |
-| SMB | **none** | the entire SMB surface is `smb.config/update/bindip_choices/unixcharset_choices` plus `sharing.smb.*`. The older `smb.status` is gone from 25.10. SMB connectivity is therefore *unobservable*, not merely unknown |
+| Protocol | Method                  | Notes                                                                                                                                                                                                              |
+| -------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| iSCSI    | `iscsi.global.sessions` | fields `initiator`, `initiator_addr`, `initiator_alias`, `target`, `target_alias`. Returns `[]` with nothing attached; **populated element shape still unverified**                                                |
+| NFS      | `nfs.get_nfs4_clients`  | the real one for v4 exports; carries `seconds from last renew`                                                                                                                                                     |
+| NVMe-oF  | `nvmet.global.sessions` | exists on the appliance, **not yet wrapped** in `internal/truenas`, so NVMe-oF cannot be fenced until it is                                                                                                        |
+| SMB      | **none**                | the entire SMB surface is `smb.config/update/bindip_choices/unixcharset_choices` plus `sharing.smb.*`. The older `smb.status` is gone from 25.10. SMB connectivity is therefore _unobservable_, not merely unknown |
 
 Consequence for fencing: an SMB volume can never satisfy the fence precondition,
 so an SMB-only pod is never force-deleted. That is the safe direction, but it

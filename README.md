@@ -592,6 +592,8 @@ design more than any other requirement:
 - [docs/security.md](docs/security.md) — least-privilege TrueNAS roles, TLS trust, the
   accepted shared-target risk, and the data-safety model.
 - [docs/troubleshooting.md](docs/troubleshooting.md) — failure modes and their signatures.
+- [docs/metrics.md](docs/metrics.md) — every exported series, where the per-volume figures
+  come from, and what they cannot show.
 
 ## Observability
 
@@ -602,6 +604,30 @@ Prometheus metrics on `metricsAddr` (default `:9090`) and health on `healthAddr`
 `truenas_csi_backend_up` and `truenas_csi_orphaned_volumes`. Label values are bounded to
 method and backend names — a volume ID or a credential never becomes a label. Volume IDs
 appear in log lines instead, so a failing volume can be traced end to end.
+
+### Per-volume performance metrics
+
+Read/write operations, bytes and latency **per volume**, labelled with the PersistentVolume,
+the pod and its namespace — measured on the node, not polled from the appliance. TrueNAS
+publishes no per-dataset or per-zvol series at all (verified on hardware: `reporting`
+exposes 40 graphs, every one appliance-wide or per physical disk), so the numbers come from
+`/proc/diskstats` for iSCSI and NVMe and `/proc/self/mountstats` for NFS and SMB. That costs
+the appliance nothing, where an array-polling design spends its small concurrency budget
+every 10-20 seconds.
+
+    truenas_csi_volume_read_ops_total        truenas_csi_volume_write_ops_total
+    truenas_csi_volume_read_bytes_total      truenas_csi_volume_write_bytes_total
+    truenas_csi_volume_read_seconds_total    truenas_csi_volume_write_seconds_total
+    truenas_csi_volume_io_busy_seconds_total
+
+Every one is a counter carrying the kernel's own cumulative value; latency is cumulative
+time spent, divided by the operation count in PromQL over whatever window you ask for,
+exactly as `node_exporter` models the same fields. Two limitations are inherent to measuring
+node-side and are stated plainly rather than papered over: **only mounted volumes are
+visible**, and **a volume's series moves between node exporters when its pod reschedules**.
+The chart ships a Grafana dashboard (IOPS, bandwidth, latency, and `predict_linear` capacity
+exhaustion from the array metrics) and PodMonitors — see
+[docs/metrics.md](docs/metrics.md).
 
 ### Connectivity health monitoring
 
