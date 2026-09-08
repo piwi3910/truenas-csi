@@ -87,6 +87,39 @@ metricsInterval: "60s"
 #     # CSI sidecars' 30s retry ceiling so a recovered appliance is picked up
 #     # within one sidecar retry.
 #     breakerResetTimeout: ""
+#     # Per-namespace capacity accounting. OFF by default, and enabling it
+#     # changes the dataset layout of every volume created afterwards: a volume
+#     # goes to <pool>/<parentDataset>/<namespace>/<pv-name> instead of
+#     # <pool>/<parentDataset>/<pv-name>, and the namespace dataset carries a
+#     # ZFS quota that the appliance itself enforces.
+#     #
+#     # READ BEFORE ENABLING:
+#     #  * Volumes provisioned BEFORE you enable it stay where they are and are
+#     #    NOT counted against any namespace quota. Their handles are immutable,
+#     #    so nothing can move them. Migrate them (new PVC, copy, delete) if you
+#     #    need them counted.
+#     #  * Disabling it again is safe for existing volumes — their handles keep
+#     #    resolving — but new volumes go back to the flat layout and stop being
+#     #    counted.
+#     #  * The driver must be restarted for a change here to take effect; the
+#     #    hot-reload path refuses it (see controller.restartOnConfigChange).
+#     #  * A volume group snapshot cannot span namespaces: the atomic recursive
+#     #    snapshot needs one common parent dataset.
+#     #  * The scheduler is still told POOL capacity, not namespace capacity —
+#     #    a PVC over its namespace quota binds and then fails provisioning with
+#     #    ResourceExhausted rather than staying Pending. See docs/capacity.md.
+#     namespaceQuotas:
+#       enabled: false
+#       # Quota in bytes for a namespace with no entry below. 0 is unlimited:
+#       # the namespace still gets its own dataset and its own `zfs used`
+#       # figure, but no ceiling.
+#       defaultBytes: 107374182400 # 100 GiB
+#       # Per-namespace overrides. Keys must be real DNS-1123 namespace names;
+#       # a typo is refused at startup rather than silently granting the
+#       # default forever. 0 is an explicit "unlimited".
+#       perNamespace:
+#         team-a: 536870912000 # 500 GiB
+#         kube-system: 0
 backends: {}
 
 # Credential hot-reload
@@ -99,8 +132,8 @@ backends: {}
 #
 # These fields require a RESTART and are refused at runtime, loudly:
 #   endpoint, flavour, pool, parentDataset, the set of backend names,
-#   reservedBytes, reservedPercent, rateLimit, breaker settings,
-#   metricsAddr, healthAddr, metricsInterval.
+#   reservedBytes, reservedPercent, namespaceQuotas, rateLimit, breaker
+#   settings, metricsAddr, healthAddr, metricsInterval.
 #
 # They are identity or startup wiring: every PersistentVolume records which
 # appliance and dataset it lives on, so swapping one in place would silently

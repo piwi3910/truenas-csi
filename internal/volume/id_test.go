@@ -83,7 +83,8 @@ func TestParseIDRejectsMalformed(t *testing.T) {
 	}{
 		{name: "empty string", raw: ""},
 		{name: "three segments", raw: "nas1/nfs/Pool0"},
-		{name: "six segments", raw: "nas1/nfs/Pool0/k8s/a/b"},
+		// Six segments is the namespaced layout and is legal; seven is not.
+		{name: "seven segments", raw: "nas1/nfs/Pool0/k8s/team-a/b/c"},
 		{name: "empty component between separators", raw: "nas1/nfs//k8s/pvc-1"},
 		{name: "empty trailing component", raw: "nas1/nfs/Pool0/k8s/"},
 		{name: "dot component", raw: "nas1/nfs/Pool0/./pvc-1"},

@@ -54,6 +54,11 @@ type Backend struct {
 	// default.
 	BreakerResetTimeout string `yaml:"breakerResetTimeout"`
 
+	// NamespaceQuotas is optional per-Kubernetes-namespace capacity accounting.
+	// It is off by default and changes the dataset layout of every volume
+	// created after it is switched on; see NamespaceQuotas.
+	NamespaceQuotas NamespaceQuotas `yaml:"namespaceQuotas"`
+
 	// CACert, when set, is the only certificate trusted for this appliance.
 	CACert []byte `yaml:"caCert"`
 	// InsecureSkipVerify disables certificate verification. A stock TrueNAS

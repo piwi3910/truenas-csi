@@ -106,6 +106,9 @@ func (b Backend) validate() error {
 	if b.RateLimit < 0 {
 		return fmt.Errorf("rateLimit must not be negative, got %v", b.RateLimit)
 	}
+	if err := b.NamespaceQuotas.validate(); err != nil {
+		return err
+	}
 	if s := strings.TrimSpace(b.BreakerResetTimeout); s != "" {
 		d, err := time.ParseDuration(s)
 		if err != nil || d <= 0 {

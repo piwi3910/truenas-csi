@@ -642,6 +642,9 @@ design more than any other requirement:
 - [docs/security.md](docs/security.md) — least-privilege TrueNAS roles, TLS trust, the
   accepted shared-target risk, and the data-safety model.
 - [docs/troubleshooting.md](docs/troubleshooting.md) — failure modes and their signatures.
+- [docs/namespace-quotas.md](docs/namespace-quotas.md) — optional per-namespace capacity
+  accounting: a ZFS quota per namespace dataset, what it costs to enable, and what it
+  cannot tell the scheduler.
 
 ## Observability
 

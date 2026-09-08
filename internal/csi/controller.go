@@ -129,10 +129,40 @@ func (c *controller) resolveID(name string, params map[string]string) (volume.ID
 			"storage class must set the 'protocol' parameter (nfs or iscsi)")
 	}
 	id := volume.ID{Backend: backendName, Protocol: proto, Pool: b.Pool, Parent: b.ParentDataset, Name: name}
+	id.Namespace = namespaceFor(b, params)
 	if err := volume.Confine(id, b.Pool, b.ParentDataset); err != nil {
 		return volume.ID{}, status.Errorf(codes.InvalidArgument, "%v", err)
 	}
 	return id, nil
+}
+
+// namespaceFor decides which namespace dataset a new volume belongs under, and
+// returns "" for the flat layout.
+//
+// It returns "" in three cases, all of which are ordinary rather than faults:
+// the backend has the feature off; the request carries no namespace at all
+// (csi-sanity, a static provisioner, or a deployment whose external-provisioner
+// runs without --extra-create-metadata); or the namespace is not a name
+// Kubernetes could have produced.
+//
+// That last case is a fallback rather than a refusal on purpose. The parameter
+// map is untrusted and a StorageClass author can write these keys by hand, so
+// the value has to be checked — but failing CreateVolume over it would let
+// anyone with StorageClass edit rights break provisioning, whereas provisioning
+// flat costs only the accounting for that one volume, which is exactly what a
+// deployment without the metadata already gets.
+func namespaceFor(b config.Backend, params map[string]string) string {
+	if !b.NamespaceQuotas.Enabled {
+		return ""
+	}
+	ns := volume.IdentityFrom(params).PVCNamespace
+	if ns == "" {
+		return ""
+	}
+	if err := volume.ValidateNamespace(ns); err != nil {
+		return ""
+	}
+	return ns
 }
 
 func (c *controller) CreateVolume(ctx context.Context, req *csipb.CreateVolumeRequest) (resp *csipb.CreateVolumeResponse, err error) {
@@ -167,6 +197,12 @@ func (c *controller) CreateVolume(ctx context.Context, req *csipb.CreateVolumeRe
 		size = 1 << 30 // 1 GiB default, as CSI permits when no range is given
 	}
 	if err := c.requireRoomOutsideReserve(ctx, id.Backend, size); err != nil {
+		return nil, err
+	}
+	// The namespace's parent dataset has to exist before the volume beneath it
+	// can be created — ZFS will not create intermediate datasets — and its
+	// quota is what makes the refusal below more than bookkeeping.
+	if err := c.requireRoomInNamespaceQuota(ctx, id, size); err != nil {
 		return nil, err
 	}
 	cr := backend.CreateRequest{ID: id, CapacityBytes: size, Params: req.GetParameters()}
@@ -281,7 +317,39 @@ func (c *controller) DeleteVolume(ctx context.Context, req *csipb.DeleteVolumeRe
 	if err := be.Delete(ctx, id); err != nil {
 		return nil, toStatus(err)
 	}
+	c.reclaimNamespaceDataset(ctx, id)
 	return &csipb.DeleteVolumeResponse{}, nil
+}
+
+// reclaimNamespaceDataset removes a namespace's parent dataset once its last
+// volume has gone, so a namespace that existed for an afternoon does not leave
+// an empty dataset behind for ever.
+//
+// It is best-effort by design and never fails the DeleteVolume that triggered
+// it: the volume the CO asked about IS gone, and reporting an error would make
+// the CO retry a delete that has already succeeded. A dataset left behind is
+// visible in the TrueNAS UI and costs nothing; a DeleteVolume stuck in a retry
+// loop blocks the PersistentVolume from being released.
+func (c *controller) reclaimNamespaceDataset(ctx context.Context, id volume.ID) {
+	if id.Namespace == "" {
+		return
+	}
+	cl, err := c.reg.Client(ctx, id.Backend)
+	if err != nil {
+		obs.Logger(ctx).Warn("skipping namespace dataset reclamation: appliance unreachable",
+			"namespace", id.Namespace, "error", obs.Redact(err.Error()))
+		return
+	}
+	deleted, err := backend.ReclaimNamespace(ctx, cl, id.Pool, id.Parent, id.Namespace)
+	if err != nil {
+		obs.Logger(ctx).Warn("namespace dataset was not reclaimed",
+			"namespace", id.Namespace, "error", obs.Redact(err.Error()))
+		return
+	}
+	if !deleted {
+		obs.Logger(ctx).Debug("namespace dataset kept: it still holds datasets",
+			"namespace", id.Namespace)
+	}
 }
 
 func (c *controller) ControllerExpandVolume(ctx context.Context, req *csipb.ControllerExpandVolumeRequest) (resp *csipb.ControllerExpandVolumeResponse, err error) {

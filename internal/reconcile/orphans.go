@@ -75,14 +75,27 @@ func (o *OrphanReconciler) RunOnce(ctx context.Context) ([]string, error) {
 			if !d.Owned(volume.OwnerProperty, volume.OwnerValue) {
 				continue
 			}
+			// A namespace's parent dataset is driver-owned and has no
+			// PersistentVolume by design; reporting it as an orphan would be a
+			// permanent false positive on every scan.
+			if volume.IsNamespaceDataset(d.LocalProperty(volume.NamespaceProperty)) {
+				continue
+			}
 			leaf := d.ID[len(prefix):]
 			fallback := "nfs"
 			if d.Type == "VOLUME" {
 				fallback = "iscsi"
 			}
 			proto := volume.ProtocolOr(d.LocalProperty(volume.ProtocolProperty), fallback)
-			id := volume.ID{Backend: name, Protocol: proto, Pool: b.Pool,
-				Parent: b.ParentDataset, Name: leaf}
+			id, leafErr := volume.IDFromLeaf(name, proto, b.Pool, b.ParentDataset, leaf)
+			if leafErr != nil {
+				// Reporting a handle for a dataset at a depth this driver never
+				// creates would name the wrong thing; an operator investigating
+				// gets the dataset path in the log instead.
+				obs.Logger(ctx).Warn("orphan scan skipping a driver-owned dataset at an unexpected depth",
+					"dataset", d.ID, "error", leafErr)
+				continue
+			}
 			if _, live := handles[id.String()]; live {
 				continue
 			}
