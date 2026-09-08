@@ -106,6 +106,29 @@ rules:
     resources: ["volumeattachments"]
     verbs: ["delete"]
   {{- end }}
+  {{- if .Values.replication.enabled }}
+  # StorageProtectionGroup reconciliation, rendered only when replication is on.
+  #
+  # The reconciler watches the groups and writes their status; it never creates
+  # or deletes one, because a group is authored by an operator and its lifecycle
+  # is theirs. finalizers is separate from status on purpose: controller-runtime
+  # needs it to add and remove the finalizer that stops a group vanishing while
+  # its appliance-side tasks still exist.
+  - apiGroups: ["replication.truenas.io"]
+    resources: ["storageprotectiongroups"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: ["replication.truenas.io"]
+    resources: ["storageprotectiongroups/status"]
+    verbs: ["get", "update", "patch"]
+  - apiGroups: ["replication.truenas.io"]
+    resources: ["storageprotectiongroups/finalizers"]
+    verbs: ["update"]
+  # controller-runtime's leader election needs its own Lease, distinct from the
+  # fencing and metrics ones: three independent elections, three leases.
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  {{- end }}
   {{- if .Values.snapshotter.enabled }}
   - apiGroups: ["snapshot.storage.k8s.io"]
     resources: ["volumesnapshotclasses"]

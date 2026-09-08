@@ -106,3 +106,10 @@ imagePullSecrets:
 {{- toYaml . | nindent 2 }}
 {{- end }}
 {{- end -}}
+
+{{/* replicationLeaseName is the Lease electing the ONE controller replica that
+reconciles StorageProtectionGroups. Distinct from the fencing and metrics
+leases: three independent elections, and a replica may hold any subset. */}}
+{{- define "truenas-csi.replicationLeaseName" -}}
+{{- .Values.replication.lease | default (printf "%s-replication" (include "truenas-csi.fullname" .)) -}}
+{{- end }}

@@ -1,0 +1,45 @@
+{{- if .Values.replication.enabled }}
+# The StorageProtectionGroup CRD.
+#
+# WHY THIS IS A TEMPLATE AND NOT A FILE IN crds/.
+#
+# Helm treats the chart's crds/ directory as install-once: it is applied on
+# `helm install` and then NEVER upgraded, never patched and never deleted.
+# For a v1alpha1 API that is still changing, that is the worst possible
+# failure — an operator upgrades the chart, gets a driver that writes new
+# status fields, and the API server silently prunes every one of them against
+# the old schema. No error, no event, just fields that vanish. Rendering it as
+# a template means `helm upgrade` upgrades the schema with the driver that
+# depends on it.
+#
+# THE TRADEOFF, and how it is handled: a templated CRD is release-managed, so
+# `helm uninstall` would delete it — and deleting a CRD deletes every
+# StorageProtectionGroup in the cluster with it, without asking. The
+# resource-policy annotation below opts this one object out of deletion, which
+# leaves the honest end state: upgrades are managed, uninstalls leave the CRD
+# and the groups behind for a person to remove deliberately with
+#
+#   kubectl delete crd storageprotectiongroups.replication.truenas.io
+#
+# It is gated on replication.enabled for the same reason as the RBAC below: an
+# install that never reconciles these objects should not teach the cluster's
+# API server about a kind nothing serves.
+#
+# The body is read verbatim from files/crds/ so this template and the manifest
+# an operator can `kubectl apply` by hand cannot drift apart.
+{{- $crd := .Files.Get "files/crds/replication.truenas.io_storageprotectiongroups.yaml" | fromYaml }}
+{{- if not $crd }}
+{{- fail "files/crds/replication.truenas.io_storageprotectiongroups.yaml is missing or unparseable" }}
+{{- end }}
+apiVersion: {{ $crd.apiVersion }}
+kind: {{ $crd.kind }}
+metadata:
+  name: {{ $crd.metadata.name }}
+  labels:
+    {{- include "truenas-csi.labels" . | nindent 4 }}
+    app.kubernetes.io/component: replication
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  {{- toYaml $crd.spec | nindent 2 }}
+{{- end }}

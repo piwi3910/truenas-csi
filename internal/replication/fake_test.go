@@ -492,7 +492,7 @@ type appliances struct {
 	backends map[string]config.Backend
 }
 
-func (a *appliances) Client(_ context.Context, name string) (*truenas.Client, error) {
+func (a *appliances) Client(_ context.Context, name string) (truenas.API, error) {
 	c, ok := a.clients[name]
 	if !ok {
 		return nil, fmt.Errorf("no such backend %q", name)

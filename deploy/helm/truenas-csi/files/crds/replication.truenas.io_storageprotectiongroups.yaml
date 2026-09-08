@@ -1,0 +1,205 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: storageprotectiongroups.replication.truenas.io
+spec:
+  group: replication.truenas.io
+  scope: Namespaced
+  names:
+    kind: StorageProtectionGroup
+    listKind: StorageProtectionGroupList
+    plural: storageprotectiongroups
+    singular: storageprotectiongroup
+    shortNames:
+      - spg
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Source
+          type: string
+          jsonPath: .spec.sourceBackend
+        - name: Target
+          type: string
+          jsonPath: .spec.targetBackend
+        - name: Phase
+          type: string
+          jsonPath: .status.phase
+        - name: Task
+          type: string
+          jsonPath: .status.taskState
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      schema:
+        openAPIV3Schema:
+          type: object
+          description: >-
+            A set of driver-managed volumes replicated from one TrueNAS
+            appliance to another. Every member must be a dataset this driver
+            created: a replication task overwrites its target, so a group naming
+            anything else is refused.
+          properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
+            spec:
+              type: object
+              required:
+                - sourceBackend
+                - targetBackend
+                - volumeHandles
+                - sshCredentialID
+              properties:
+                sourceBackend:
+                  type: string
+                  description: Configured appliance holding the volumes.
+                targetBackend:
+                  type: string
+                  description: Configured appliance receiving the replicas.
+                volumeHandles:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: string
+                  description: >-
+                    CSI volume handles to protect. Each must name a dataset this
+                    driver created.
+                sshCredentialID:
+                  type: integer
+                  description: >-
+                    TrueNAS keychain credential (type SSH_CREDENTIALS) on the
+                    source appliance describing the target.
+                reverseSSHCredentialID:
+                  type: integer
+                  description: >-
+                    Credential on the target describing the source. Required for
+                    failback.
+                schedule:
+                  type: object
+                  properties:
+                    minute:
+                      type: string
+                    hour:
+                      type: string
+                    dayOfMonth:
+                      type: string
+                    month:
+                      type: string
+                    dayOfWeek:
+                      type: string
+                retention:
+                  type: object
+                  required:
+                    - value
+                    - unit
+                  properties:
+                    value:
+                      type: integer
+                      minimum: 1
+                    unit:
+                      type: string
+                      enum: [HOUR, DAY, WEEK, MONTH, YEAR]
+                action:
+                  type: string
+                  description: >-
+                    One-shot operation. The controller records the generation it
+                    acted on, so a resync never repeats it.
+                  enum:
+                    - ""
+                    - Failover
+                    - TestFailover
+                    - StopTestFailover
+                    - Failback
+                    - Suspend
+                    - Resume
+                    - CreateRemoteVolumes
+                force:
+                  type: boolean
+                  description: >-
+                    Override a refusal. Read status.message first — every
+                    refusal states exactly what it refused and why.
+                deleteTargetDatasets:
+                  type: boolean
+                  description: >-
+                    Destroy the replicated datasets when the group is deleted.
+                    Datasets this driver did not create are always refused.
+            status:
+              type: object
+              properties:
+                observedGeneration:
+                  type: integer
+                  format: int64
+                phase:
+                  type: string
+                message:
+                  type: string
+                replicationTaskID:
+                  type: integer
+                taskState:
+                  type: string
+                suspended:
+                  type: boolean
+                testFailoverActive:
+                  type: boolean
+                lastAction:
+                  type: string
+                lastActionGeneration:
+                  type: integer
+                  format: int64
+                snapshotTaskIDs:
+                  type: object
+                  additionalProperties:
+                    type: integer
+                volumes:
+                  type: array
+                  items:
+                    type: object
+                    required:
+                      - handle
+                    properties:
+                      handle:
+                        type: string
+                      remoteDataset:
+                        type: string
+                      failoverSnapshot:
+                        type: string
+                      testFailoverDataset:
+                        type: string
+                conditions:
+                  type: array
+                  items:
+                    type: object
+                    required:
+                      - lastTransitionTime
+                      - message
+                      - reason
+                      - status
+                      - type
+                    properties:
+                      lastTransitionTime:
+                        type: string
+                        format: date-time
+                      message:
+                        type: string
+                        maxLength: 32768
+                      observedGeneration:
+                        type: integer
+                        format: int64
+                        minimum: 0
+                      reason:
+                        type: string
+                        maxLength: 1024
+                        minLength: 1
+                      status:
+                        type: string
+                        enum: ["True", "False", "Unknown"]
+                      type:
+                        type: string
+                        maxLength: 316

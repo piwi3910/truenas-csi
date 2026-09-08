@@ -428,6 +428,22 @@ storageClasses:
 # decision. bindAddress stays on the loopback address unless you deliberately
 # expose it — the node DaemonSet runs with hostNetwork, so 0.0.0.0 here means
 # every pod and every host on the node's network can query it.
+# replication reconciles StorageProtectionGroup objects: ZFS replication between
+# two configured appliances, with failover, failback and a rehearsal failover.
+#
+# Off by default, and the lease is not optional when it is on. Reconciling a
+# group promotes and demotes appliances; two replicas doing that concurrently
+# would each act on a group the other had just moved. The driver refuses to
+# start the reconciler without a lease for that reason.
+#
+# Enabling this also installs the StorageProtectionGroup CRD -- see
+# templates/replication-crd.yaml for why it is a template rather than a file in
+# crds/, and what that means for `helm uninstall`.
+replication:
+  enabled: false
+  # Name of the Lease electing the single reconciling replica.
+  lease: truenas-csi-replication
+
 podmon:
   enabled: false
   port: 9820

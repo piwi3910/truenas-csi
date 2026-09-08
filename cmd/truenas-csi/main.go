@@ -36,6 +36,24 @@ import (
 )
 
 func main() {
+	// Administrative subcommands are dispatched BEFORE the driver's flags are
+	// defined or parsed, so the driver's own invocation is untouched: every
+	// subcommand is a bare word and every driver argument starts with a dash,
+	// so the two can never be confused.
+	if handled, err := dispatchSubcommand(os.Args[1:]); handled {
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	flag.Usage = func() {
+		_, _ = fmt.Fprintf(flag.CommandLine.Output(), "Usage of %s:\n", os.Args[0])
+		flag.PrintDefaults()
+		_, _ = fmt.Fprint(flag.CommandLine.Output(), subcommandHelp())
+	}
+
 	var (
 		mode       = flag.String("mode", "", "which plugin to run: controller or node")
 		endpoint   = flag.String("endpoint", "unix:///csi/csi.sock", "CSI socket endpoint")
@@ -58,6 +76,11 @@ func main() {
 			"how often the fencing controller sweeps the opted-in pods")
 		logConfig = flag.String("log-config", "", "path to a mounted logging ConfigMap holding logLevel and "+
 			"logFormat, re-read live; empty disables dynamic logging")
+		replicationLease = flag.String("replication-lease", "",
+			"name of the Lease electing the single controller replica that reconciles "+
+				"StorageProtectionGroups; empty disables replication. Reconciling a group "+
+				"promotes and demotes appliances, so two replicas doing it concurrently would "+
+				"each act on a group the other had just moved")
 		metricsLease = flag.String("metrics-lease", "",
 			"name of the Lease electing the single controller replica that polls the appliance for "+
 				"array metrics; empty means every replica polls, multiplying load against the "+
@@ -76,17 +99,18 @@ func main() {
 		os.Exit(1)
 	}
 	if err := run(options{
-		mode:            *mode,
-		endpoint:        *endpoint,
-		configPath:      *configPath,
-		nodeID:          *nodeID,
-		hostRoot:        *hostRoot,
-		podmonAddr:      *podmonAddr,
-		fencingLabel:    *fencingLabel,
-		fencingLease:    *fencingLease,
-		fencingInterval: *fencingInterval,
-		logConfig:       *logConfig,
-		metricsLease:    *metricsLease,
+		mode:             *mode,
+		endpoint:         *endpoint,
+		configPath:       *configPath,
+		nodeID:           *nodeID,
+		hostRoot:         *hostRoot,
+		podmonAddr:       *podmonAddr,
+		fencingLabel:     *fencingLabel,
+		fencingLease:     *fencingLease,
+		fencingInterval:  *fencingInterval,
+		logConfig:        *logConfig,
+		metricsLease:     *metricsLease,
+		replicationLease: *replicationLease,
 	}); err != nil {
 		slog.Error("driver exited", "error", obs.Redact(err.Error()))
 		os.Exit(1)
@@ -112,6 +136,10 @@ type options struct {
 	// fencingLabel is the opt-in pod label; empty disables fencing. fencingLease
 	// elects the one replica allowed to fence, and is mandatory when fencing is
 	// on. fencingInterval is the sweep period.
+	// replicationLease elects the one replica that reconciles
+	// StorageProtectionGroups. Empty disables replication entirely.
+	replicationLease string
+
 	fencingLabel    string
 	fencingLease    string
 	fencingInterval time.Duration
@@ -217,6 +245,11 @@ func run(o options) error {
 		// The consumer. Off unless an operator opted in, and refused outright
 		// without a lease: see startFencing.
 		startFencing(ctx, o, reg, nodes, conn)
+
+		// StorageProtectionGroup reconciliation. It lives here rather than in
+		// the operator because the replication manager needs appliance clients,
+		// and those credentials exist only in this pod.
+		startReplication(ctx, o, reg)
 		obs.MarkReady()
 
 	case "node":

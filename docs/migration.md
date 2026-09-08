@@ -7,6 +7,30 @@ hand-copying data between mounts.
 
 It is implemented in `internal/migration`.
 
+## Running it
+
+```sh
+# Plans and prints. Changes nothing.
+truenas-csi migrate -namespace apps -source old-claim -target new-claim
+
+# Performs the copy. -confirm must repeat the target's name.
+truenas-csi migrate -namespace apps -source old-claim -target new-claim \
+  -apply -confirm new-claim
+```
+
+Two separate gates on purpose. `-apply` alone is not enough: `-confirm` has to
+repeat the target claim's name, so a command recalled from shell history cannot
+run against a different claim than the one it was written for. Without `-apply`
+the command is a dry run and prints the plan it would execute.
+
+Ownership is not re-checked by the command. `internal/migration` refuses any
+volume this driver does not own, by the same `io.truenas.csi:managed` property
+with `source == LOCAL` that every destructive path here checks — a second,
+looser check in the CLI would be a second answer to the same question.
+
+The copy runs as a Kubernetes Job, so the command needs cluster access as well
+as the driver configuration.
+
 ## What it does, and what it does not do
 
 Migration copies **data**. It does not:

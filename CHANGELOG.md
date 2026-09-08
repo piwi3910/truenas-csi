@@ -3,6 +3,38 @@
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project uses [semantic versioning](https://semver.org/).
 
+## [0.1.3] - 2026-09-08
+
+### Fixed
+
+- **Replication now actually runs** (#10). `StorageProtectionGroup` could be
+  applied and nothing would ever reconcile it: no binary constructed the
+  reconciler, and the chart never installed the CRD. The reconciler starts in
+  the driver's controller pod behind `replication.enabled`, leader-elected,
+  because the replication manager needs appliance clients that exist only in
+  that pod. `Appliances.Client` also returned `*truenas.Client` while the
+  registry hands out a `truenas.API`, so the interface its own comment claimed
+  the registry satisfied could not be implemented by it — part of why this was
+  never wired.
+- **Pool administration and volume migration are reachable** (#11), as
+  `truenas-csi pool status|disks|alerts` and `truenas-csi migrate`. Both were
+  implemented, tested and documented with no binary exposing them. Migration
+  plans by default and needs `-apply` plus a `-confirm` repeating the target
+  claim's name.
+
+### Added
+
+- A CI check that fails when any `internal/` package has no non-test importer
+  (#12). Three features shipped unreachable this week, one of which made every
+  PVC unschedulable; `golangci-lint`'s `unused` cannot see this class, because
+  it reports only unexported symbols.
+
+### Changed
+
+- `go.work` no longer claims controller-runtime is kept out of the driver's
+  build. It is in it, for the replication reconciler, and the comment now says
+  so along with the cost and the alternative.
+
 ## [0.1.2] - 2026-09-08
 
 ### Fixed
@@ -123,6 +155,7 @@ Not applicable — this is the first release. Note for later: `attachRequired` o
 the CSIDriver object is immutable, so any future change to it requires the
 object to be recreated.
 
+[0.1.3]: https://github.com/piwi3910/truenas-csi/releases/tag/v0.1.3
 [0.1.2]: https://github.com/piwi3910/truenas-csi/releases/tag/v0.1.2
 [0.1.1]: https://github.com/piwi3910/truenas-csi/releases/tag/v0.1.1
 [0.1.0]: https://github.com/piwi3910/truenas-csi/releases/tag/v0.1.0

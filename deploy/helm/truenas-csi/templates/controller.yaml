@@ -116,6 +116,13 @@ spec:
             - -fencing-lease={{ include "truenas-csi.fencingLeaseName" . }}
             - -fencing-interval={{ .Values.fencing.interval }}
             {{- end }}
+            {{- if .Values.replication.enabled }}
+            # StorageProtectionGroup reconciliation. The lease elects the single
+            # replica allowed to reconcile: promoting and demoting appliances
+            # concurrently from two replicas would have each act on a group the
+            # other had just moved. The driver refuses to start without it.
+            - -replication-lease={{ include "truenas-csi.replicationLeaseName" . }}
+            {{- end }}
           env:
             - name: CSI_ENDPOINT
               value: unix:///csi/csi.sock

@@ -14,8 +14,15 @@ import (
 
 // Appliances is the set of configured TrueNAS appliances. *backend.Registry
 // satisfies it; the tests supply a two-appliance stand-in.
+//
+// Client returns the API interface rather than *truenas.Client so the registry
+// really does satisfy this, which it did not: the registry hands out a
+// truenas.API, so this interface as written could never be implemented by the
+// thing its own comment named. That mismatch is one reason the reconciler was
+// never wired into a binary -- it would not have compiled. Replication uses
+// only CallJSON, which the interface exposes.
 type Appliances interface {
-	Client(ctx context.Context, name string) (*truenas.Client, error)
+	Client(ctx context.Context, name string) (truenas.API, error)
 	Backend(name string) (config.Backend, error)
 }
 
@@ -136,7 +143,7 @@ func (m *Manager) roots(g Group) (srcRoot, dstRoot string, err error) {
 	return srcCfg.Pool + "/" + srcCfg.ParentDataset, dstCfg.Pool + "/" + dstCfg.ParentDataset, nil
 }
 
-func (m *Manager) clients(ctx context.Context, g Group) (src, dst *truenas.Client, err error) {
+func (m *Manager) clients(ctx context.Context, g Group) (src, dst truenas.API, err error) {
 	src, err = m.appliances.Client(ctx, g.SourceBackend)
 	if err != nil {
 		return nil, nil, err

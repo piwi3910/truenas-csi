@@ -1,7 +1,16 @@
-// The operator is a separate module so that controller-runtime, the Helm SDK
-// and their transitive dependency trees never enter the driver's build. The
-// driver ships in a container that mounts a node's block devices; every
-// dependency it does not have is one that cannot be a vulnerability there.
+// The operator is a separate module to keep the Helm SDK and its transitive
+// dependency tree out of the driver's build. The driver ships in a container
+// that mounts a node's block devices; every dependency it does not have is one
+// that cannot be a vulnerability there.
+//
+// This comment used to claim controller-runtime was excluded too. It is not,
+// and saying so was worse than not saying it: the driver requires
+// controller-runtime for the StorageProtectionGroup reconciler, which runs in
+// the driver's controller pod because the replication manager needs appliance
+// clients and those credentials exist nowhere else. The same binary serves node
+// mode, so that dependency does reach the node image -- a real cost, accepted
+// deliberately rather than denied. Moving the reconciler to the operator would
+// remove it, at the price of the operator becoming mandatory for replication.
 //
 // This workspace ties the two together for local development, so an edit to the
 // driver's types is seen by the operator without a replace directive or a

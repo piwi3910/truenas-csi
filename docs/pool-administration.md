@@ -7,6 +7,38 @@ UI.
 
 It is implemented in `internal/pooladmin`.
 
+## Running it
+
+The driver's own binary carries the commands, so the image you already run is
+the only thing needed:
+
+```sh
+truenas-csi pool status   -config /etc/truenas-csi/config.yaml
+truenas-csi pool disks    -config /etc/truenas-csi/config.yaml
+truenas-csi pool alerts   -config /etc/truenas-csi/config.yaml
+```
+
+```
+nas1 — pools
+NAME   STATUS  HEALTHY  SIZE     FREE     USED%  FRAG%  SCRUB
+Pool0  ONLINE  true     65.5TiB  40.8TiB  38     32     FINISHED
+```
+
+`-backend <name>` limits the report to one appliance; without it every
+configured backend is reported. `-json` emits the same data for a script.
+
+Inside the cluster, run it in the controller pod, which already has the
+configuration mounted:
+
+```sh
+kubectl exec -n truenas-csi deploy/truenas-csi-controller -c truenas-csi -- \
+  truenas-csi pool status
+```
+
+Credentials come from the configuration file and never from an argument: an API
+key in a process argument list is readable through `/proc` by every process on
+the host, and this binary runs on nodes.
+
 ## Strictly read-only
 
 This package **never issues a mutating middleware call**. It does not start a
