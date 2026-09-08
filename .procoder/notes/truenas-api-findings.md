@@ -624,3 +624,41 @@ must be stated rather than discovered.
 `nfs.config` exposes no lease-period field. The NFSv4 lease is assumed to be the
 90s default and `DefaultStaleLeaseAfter` is 2x that; confirm with
 `/proc/fs/nfsd/nfsv4leasetime` on the appliance and raise it if that differs.
+
+## The NFS fence, verified end to end (2026-09-08, live appliance)
+
+Driving the real controller against the appliance and reading the export back
+after each step:
+
+    at create      hosts=["192.0.2.1"]                     networks=[]
+    after publish  hosts=["192.0.2.1", "192.168.10.212",
+                          "fd6e:ee75:...:5198"]            networks=[]
+    after fence    hosts=["192.0.2.1"]                     networks=[]
+
+Three things this establishes:
+
+1. **A volume is created already fenced.** There is no window between provision
+   and first attach in which the export is open.
+2. **`ControllerUnpublishVolume` really revokes.** The node's addresses are gone
+   from the appliance's own access list, not merely from driver bookkeeping.
+3. **The unroutable deny host is always present and `networks` is always empty**,
+   so the "both lists empty means exported to everyone" state is never reached.
+
+IPv6 node addresses are granted alongside IPv4 without special handling.
+
+### Consequence for the node-side e2e tests
+
+`test/integration/e2e_test.go` mounts from a cluster node **without** calling
+`ControllerPublishVolume`, which used to work because exports were created open.
+Against the fence the server answers such a client with a bare
+
+    mount.nfs: ... failed, reason given by server: No such file or directory
+
+which is an NFS server refusing to admit the export exists to a host that is not
+in its access list — not a missing dataset. Those tests must publish first.
+
+Note this needs a node resolver that can see real Node objects:
+`LocalNodeResolver` returns *this process's* interface addresses, so publishing
+from a laptop grants the laptop and the cluster node still cannot mount. That is
+correct and safe, and it is why `csi.NewController` needs the resolver to be
+injectable for the node-side suite to run outside the cluster.
