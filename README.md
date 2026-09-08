@@ -346,15 +346,22 @@ sector size when its block size is smaller). It is not purely a performance knob
 |           | ReadWriteOnce | ReadOnlyMany | ReadWriteMany | ReadWriteOncePod | Block volumeMode |
 | --------- | ------------- | ------------ | ------------- | ---------------- | ---------------- |
 | **NFS**   | yes           | yes          | **yes**       | yes              | no               |
+| **SMB**   | yes           | yes          | **yes**       | yes              | no               |
 | **iSCSI** | yes           | no           | **no**        | yes              | yes              |
 | **NVMe**  | yes           | no           | **no**        | yes              | yes              |
 
+The dividing line is not the protocol name, it is **shared filesystem versus raw block**.
+NFS and SMB are filesystems a server owns and arbitrates, so serving one to many clients at
+once is their designed use. iSCSI and NVMe-oF hand out a byte range, and the filesystem on
+it lives in each client's kernel.
+
 **iSCSI is single-node by nature.** A volume is one zvol exported as one block device; two
 nodes writing the same block device with independent page caches and a non-cluster
-filesystem corrupts it. `ReadWriteMany` is not offered for iSCSI, and no clustered
-filesystem is provided.
+filesystem corrupts it. `ReadWriteMany` is not offered for iSCSI or NVMe-oF, and no
+clustered filesystem is provided.
 
-NFS supports `ReadWriteMany` because the export is a filesystem with server-side locking.
+NFS and SMB support `ReadWriteMany` because the export is a filesystem with server-side
+locking.
 Prefer NFSv4: v3 needs the separate lock manager (`rpc-statd`) on every node and its
 stateless locking interacts badly with pod rescheduling.
 

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	csipb "github.com/container-storage-interface/spec/lib/go/csi"
@@ -17,11 +18,78 @@ import (
 
 type nodeServer struct {
 	csipb.UnimplementedNodeServer
-	n *node.Node
+	n         *node.Node
+	published *publishedTargets
 }
 
 // NewNode adapts the node data path to the CSI gRPC surface.
-func NewNode(n *node.Node) csipb.NodeServer { return &nodeServer{n: n} }
+func NewNode(n *node.Node) csipb.NodeServer {
+	return &nodeServer{n: n, published: newPublishedTargets()}
+}
+
+// publishedTargets records where each volume is currently published on THIS
+// node, which is what makes SINGLE_NODE_SINGLE_WRITER enforceable.
+//
+// That access mode means one writer, in one workload, on one node — so a second
+// NodePublishVolume of the same volume to a different target path has to be
+// refused, and the plugin is the only participant that sees both target paths.
+// Advertising SINGLE_NODE_MULTI_WRITER without this would be claiming an
+// enforcement nobody performs.
+//
+// The record is in memory, and deliberately so: it describes mounts this
+// process made, and it is rebuilt by the kubelet's own reconciliation, which
+// re-issues NodePublishVolume for every mounted volume after a plugin restart.
+// A file would have to be found again from a NodeUnpublishVolume request that
+// carries nothing but a volume id and a target path, which is exactly the
+// information this map is keyed by.
+type publishedTargets struct {
+	mu sync.Mutex
+	// byVolume maps a volume id to the access mode each target path was
+	// published under.
+	byVolume map[string]map[string]csipb.VolumeCapability_AccessMode_Mode
+}
+
+func newPublishedTargets() *publishedTargets {
+	return &publishedTargets{byVolume: map[string]map[string]csipb.VolumeCapability_AccessMode_Mode{}}
+}
+
+// reserve records a publication, or names the target path that forbids it.
+//
+// Republishing the same target path is always allowed: the CO retries
+// NodePublishVolume freely and the call is required to be idempotent.
+func (p *publishedTargets) reserve(volumeID, target string, mode csipb.VolumeCapability_AccessMode_Mode) (string, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	for existing, existingMode := range p.byVolume[volumeID] {
+		if existing == target {
+			continue
+		}
+		// Either side of the pair is enough to forbid it: a volume already
+		// mounted as a single writer must not gain a second mount, and a
+		// request for single-writer access must not be granted next to a mount
+		// that already exists.
+		if mode == csipb.VolumeCapability_AccessMode_SINGLE_NODE_SINGLE_WRITER ||
+			existingMode == csipb.VolumeCapability_AccessMode_SINGLE_NODE_SINGLE_WRITER {
+			return existing, false
+		}
+	}
+	if p.byVolume[volumeID] == nil {
+		p.byVolume[volumeID] = map[string]csipb.VolumeCapability_AccessMode_Mode{}
+	}
+	p.byVolume[volumeID][target] = mode
+	return "", true
+}
+
+// release forgets one publication.
+func (p *publishedTargets) release(volumeID, target string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	delete(p.byVolume[volumeID], target)
+	if len(p.byVolume[volumeID]) == 0 {
+		delete(p.byVolume, volumeID)
+	}
+}
 
 // stageRecordPath is where the publish context is remembered for unstage.
 //
@@ -123,6 +191,14 @@ func (s *nodeServer) NodeGetCapabilities(context.Context, *csipb.NodeGetCapabili
 		// signal, now its own RPC. Advertising it is what makes the CO ask;
 		// without it the driver's health monitor would talk to nobody.
 		rpc(csipb.NodeServiceCapability_RPC_GET_VOLUME_HEALTH),
+		// SINGLE_NODE_MULTI_WRITER is the node-side half of the same
+		// declaration the controller makes: the plugin understands the
+		// SINGLE_NODE_SINGLE_WRITER and SINGLE_NODE_MULTI_WRITER access modes
+		// and mounts them correctly — one node, and the mount is shared between
+		// the pods on it, which is what capOf already does with them. Both
+		// halves are needed; a CO that sees only one keeps using the legacy
+		// modes.
+		rpc(csipb.NodeServiceCapability_RPC_SINGLE_NODE_MULTI_WRITER),
 	}}, nil
 }
 
@@ -196,6 +272,15 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csipb.NodePubli
 		return nil, status.Error(codes.InvalidArgument, "volume capability is required")
 	}
 	ctx = obs.WithVolume(ctx, req.GetVolumeId())
+	// The single-writer rule is checked before anything is mounted: a refusal
+	// that happened after the mount would have already granted the access it
+	// was meant to withhold.
+	if other, ok := s.published.reserve(req.GetVolumeId(), req.GetTargetPath(),
+		req.GetVolumeCapability().GetAccessMode().GetMode()); !ok {
+		return nil, status.Errorf(codes.FailedPrecondition,
+			"volume %s is already published at %s with single-writer access and cannot also be published at %s",
+			req.GetVolumeId(), other, req.GetTargetPath())
+	}
 	pc := mergeCtx(req.GetVolumeContext(), req.GetPublishContext())
 	if len(pc) == 0 {
 		pc = readStageRecord(req.GetStagingTargetPath())
@@ -208,6 +293,9 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csipb.NodePubli
 		VolumeCapability: capOf(req.GetVolumeCapability()),
 		Readonly:         req.GetReadonly(),
 	}); err != nil {
+		// The reservation goes back: nothing was published, so nothing may be
+		// left blocking a later publish elsewhere on this node.
+		s.published.release(req.GetVolumeId(), req.GetTargetPath())
 		return nil, nodeErr(err)
 	}
 	// Also record it against the target path: NodeExpandVolume is called with
@@ -232,6 +320,7 @@ func (s *nodeServer) NodeUnpublishVolume(ctx context.Context, req *csipb.NodeUnp
 	}); err != nil {
 		return nil, nodeErr(err)
 	}
+	s.published.release(req.GetVolumeId(), req.GetTargetPath())
 	_ = os.Remove(stageRecordPath(req.GetTargetPath()))
 	return &csipb.NodeUnpublishVolumeResponse{}, nil
 }

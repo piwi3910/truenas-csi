@@ -245,6 +245,13 @@ csidriver:
   # adopts the mapping it already has rather than making a second one, so no
   # running workload has to be restarted to migrate it.
   attachRequired: true
+  # There is no `ephemeral` switch here on purpose. CSI inline (Ephemeral)
+  # volumes are provisioned in NodePublishVolume with no controller involvement,
+  # so they would bypass the pool reserve, the publish ledger and — the reason
+  # it is not a tunable — the fence, which lives in ControllerUnpublishVolume
+  # and is never called for a volume the controller never published. The
+  # reasoning is spelled out in templates/csidriver.yaml; use a generic
+  # ephemeral volume (a PVC with the pod's lifetime) instead.
   podInfoOnMount: true
   storageCapacity: true
   fsGroupPolicy: File
