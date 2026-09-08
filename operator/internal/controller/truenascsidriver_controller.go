@@ -20,7 +20,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -112,7 +112,7 @@ type TrueNASCSIDriverReconciler struct {
 	// Recorder publishes events on the TrueNASCSIDriver. A refusal that exists
 	// only as a status condition is easy to miss; `kubectl describe` and every
 	// event-scraping alert pipeline see an event. Nil disables events.
-	Recorder record.EventRecorder
+	Recorder events.EventRecorder
 	// UpgradeTable declares which driver versions may be reached from which.
 	// Nil means the table this operator ships; the field exists so the refusal
 	// branches can be tested against a table with more than one release in it.
@@ -131,7 +131,13 @@ type TrueNASCSIDriverReconciler struct {
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;delete
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=persistentvolumes;persistentvolumeclaims,verbs=get;list;watch
+// The events.k8s.io group is what the CURRENT events API writes to; the core
+// group is kept because a cluster's own aggregation and some tooling still read
+// events there, and because dropping it would silently stop any code path still
+// on the old recorder. Getting this wrong has no error: events simply never
+// appear, and a refusal that exists only in a status condition is easy to miss.
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=apps,resources=deployments;daemonsets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles;clusterrolebindings;roles;rolebindings,verbs=get;list;watch;create;update;patch;delete;escalate;bind
 // +kubebuilder:rbac:groups=storage.k8s.io,resources=csidrivers;storageclasses,verbs=get;list;watch;create;update;patch;delete
@@ -366,7 +372,12 @@ func (r *TrueNASCSIDriverReconciler) event(cr *truenasv1alpha1.TrueNASCSIDriver,
 	if r.Recorder == nil {
 		return
 	}
-	r.Recorder.Event(cr, eventType, reason, message)
+	// The new events API needs an `action`: what the reporting controller did,
+	// distinct from `reason` (why). The reason is already a verb-ish constant
+	// like UpgradeNotSupported, so the action is the operation it happened
+	// during, which is what makes an event greppable by what the operator was
+	// attempting.
+	r.Recorder.Eventf(cr, nil, eventType, reason, "Reconcile", "%s", message)
 }
 
 // chartValues returns the chart's own default values, which is where the CSI
@@ -409,7 +420,7 @@ func (r *TrueNASCSIDriverReconciler) resolveCredentials(
 			s = &corev1.Secret{}
 			if err := r.Get(ctx, types.NamespacedName{Namespace: ns, Name: ref.Name}, s); err != nil {
 				if apierrors.IsNotFound(err) {
-					return "", "", fmt.Errorf("Secret %s/%s does not exist", ns, ref.Name)
+					return "", "", fmt.Errorf("secret %s/%s does not exist", ns, ref.Name)
 				}
 				return "", "", err
 			}
@@ -417,7 +428,7 @@ func (r *TrueNASCSIDriverReconciler) resolveCredentials(
 		}
 		v, ok := s.Data[ref.SecretKey()]
 		if !ok {
-			return "", "", fmt.Errorf("Secret %s/%s has no key %q", ns, ref.Name, ref.SecretKey())
+			return "", "", fmt.Errorf("secret %s/%s has no key %q", ns, ref.Name, ref.SecretKey())
 		}
 		return string(v), s.ResourceVersion, nil
 	}
@@ -843,6 +854,16 @@ func (a *serverSideApplier) Apply(ctx context.Context, obj *unstructured.Unstruc
 	if a.client == nil {
 		return errors.New("no client configured")
 	}
+	// staticcheck flags client.Apply as deprecated in favour of
+	// client.Client.Apply(). That replacement takes a runtime.ApplyConfiguration
+	// -- a TYPED apply configuration, which must implement IsApplyConfiguration()
+	// -- and *unstructured.Unstructured does not implement it. This applier
+	// exists precisely to apply arbitrary rendered chart manifests, for which no
+	// typed configuration exists, so the suggested API cannot express this call.
+	// Patch with client.Apply remains the way to server-side apply an
+	// unstructured object; revisit when controller-runtime offers an
+	// unstructured Apply.
+	//nolint:staticcheck // no unstructured form of the replacement API exists
 	return a.client.Patch(ctx, obj, client.Apply, client.FieldOwner(FieldOwner), client.ForceOwnership)
 }
 

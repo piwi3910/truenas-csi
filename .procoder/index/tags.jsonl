@@ -36,7 +36,7 @@
 {"name":"Active","path":"internal/podmon/iocounters.go","line":62,"kind":"func","signature":"(path string)","scope":"podmon.ioCounters","language":"Go"}
 {"name":"Add","path":"internal/truenas/core/fake/server.go","line":119,"kind":"func","signature":"(collection string, row map[string]any)","scope":"fake.Server","language":"Go"}
 {"name":"AddToScheme","path":"internal/replication/v1alpha1/types.go","line":28,"kind":"var","scope":"v1alpha1","language":"Go"}
-{"name":"AddToScheme","path":"operator/api/v1alpha1/groupversion_info.go","line":21,"kind":"var","scope":"v1alpha1","language":"Go"}
+{"name":"AddToScheme","path":"operator/api/v1alpha1/groupversion_info.go","line":26,"kind":"var","scope":"v1alpha1","language":"Go"}
 {"name":"Addr","path":"internal/server/server.go","line":112,"kind":"func","signature":"()","scope":"server.Server","language":"Go"}
 {"name":"Address","path":"internal/truenas/fake/server.go","line":148,"kind":"member","scope":"fake.NFSv4Client","language":"Go"}
 {"name":"Address","path":"internal/truenas/sessions.go","line":42,"kind":"member","scope":"truenas.NFSClient","language":"Go"}
@@ -58,7 +58,7 @@
 {"name":"Applier","path":"operator/internal/controller/truenascsidriver_controller.go","line":109,"kind":"member","scope":"controller.TrueNASCSIDriverReconciler","language":"Go"}
 {"name":"Applier","path":"operator/internal/controller/truenascsidriver_controller.go","line":83,"kind":"interface","scope":"controller","language":"Go"}
 {"name":"Apply","path":"operator/internal/controller/truenascsidriver_controller.go","line":84,"kind":"methodSpec","signature":"(ctx context.Context, obj *unstructured.Unstructured)","scope":"controller.Applier","language":"Go"}
-{"name":"Apply","path":"operator/internal/controller/truenascsidriver_controller.go","line":842,"kind":"func","signature":"(ctx context.Context, obj *unstructured.Unstructured)","scope":"controller.serverSideApplier","language":"Go"}
+{"name":"Apply","path":"operator/internal/controller/truenascsidriver_controller.go","line":853,"kind":"func","signature":"(ctx context.Context, obj *unstructured.Unstructured)","scope":"controller.serverSideApplier","language":"Go"}
 {"name":"Apply","path":"operator/internal/controller/truenascsidriver_controller_test.go","line":48,"kind":"func","signature":"(_ context.Context, obj *unstructured.Unstructured)","scope":"controller.recordingApplier","language":"Go"}
 {"name":"Attach","path":"internal/node/iometrics.go","line":50,"kind":"methodSpec","signature":"(volumeID, namespace, pod, pvc string)","scope":"node.VolumeIOSink","language":"Go"}
 {"name":"Attach","path":"internal/node/iometrics_test.go","line":27,"kind":"func","signature":"(volumeID, namespace, pod, pvc string)","scope":"node.fakeIOSink","language":"Go"}
@@ -140,7 +140,7 @@
 {"name":"CapacityBytes","path":"internal/migration/migration.go","line":69,"kind":"member","scope":"migration.Endpoint","language":"Go"}
 {"name":"CapacityBytes","path":"internal/node/node.go","line":188,"kind":"member","scope":"node.ExpandRequest","language":"Go"}
 {"name":"CapacityBytes","path":"internal/node/node.go","line":193,"kind":"member","scope":"node.ExpandResponse","language":"Go"}
-{"name":"Changed","path":"operator/internal/credentials/credentials.go","line":76,"kind":"member","scope":"credentials.Rotation","language":"Go"}
+{"name":"Changed","path":"operator/internal/credentials/credentials.go","line":78,"kind":"member","scope":"credentials.Rotation","language":"Go"}
 {"name":"Chart","path":"operator/internal/controller/truenascsidriver_controller.go","line":105,"kind":"member","scope":"controller.TrueNASCSIDriverReconciler","language":"Go"}
 {"name":"Check","path":"internal/fencing/controller.go","line":110,"kind":"methodSpec","signature":"(ctx context.Context, nodeID string, ids []volume.ID)","scope":"fencing.ConnectivityChecker","language":"Go"}
 {"name":"Check","path":"internal/fencing/controller_test.go","line":60,"kind":"func","signature":"(_ context.Context, nodeID string, ids []volume.ID)","scope":"fencing.stubChecker","language":"Go"}
@@ -249,7 +249,7 @@
 {"name":"Current","path":"internal/config/credentials.go","line":74,"kind":"func","signature":"()","scope":"config.Backend","language":"Go"}
 {"name":"Current","path":"internal/config/reload.go","line":147,"kind":"func","signature":"()","scope":"config.Reloader","language":"Go"}
 {"name":"CurrentNode","path":"operator/api/v1alpha1/truenascsidriver_types.go","line":505,"kind":"member","scope":"v1alpha1.RolloutStatus","language":"Go"}
-{"name":"CurrentNode","path":"operator/internal/controller/truenascsidriver_controller.go","line":531,"kind":"member","scope":"controller.nodeRolloutResult","language":"Go"}
+{"name":"CurrentNode","path":"operator/internal/controller/truenascsidriver_controller.go","line":542,"kind":"member","scope":"controller.nodeRolloutResult","language":"Go"}
 {"name":"CurrentNode","path":"operator/internal/rollout/rollout.go","line":173,"kind":"func","signature":"(nodes []NodeState, plan Plan)","scope":"rollout","language":"Go"}
 {"name":"DOM","path":"internal/replication/calls.go","line":42,"kind":"member","scope":"replication.Cron","language":"Go"}
 {"name":"DOW","path":"internal/replication/calls.go","line":44,"kind":"member","scope":"replication.Cron","language":"Go"}
@@ -398,7 +398,7 @@
 {"name":"DiskHealth","path":"internal/pooladmin/pooladmin.go","line":196,"kind":"func","signature":"(ctx context.Context, b Backend)","scope":"pooladmin","language":"Go"}
 {"name":"Disks","path":"internal/pooladmin/pooladmin.go","line":131,"kind":"member","scope":"pooladmin.Diagnostics","language":"Go"}
 {"name":"Dismissed","path":"internal/pooladmin/pooladmin.go","line":123,"kind":"member","scope":"pooladmin.Alert","language":"Go"}
-{"name":"Done","path":"operator/internal/controller/truenascsidriver_controller.go","line":529,"kind":"member","scope":"controller.nodeRolloutResult","language":"Go"}
+{"name":"Done","path":"operator/internal/controller/truenascsidriver_controller.go","line":540,"kind":"member","scope":"controller.nodeRolloutResult","language":"Go"}
 {"name":"Done","path":"operator/internal/rollout/rollout.go","line":65,"kind":"member","scope":"rollout.Plan","language":"Go"}
 {"name":"DrainTimeout","path":"internal/server/server.go","line":20,"kind":"const","scope":"server","language":"Go"}
 {"name":"Driver","path":"internal/migration/migration.go","line":67,"kind":"member","scope":"migration.Endpoint","language":"Go"}
@@ -575,7 +575,7 @@
 {"name":"GroupSnapshot","path":"internal/backend/groupsnapshot.go","line":23,"kind":"struct","scope":"backend","language":"Go"}
 {"name":"GroupSnapshotSource","path":"internal/backend/groupsnapshot.go","line":296,"kind":"func","signature":"(id string)","scope":"backend","language":"Go"}
 {"name":"GroupVersion","path":"internal/replication/v1alpha1/types.go","line":18,"kind":"var","scope":"v1alpha1","language":"Go"}
-{"name":"GroupVersion","path":"operator/api/v1alpha1/groupversion_info.go","line":15,"kind":"var","scope":"v1alpha1","language":"Go"}
+{"name":"GroupVersion","path":"operator/api/v1alpha1/groupversion_info.go","line":16,"kind":"var","scope":"v1alpha1","language":"Go"}
 {"name":"Groups","path":"internal/backend/iscsi/target.go","line":83,"kind":"member","scope":"iscsi.rawTarget","language":"Go"}
 {"name":"Handle","path":"internal/migration/migration.go","line":68,"kind":"member","scope":"migration.Endpoint","language":"Go"}
 {"name":"Handle","path":"internal/obs/log.go","line":159,"kind":"func","signature":"(ctx context.Context, r slog.Record)","scope":"obs.redactHandler","language":"Go"}
@@ -1183,7 +1183,7 @@
 {"name":"PhaseUnknown","path":"internal/replication/state.go","line":32,"kind":"const","scope":"replication","language":"Go"}
 {"name":"Plan","path":"internal/migration/migration.go","line":138,"kind":"func","signature":"(ctx context.Context, r Request)","scope":"migration.Migrator","language":"Go"}
 {"name":"Plan","path":"internal/migration/migration.go","line":86,"kind":"struct","scope":"migration","language":"Go"}
-{"name":"Plan","path":"operator/internal/credentials/credentials.go","line":84,"kind":"func","signature":"(observed, desired string, controllerAtDesired, controllerReady bool)","scope":"credentials","language":"Go"}
+{"name":"Plan","path":"operator/internal/credentials/credentials.go","line":86,"kind":"func","signature":"(observed, desired string, controllerAtDesired, controllerReady bool)","scope":"credentials","language":"Go"}
 {"name":"Plan","path":"operator/internal/rollout/rollout.go","line":58,"kind":"struct","scope":"rollout","language":"Go"}
 {"name":"Pod","path":"internal/obs/volumeio.go","line":131,"kind":"member","scope":"obs.VolumeIOLabels","language":"Go"}
 {"name":"PodName","path":"operator/internal/rollout/rollout.go","line":25,"kind":"member","scope":"rollout.NodeState","language":"Go"}
@@ -1303,7 +1303,7 @@
 {"name":"Reason","path":"internal/podmon/connectivity.go","line":140,"kind":"member","scope":"podmon.Verdict","language":"Go"}
 {"name":"Reason","path":"internal/truenas/errors.go","line":33,"kind":"member","scope":"truenas.CallError","language":"Go"}
 {"name":"Reason","path":"internal/truenas/fake/server.go","line":38,"kind":"member","scope":"fake.RPCError","language":"Go"}
-{"name":"Reason","path":"operator/internal/credentials/credentials.go","line":75,"kind":"member","scope":"credentials.Rotation","language":"Go"}
+{"name":"Reason","path":"operator/internal/credentials/credentials.go","line":77,"kind":"member","scope":"credentials.Rotation","language":"Go"}
 {"name":"ReasonApplyFailed","path":"operator/api/v1alpha1/truenascsidriver_types.go","line":547,"kind":"const","scope":"v1alpha1","language":"Go"}
 {"name":"ReasonBackendUnreachable","path":"operator/api/v1alpha1/truenascsidriver_types.go","line":557,"kind":"const","scope":"v1alpha1","language":"Go"}
 {"name":"ReasonReconciled","path":"operator/api/v1alpha1/truenascsidriver_types.go","line":559,"kind":"const","scope":"v1alpha1","language":"Go"}
@@ -1319,7 +1319,7 @@
 {"name":"RecommendedZvolBlocksize","path":"internal/truenas/api.go","line":47,"kind":"methodSpec","signature":"(ctx context.Context, pool string)","scope":"truenas.API","language":"Go"}
 {"name":"RecommendedZvolBlocksize","path":"internal/truenas/dataset.go","line":121,"kind":"func","signature":"(ctx context.Context, pool string)","scope":"truenas.Ops","language":"Go"}
 {"name":"Reconcile","path":"internal/replication/controller/controller.go","line":58,"kind":"func","signature":"(ctx context.Context, req ctrl.Request)","scope":"controller.Reconciler","language":"Go"}
-{"name":"Reconcile","path":"operator/internal/controller/truenascsidriver_controller.go","line":144,"kind":"func","signature":"(ctx context.Context, req ctrl.Request)","scope":"controller.TrueNASCSIDriverReconciler","language":"Go"}
+{"name":"Reconcile","path":"operator/internal/controller/truenascsidriver_controller.go","line":150,"kind":"func","signature":"(ctx context.Context, req ctrl.Request)","scope":"controller.TrueNASCSIDriverReconciler","language":"Go"}
 {"name":"Reconciler","path":"internal/replication/controller/controller.go","line":38,"kind":"struct","scope":"controller","language":"Go"}
 {"name":"RecordIdentity","path":"internal/backend/identity.go","line":37,"kind":"func","signature":"(ctx context.Context, c truenas.API, dsPath string, id volume.Identity)","scope":"backend","language":"Go"}
 {"name":"Recorder","path":"operator/internal/controller/truenascsidriver_controller.go","line":115,"kind":"member","scope":"controller.TrueNASCSIDriverReconciler","language":"Go"}
@@ -1394,7 +1394,7 @@
 {"name":"Root","path":"internal/node/node.go","line":280,"kind":"member","scope":"node.Node","language":"Go"}
 {"name":"Root","path":"internal/replication/state.go","line":80,"kind":"member","scope":"replication.TestFailoverState","language":"Go"}
 {"name":"RotatedCredentials","path":"internal/config/reload.go","line":110,"kind":"func","signature":"(cur, next *Config)","scope":"config","language":"Go"}
-{"name":"Rotation","path":"operator/internal/credentials/credentials.go","line":73,"kind":"struct","scope":"credentials","language":"Go"}
+{"name":"Rotation","path":"operator/internal/credentials/credentials.go","line":75,"kind":"struct","scope":"credentials","language":"Go"}
 {"name":"Run","path":"internal/arraymetrics/collector.go","line":173,"kind":"func","signature":"(ctx context.Context)","scope":"arraymetrics.Collector","language":"Go"}
 {"name":"Run","path":"internal/config/reload.go","line":196,"kind":"func","signature":"(ctx context.Context, onRotate func(map[string]Credential, *Config), onError func(error))","scope":"config.Reloader","language":"Go"}
 {"name":"Run","path":"internal/fencing/controller.go","line":160,"kind":"func","signature":"(ctx context.Context)","scope":"fencing.Controller","language":"Go"}
@@ -1428,7 +1428,7 @@
 {"name":"Scheme","path":"internal/replication/controller/controller.go","line":40,"kind":"member","scope":"controller.Reconciler","language":"Go"}
 {"name":"Scheme","path":"operator/internal/controller/truenascsidriver_controller.go","line":101,"kind":"member","scope":"controller.TrueNASCSIDriverReconciler","language":"Go"}
 {"name":"SchemeBuilder","path":"internal/replication/v1alpha1/types.go","line":25,"kind":"var","scope":"v1alpha1","language":"Go"}
-{"name":"SchemeBuilder","path":"operator/api/v1alpha1/groupversion_info.go","line":18,"kind":"var","scope":"v1alpha1","language":"Go"}
+{"name":"SchemeBuilder","path":"operator/api/v1alpha1/groupversion_info.go","line":23,"kind":"var","scope":"v1alpha1","language":"Go"}
 {"name":"Scrape","path":"operator/internal/controller/truenascsidriver_controller.go","line":89,"kind":"methodSpec","signature":"(ctx context.Context, url string)","scope":"controller.BackendProbe","language":"Go"}
 {"name":"Scrape","path":"operator/internal/controller/truenascsidriver_controller_test.go","line":754,"kind":"func","signature":"(_ context.Context, url string)","scope":"controller.fakeProbe","language":"Go"}
 {"name":"Scrape","path":"operator/internal/health/health.go","line":91,"kind":"func","signature":"(ctx context.Context, url string)","scope":"health.Scraper","language":"Go"}
@@ -1486,7 +1486,7 @@
 {"name":"SetUserProperty","path":"internal/truenas/dataset.go","line":103,"kind":"func","signature":"(ctx context.Context, id, key, value string)","scope":"truenas.Ops","language":"Go"}
 {"name":"SetVolumeHealth","path":"internal/obs/metrics.go","line":102,"kind":"func","signature":"(volumeID, protocol string, healthy bool)","scope":"obs","language":"Go"}
 {"name":"SetupWithManager","path":"internal/replication/controller/controller.go","line":46,"kind":"func","signature":"(mgr ctrl.Manager)","scope":"controller.Reconciler","language":"Go"}
-{"name":"SetupWithManager","path":"operator/internal/controller/truenascsidriver_controller.go","line":850,"kind":"func","signature":"(mgr ctrl.Manager)","scope":"controller.TrueNASCSIDriverReconciler","language":"Go"}
+{"name":"SetupWithManager","path":"operator/internal/controller/truenascsidriver_controller.go","line":871,"kind":"func","signature":"(mgr ctrl.Manager)","scope":"controller.TrueNASCSIDriverReconciler","language":"Go"}
 {"name":"ShareType","path":"internal/truenas/dataset.go","line":17,"kind":"member","scope":"truenas.DatasetSpec","language":"Go"}
 {"name":"Shipped","path":"operator/internal/upgrade/upgrade.go","line":88,"kind":"var","scope":"upgrade","language":"Go"}
 {"name":"SidecarFloor","path":"operator/internal/skew/skew.go","line":28,"kind":"var","scope":"skew","language":"Go"}
@@ -1551,13 +1551,13 @@
 {"name":"Spec","path":"internal/replication/v1alpha1/types.go","line":215,"kind":"member","scope":"v1alpha1.StorageProtectionGroup","language":"Go"}
 {"name":"Spec","path":"operator/api/v1alpha1/truenascsidriver_types.go","line":615,"kind":"member","scope":"v1alpha1.TrueNASCSIDriver","language":"Go"}
 {"name":"Stage","path":"internal/node/node.go","line":345,"kind":"func","signature":"(ctx context.Context, req StageRequest)","scope":"node.Node","language":"Go"}
-{"name":"Stage","path":"operator/internal/credentials/credentials.go","line":74,"kind":"member","scope":"credentials.Rotation","language":"Go"}
-{"name":"Stage","path":"operator/internal/credentials/credentials.go","line":52,"kind":"type","scope":"credentials","language":"Go"}
-{"name":"StageController","path":"operator/internal/credentials/credentials.go","line":61,"kind":"const","scope":"credentials","language":"Go"}
-{"name":"StageNodes","path":"operator/internal/credentials/credentials.go","line":64,"kind":"const","scope":"credentials","language":"Go"}
-{"name":"StageNone","path":"operator/internal/credentials/credentials.go","line":56,"kind":"const","scope":"credentials","language":"Go"}
+{"name":"Stage","path":"operator/internal/credentials/credentials.go","line":76,"kind":"member","scope":"credentials.Rotation","language":"Go"}
+{"name":"Stage","path":"operator/internal/credentials/credentials.go","line":54,"kind":"type","scope":"credentials","language":"Go"}
+{"name":"StageController","path":"operator/internal/credentials/credentials.go","line":63,"kind":"const","scope":"credentials","language":"Go"}
+{"name":"StageNodes","path":"operator/internal/credentials/credentials.go","line":66,"kind":"const","scope":"credentials","language":"Go"}
+{"name":"StageNone","path":"operator/internal/credentials/credentials.go","line":58,"kind":"const","scope":"credentials","language":"Go"}
 {"name":"StageRequest","path":"internal/node/node.go","line":148,"kind":"struct","scope":"node","language":"Go"}
-{"name":"StageWaitController","path":"operator/internal/credentials/credentials.go","line":69,"kind":"const","scope":"credentials","language":"Go"}
+{"name":"StageWaitController","path":"operator/internal/credentials/credentials.go","line":71,"kind":"const","scope":"credentials","language":"Go"}
 {"name":"StagingPath","path":"internal/node/node.go","line":150,"kind":"member","scope":"node.StageRequest","language":"Go"}
 {"name":"StagingPath","path":"internal/node/node.go","line":168,"kind":"member","scope":"node.PublishRequest","language":"Go"}
 {"name":"StagingPath","path":"internal/node/node.go","line":185,"kind":"member","scope":"node.ExpandRequest","language":"Go"}
@@ -2169,7 +2169,7 @@
 {"name":"TopologyLabels","path":"internal/node/reachability.go","line":158,"kind":"func","signature":"()","scope":"node.Reachability","language":"Go"}
 {"name":"TopologyLabels","path":"internal/node/topology.go","line":23,"kind":"func","signature":"()","scope":"node.Preflight","language":"Go"}
 {"name":"Total","path":"internal/node/node.go","line":215,"kind":"member","scope":"node.Usage","language":"Go"}
-{"name":"Total","path":"operator/internal/controller/truenascsidriver_controller.go","line":528,"kind":"member","scope":"controller.nodeRolloutResult","language":"Go"}
+{"name":"Total","path":"operator/internal/controller/truenascsidriver_controller.go","line":539,"kind":"member","scope":"controller.nodeRolloutResult","language":"Go"}
 {"name":"Total","path":"operator/internal/rollout/rollout.go","line":68,"kind":"member","scope":"rollout.Plan","language":"Go"}
 {"name":"TotalNodes","path":"operator/api/v1alpha1/truenascsidriver_types.go","line":498,"kind":"member","scope":"v1alpha1.RolloutStatus","language":"Go"}
 {"name":"Track","path":"internal/node/health.go","line":149,"kind":"func","signature":"(t HealthTarget)","scope":"node.HealthMonitor","language":"Go"}
@@ -2230,7 +2230,7 @@
 {"name":"Unwrap","path":"internal/obs/redact.go","line":97,"kind":"func","signature":"()","scope":"obs.redactedError","language":"Go"}
 {"name":"Up","path":"operator/internal/health/health.go","line":26,"kind":"member","scope":"health.Backend","language":"Go"}
 {"name":"UpToDate","path":"operator/internal/rollout/rollout.go","line":27,"kind":"member","scope":"rollout.NodeState","language":"Go"}
-{"name":"Updated","path":"operator/internal/controller/truenascsidriver_controller.go","line":527,"kind":"member","scope":"controller.nodeRolloutResult","language":"Go"}
+{"name":"Updated","path":"operator/internal/controller/truenascsidriver_controller.go","line":538,"kind":"member","scope":"controller.nodeRolloutResult","language":"Go"}
 {"name":"Updated","path":"operator/internal/rollout/rollout.go","line":67,"kind":"member","scope":"rollout.Plan","language":"Go"}
 {"name":"UpdatedNodes","path":"operator/api/v1alpha1/truenascsidriver_types.go","line":494,"kind":"member","scope":"v1alpha1.RolloutStatus","language":"Go"}
 {"name":"UpgradeTable","path":"operator/internal/controller/truenascsidriver_controller.go","line":119,"kind":"member","scope":"controller.TrueNASCSIDriverReconciler","language":"Go"}
@@ -2252,7 +2252,7 @@
 {"name":"VERSION","path":"Makefile","line":3,"kind":"macro","language":"Make"}
 {"name":"Validate","path":"internal/config/logging.go","line":63,"kind":"func","signature":"()","scope":"config.Logging","language":"Go"}
 {"name":"Validate","path":"internal/config/validate.go","line":52,"kind":"func","signature":"()","scope":"config.Config","language":"Go"}
-{"name":"Validate","path":"operator/internal/credentials/credentials.go","line":117,"kind":"func","signature":"(backend, key string)","scope":"credentials","language":"Go"}
+{"name":"Validate","path":"operator/internal/credentials/credentials.go","line":119,"kind":"func","signature":"(backend, key string)","scope":"credentials","language":"Go"}
 {"name":"Validate","path":"operator/internal/upgrade/upgrade.go","line":197,"kind":"func","signature":"(t Table)","scope":"upgrade","language":"Go"}
 {"name":"ValidateBackend","path":"internal/truenas/api.go","line":138,"kind":"func","signature":"(b config.Backend)","scope":"truenas","language":"Go"}
 {"name":"ValidateNamespace","path":"internal/volume/namespace.go","line":52,"kind":"func","signature":"(ns string)","scope":"volume","language":"Go"}
@@ -2319,7 +2319,7 @@
 {"name":"Volumes","path":"internal/replication/manager.go","line":39,"kind":"member","scope":"replication.Group","language":"Go"}
 {"name":"Volumes","path":"internal/replication/v1alpha1/types.go","line":182,"kind":"member","scope":"v1alpha1.StorageProtectionGroupStatus","language":"Go"}
 {"name":"WaitingFor","path":"operator/api/v1alpha1/truenascsidriver_types.go","line":511,"kind":"member","scope":"v1alpha1.RolloutStatus","language":"Go"}
-{"name":"WaitingFor","path":"operator/internal/controller/truenascsidriver_controller.go","line":530,"kind":"member","scope":"controller.nodeRolloutResult","language":"Go"}
+{"name":"WaitingFor","path":"operator/internal/controller/truenascsidriver_controller.go","line":541,"kind":"member","scope":"controller.nodeRolloutResult","language":"Go"}
 {"name":"WaitingFor","path":"operator/internal/rollout/rollout.go","line":63,"kind":"member","scope":"rollout.Plan","language":"Go"}
 {"name":"WatchDebounce","path":"internal/config/watch.go","line":19,"kind":"const","scope":"config","language":"Go"}
 {"name":"WatchFile","path":"internal/config/watch.go","line":38,"kind":"func","signature":"(ctx context.Context, path string, onChange func())","scope":"config","language":"Go"}
@@ -2341,6 +2341,7 @@
 {"name":"activity","path":"internal/podmon/volumeio.go","line":112,"kind":"func","signature":"()","scope":"podmon.volumeIO","language":"Go"}
 {"name":"add","path":"internal/truenas/call_test.go","line":21,"kind":"func","signature":"(d time.Duration)","scope":"truenas.clock","language":"Go"}
 {"name":"addKnownTypes","path":"internal/replication/v1alpha1/types.go","line":30,"kind":"func","signature":"(s *runtime.Scheme)","scope":"v1alpha1","language":"Go"}
+{"name":"addKnownTypes","path":"operator/api/v1alpha1/groupversion_info.go","line":29,"kind":"func","signature":"(s *runtime.Scheme)","scope":"v1alpha1","language":"Go"}
 {"name":"addMount","path":"test/sanity/nodefake_test.go","line":55,"kind":"func","signature":"(source, target, fstype string)","scope":"sanity_test.mountingExec","language":"Go"}
 {"name":"addSnapshot","path":"internal/replication/fake_test.go","line":424,"kind":"func","signature":"(dataset, name string)","scope":"replication.nas","language":"Go"}
 {"name":"addedInts","path":"test/integration/teardown.go","line":126,"kind":"func","signature":"(kind string, before, after []int)","scope":"integration","language":"Go"}
@@ -2366,15 +2367,15 @@
 {"name":"apiextv1","path":"operator/api/v1alpha1/crd_validation_test.go","line":9,"kind":"packageName","language":"Go"}
 {"name":"appendUnique","path":"internal/node/preflight.go","line":287,"kind":"func","signature":"(list []string, s string)","scope":"node","language":"Go"}
 {"name":"appliance","path":"internal/pooladmin/pooladmin_test.go","line":55,"kind":"func","signature":"(t *testing.T)","scope":"pooladmin","language":"Go"}
-{"name":"applianceAddr","path":"cmd/truenas-csi/main.go","line":381,"kind":"func","signature":"(cfg *config.Config)","scope":"main","language":"Go"}
+{"name":"applianceAddr","path":"cmd/truenas-csi/main.go","line":395,"kind":"func","signature":"(cfg *config.Config)","scope":"main","language":"Go"}
 {"name":"applianceAlerts","path":"internal/obs/pool.go","line":47,"kind":"var","scope":"obs","language":"Go"}
 {"name":"applianceConditions","path":"internal/csi/volumehealth.go","line":112,"kind":"func","signature":"(p *truenas.Pool, ds *truenas.Dataset)","scope":"csi","language":"Go"}
-{"name":"applianceName","path":"cmd/truenas-csi/main.go","line":369,"kind":"func","signature":"(cfg *config.Config)","scope":"main","language":"Go"}
+{"name":"applianceName","path":"cmd/truenas-csi/main.go","line":383,"kind":"func","signature":"(cfg *config.Config)","scope":"main","language":"Go"}
 {"name":"appliances","path":"cmd/truenas-csi/admin.go","line":82,"kind":"func","signature":"(ctx context.Context)","scope":"main.adminFlags","language":"Go"}
 {"name":"appliances","path":"internal/replication/fake_test.go","line":490,"kind":"struct","scope":"replication","language":"Go"}
 {"name":"appliances","path":"internal/replication/manager.go","line":91,"kind":"member","scope":"replication.Manager","language":"Go"}
 {"name":"applied","path":"operator/internal/controller/truenascsidriver_controller_test.go","line":44,"kind":"member","scope":"controller.recordingApplier","language":"Go"}
-{"name":"applier","path":"operator/internal/controller/truenascsidriver_controller.go","line":381,"kind":"func","signature":"()","scope":"controller.TrueNASCSIDriverReconciler","language":"Go"}
+{"name":"applier","path":"operator/internal/controller/truenascsidriver_controller.go","line":392,"kind":"func","signature":"()","scope":"controller.TrueNASCSIDriverReconciler","language":"Go"}
 {"name":"applyAction","path":"internal/replication/controller/controller.go","line":119,"kind":"func","signature":"(ctx context.Context, mgr *replication.Manager, spg *v1alpha1.StorageProtectionGroup, g replication.Group)","scope":"controller.Reconciler","language":"Go"}
 {"name":"applyFilters","path":"internal/truenas/core/route.go","line":140,"kind":"func","signature":"(raw json.RawMessage, filters [][]any)","scope":"core","language":"Go"}
 {"name":"applyLogging","path":"cmd/truenas-csi/hardening.go","line":55,"kind":"func","signature":"(l config.Logging)","scope":"main","language":"Go"}
@@ -2396,7 +2397,7 @@
 {"name":"assertCapability","path":"test/external/external_test.go","line":291,"kind":"func","signature":"(t *testing.T, def definition, name string, want bool)","scope":"external_test","language":"Go"}
 {"name":"assertDataIsOnTheAppliance","path":"test/chart/install_test.go","line":253,"kind":"func","signature":"(t *testing.T, ns, sc string)","scope":"chart_test","language":"Go"}
 {"name":"assertEvent","path":"internal/fencing/controller_test.go","line":411,"kind":"func","signature":"(t *testing.T, events *record.FakeRecorder, reason string)","scope":"fencing","language":"Go"}
-{"name":"assertEvent","path":"operator/internal/controller/truenascsidriver_controller_test.go","line":730,"kind":"func","signature":"(t *testing.T, recorder *record.FakeRecorder, eventType, reason string)","scope":"controller","language":"Go"}
+{"name":"assertEvent","path":"operator/internal/controller/truenascsidriver_controller_test.go","line":730,"kind":"func","signature":"(t *testing.T, recorder *events.FakeRecorder, eventType, reason string)","scope":"controller","language":"Go"}
 {"name":"assertMounted","path":"test/integration/smb_test.go","line":397,"kind":"func","signature":"(t *testing.T, r *NodeRunner, path, fsType string)","scope":"integration","language":"Go"}
 {"name":"assertNotMounted","path":"test/integration/smb_test.go","line":416,"kind":"func","signature":"(t *testing.T, r *NodeRunner, path string)","scope":"integration","language":"Go"}
 {"name":"at","path":"internal/podmon/iocounters.go","line":44,"kind":"member","scope":"podmon.counterSample","language":"Go"}
@@ -2433,7 +2434,7 @@
 {"name":"backendCfg","path":"internal/pooladmin/pooladmin_test.go","line":37,"kind":"func","signature":"(url string)","scope":"pooladmin","language":"Go"}
 {"name":"backendFor","path":"internal/truenas/auth_test.go","line":13,"kind":"func","signature":"(url string)","scope":"truenas","language":"Go"}
 {"name":"backendFor","path":"internal/truenas/core/core_test.go","line":14,"kind":"func","signature":"(endpoint string)","scope":"core","language":"Go"}
-{"name":"backendHealth","path":"operator/internal/controller/truenascsidriver_controller.go","line":621,"kind":"func","signature":"(ctx context.Context, cr *truenasv1alpha1.TrueNASCSIDriver, ns string,)","scope":"controller.TrueNASCSIDriverReconciler","language":"Go"}
+{"name":"backendHealth","path":"operator/internal/controller/truenascsidriver_controller.go","line":632,"kind":"func","signature":"(ctx context.Context, cr *truenasv1alpha1.TrueNASCSIDriver, ns string,)","scope":"controller.TrueNASCSIDriverReconciler","language":"Go"}
 {"name":"backendOf","path":"internal/node/node.go","line":533,"kind":"func","signature":"(volumeID string)","scope":"node","language":"Go"}
 {"name":"backendPaths","path":"internal/csi/capacity.go","line":384,"kind":"struct","scope":"csi","language":"Go"}
 {"name":"backendReachable","path":"internal/obs/metrics.go","line":88,"kind":"var","scope":"obs","language":"Go"}
@@ -2512,7 +2513,7 @@
 {"name":"chapUser","path":"internal/backend/iscsi/target.go","line":61,"kind":"func","signature":"(target string)","scope":"iscsi","language":"Go"}
 {"name":"chartDir","path":"operator/internal/controller/truenascsidriver_controller_test.go","line":37,"kind":"const","scope":"controller","language":"Go"}
 {"name":"chartDir","path":"test/chart/chart_test.go","line":55,"kind":"func","signature":"(t *testing.T)","scope":"chart_test","language":"Go"}
-{"name":"chartValues","path":"operator/internal/controller/truenascsidriver_controller.go","line":374,"kind":"func","signature":"()","scope":"controller.TrueNASCSIDriverReconciler","language":"Go"}
+{"name":"chartValues","path":"operator/internal/controller/truenascsidriver_controller.go","line":385,"kind":"func","signature":"()","scope":"controller.TrueNASCSIDriverReconciler","language":"Go"}
 {"name":"chart_test","path":"test/chart/chart_test.go","line":9,"kind":"package","language":"Go"}
 {"name":"chart_test","path":"test/chart/flags_test.go","line":1,"kind":"package","language":"Go"}
 {"name":"chart_test","path":"test/chart/install_test.go","line":1,"kind":"package","language":"Go"}
@@ -2539,7 +2540,7 @@
 {"name":"client","path":"internal/backend/nvme/nvme_test.go","line":53,"kind":"func","signature":"()","scope":"nvme.nas","language":"Go"}
 {"name":"client","path":"internal/migration/migration.go","line":50,"kind":"member","scope":"migration.Migrator","language":"Go"}
 {"name":"client","path":"internal/reconcile/kube.go","line":14,"kind":"member","scope":"reconcile.KubePVLister","language":"Go"}
-{"name":"client","path":"operator/internal/controller/truenascsidriver_controller.go","line":839,"kind":"member","scope":"controller.serverSideApplier","language":"Go"}
+{"name":"client","path":"operator/internal/controller/truenascsidriver_controller.go","line":850,"kind":"member","scope":"controller.serverSideApplier","language":"Go"}
 {"name":"client","path":"test/integration/integration_test.go","line":26,"kind":"member","scope":"integration.env","language":"Go"}
 {"name":"clientWith","path":"internal/backend/namespace_test.go","line":56,"kind":"func","signature":"(t *testing.T, s *fake.Server)","scope":"backend","language":"Go"}
 {"name":"clientgoscheme","path":"operator/cmd/main.go","line":10,"kind":"packageName","language":"Go"}
@@ -2606,7 +2607,7 @@
 {"name":"controller","path":"operator/internal/controller/truenascsidriver_controller.go","line":2,"kind":"package","language":"Go"}
 {"name":"controller","path":"operator/internal/controller/truenascsidriver_controller_test.go","line":1,"kind":"package","language":"Go"}
 {"name":"controller","path":"test/integration/integration_test.go","line":71,"kind":"func","signature":"(t *testing.T)","scope":"integration.env","language":"Go"}
-{"name":"controllerState","path":"operator/internal/controller/truenascsidriver_controller.go","line":466,"kind":"func","signature":"(ctx context.Context, ns string)","scope":"controller.TrueNASCSIDriverReconciler","language":"Go"}
+{"name":"controllerState","path":"operator/internal/controller/truenascsidriver_controller.go","line":477,"kind":"func","signature":"(ctx context.Context, ns string)","scope":"controller.TrueNASCSIDriverReconciler","language":"Go"}
 {"name":"copyScript","path":"internal/migration/job.go","line":67,"kind":"func","signature":"(mode Mode)","scope":"migration","language":"Go"}
 {"name":"copyStringMap","path":"internal/replication/state.go","line":109,"kind":"func","signature":"(in map[string]string)","scope":"replication","language":"Go"}
 {"name":"core","path":"internal/truenas/core/connectivity.go","line":1,"kind":"package","language":"Go"}
@@ -2763,7 +2764,7 @@
 {"name":"decodeAll","path":"test/chart/chart_test.go","line":125,"kind":"func","signature":"(t *testing.T, raw []byte)","scope":"chart_test","language":"Go"}
 {"name":"decodeFloat","path":"internal/truenas/reporting.go","line":195,"kind":"func","signature":"(raw json.RawMessage)","scope":"truenas","language":"Go"}
 {"name":"decodeManifests","path":"operator/internal/chartrender/render.go","line":279,"kind":"func","signature":"(manifest string)","scope":"chartrender","language":"Go"}
-{"name":"decorate","path":"operator/internal/controller/truenascsidriver_controller.go","line":753,"kind":"func","signature":"(objs []*unstructured.Unstructured, cr *truenasv1alpha1.TrueNASCSIDriver, ns, revision string)","scope":"controller","language":"Go"}
+{"name":"decorate","path":"operator/internal/controller/truenascsidriver_controller.go","line":764,"kind":"func","signature":"(objs []*unstructured.Unstructured, cr *truenasv1alpha1.TrueNASCSIDriver, ns, revision string)","scope":"controller","language":"Go"}
 {"name":"defaultBackoffLimit","path":"internal/migration/job.go","line":52,"kind":"const","scope":"migration","language":"Go"}
 {"name":"defaultDirMode","path":"internal/backend/smb/smb.go","line":106,"kind":"const","scope":"smb","language":"Go"}
 {"name":"defaultFileMode","path":"internal/backend/smb/smb.go","line":105,"kind":"const","scope":"smb","language":"Go"}
@@ -2779,7 +2780,7 @@
 {"name":"defaultString","path":"operator/internal/chartrender/render.go","line":357,"kind":"func","signature":"(v, def string)","scope":"chartrender","language":"Go"}
 {"name":"definition","path":"test/external/external_test.go","line":75,"kind":"struct","scope":"external_test","language":"Go"}
 {"name":"definitionPath","path":"test/external/external_test.go","line":100,"kind":"func","signature":"(protocol string)","scope":"external_test","language":"Go"}
-{"name":"degrade","path":"operator/internal/controller/truenascsidriver_controller.go","line":700,"kind":"func","signature":"(status *truenasv1alpha1.TrueNASCSIDriverStatus, generation int64, reason, message string,)","scope":"controller.TrueNASCSIDriverReconciler","language":"Go"}
+{"name":"degrade","path":"operator/internal/controller/truenascsidriver_controller.go","line":711,"kind":"func","signature":"(status *truenasv1alpha1.TrueNASCSIDriverStatus, generation int64, reason, message string,)","scope":"controller.TrueNASCSIDriverReconciler","language":"Go"}
 {"name":"degradedPool","path":"internal/csi/getvolume_test.go","line":23,"kind":"const","scope":"csi","language":"Go"}
 {"name":"delete","path":"internal/truenas/core/fake/server.go","line":347,"kind":"func","signature":"(w http.ResponseWriter, collection, rest string)","scope":"fake.Server","language":"Go"}
 {"name":"deleteAttachments","path":"internal/fencing/controller.go","line":352,"kind":"func","signature":"(ctx context.Context, nodeName string, ids []volume.ID)","scope":"fencing.Controller","language":"Go"}
@@ -2843,7 +2844,7 @@
 {"name":"driverName","path":"operator/internal/controller/truenascsidriver_controller.go","line":70,"kind":"const","scope":"controller","language":"Go"}
 {"name":"driverName","path":"test/chart/chart_test.go","line":27,"kind":"const","scope":"chart_test","language":"Go"}
 {"name":"driverPV","path":"internal/fencing/controller_test.go","line":119,"kind":"func","signature":"()","scope":"fencing","language":"Go"}
-{"name":"driverPVCs","path":"operator/internal/controller/truenascsidriver_controller.go","line":601,"kind":"func","signature":"(ctx context.Context)","scope":"controller.TrueNASCSIDriverReconciler","language":"Go"}
+{"name":"driverPVCs","path":"operator/internal/controller/truenascsidriver_controller.go","line":612,"kind":"func","signature":"(ctx context.Context)","scope":"controller.TrueNASCSIDriverReconciler","language":"Go"}
 {"name":"dropConn","path":"internal/truenas/client.go","line":270,"kind":"func","signature":"(conn *websocket.Conn)","scope":"truenas.Client","language":"Go"}
 {"name":"dssePayload","path":"test/release/release_test.go","line":224,"kind":"func","signature":"(out string)","scope":"release_test","language":"Go"}
 {"name":"dto","path":"internal/arraymetrics/collector_test.go","line":14,"kind":"packageName","language":"Go"}
@@ -2865,7 +2866,7 @@
 {"name":"ensureHostACL","path":"internal/backend/nvme/target.go","line":139,"kind":"func","signature":"(ctx context.Context, subsysID int, p Params, rollback *[]func())","scope":"nvme.nvmeBackend","language":"Go"}
 {"name":"ensureInitiatorGroup","path":"internal/backend/iscsi/target.go","line":257,"kind":"func","signature":"(ctx context.Context, c truenas.API, p Params)","scope":"iscsi","language":"Go"}
 {"name":"ensureNamespace","path":"internal/backend/nvme/target.go","line":64,"kind":"func","signature":"(ctx context.Context, id volume.ID, subsysID int, rollback *[]func())","scope":"nvme.nvmeBackend","language":"Go"}
-{"name":"ensureNamespace","path":"operator/internal/controller/truenascsidriver_controller.go","line":451,"kind":"func","signature":"(ctx context.Context, ns string, cr *truenasv1alpha1.TrueNASCSIDriver)","scope":"controller.TrueNASCSIDriverReconciler","language":"Go"}
+{"name":"ensureNamespace","path":"operator/internal/controller/truenascsidriver_controller.go","line":462,"kind":"func","signature":"(ctx context.Context, ns string, cr *truenasv1alpha1.TrueNASCSIDriver)","scope":"controller.TrueNASCSIDriverReconciler","language":"Go"}
 {"name":"ensurePort","path":"internal/backend/nvme/target.go","line":93,"kind":"func","signature":"(ctx context.Context, p Params, rollback *[]func())","scope":"nvme.nvmeBackend","language":"Go"}
 {"name":"ensurePortal","path":"internal/backend/iscsi/target.go","line":117,"kind":"func","signature":"(ctx context.Context, c truenas.API, p Params)","scope":"iscsi","language":"Go"}
 {"name":"ensureShare","path":"internal/backend/nfs/nfs.go","line":292,"kind":"func","signature":"(ctx context.Context, mountpoint string, p params)","scope":"nfs.Backend","language":"Go"}
@@ -2880,7 +2881,7 @@
 {"name":"envOr","path":"test/chart/install_test.go","line":36,"kind":"func","signature":"(k, def string)","scope":"chart_test","language":"Go"}
 {"name":"envtest","path":"operator/Makefile","line":55,"kind":"target","language":"Make"}
 {"name":"envtestAssets","path":"operator/api/v1alpha1/envtest_validation_test.go","line":25,"kind":"func","signature":"()","scope":"v1alpha1_test","language":"Go"}
-{"name":"equalStatus","path":"operator/internal/controller/truenascsidriver_controller.go","line":729,"kind":"func","signature":"(a, b *truenasv1alpha1.TrueNASCSIDriverStatus)","scope":"controller","language":"Go"}
+{"name":"equalStatus","path":"operator/internal/controller/truenascsidriver_controller.go","line":740,"kind":"func","signature":"(a, b *truenasv1alpha1.TrueNASCSIDriverStatus)","scope":"controller","language":"Go"}
 {"name":"err","path":"internal/obs/redact.go","line":90,"kind":"member","scope":"obs.redactedError","language":"Go"}
 {"name":"err","path":"internal/podmon/connectivity_test.go","line":41,"kind":"member","scope":"podmon.fakeAppliances","language":"Go"}
 {"name":"err","path":"internal/podmon/connectivity_test.go","line":50,"kind":"member","scope":"podmon.fakeNodes","language":"Go"}
@@ -2894,7 +2895,7 @@
 {"name":"erroringController","path":"internal/server/server_test.go","line":147,"kind":"struct","scope":"server","language":"Go"}
 {"name":"errs","path":"internal/arraymetrics/collector.go","line":129,"kind":"member","scope":"arraymetrics.Collector","language":"Go"}
 {"name":"event","path":"internal/fencing/controller.go","line":423,"kind":"func","signature":"(pod *corev1.Pod, eventType, reason, msg string)","scope":"fencing.Controller","language":"Go"}
-{"name":"event","path":"operator/internal/controller/truenascsidriver_controller.go","line":365,"kind":"func","signature":"(cr *truenasv1alpha1.TrueNASCSIDriver, eventType, reason, message string)","scope":"controller.TrueNASCSIDriverReconciler","language":"Go"}
+{"name":"event","path":"operator/internal/controller/truenascsidriver_controller.go","line":371,"kind":"func","signature":"(cr *truenasv1alpha1.TrueNASCSIDriver, eventType, reason, message string)","scope":"controller.TrueNASCSIDriverReconciler","language":"Go"}
 {"name":"exec","path":"internal/node/node.go","line":284,"kind":"member","scope":"node.Node","language":"Go"}
 {"name":"exist","path":"internal/csi/controller_test.go","line":29,"kind":"member","scope":"csi.countingBackend","language":"Go"}
 {"name":"existingDatasets","path":"internal/csi/groupcontroller_test.go","line":93,"kind":"func","signature":"(s *fake.Server)","scope":"csi","language":"Go"}
@@ -3103,7 +3104,6 @@
 {"name":"init","path":"internal/csi/controller_test.go","line":77,"kind":"func","signature":"()","scope":"csi","language":"Go"}
 {"name":"init","path":"internal/csi/publish_test.go","line":80,"kind":"func","signature":"()","scope":"csi","language":"Go"}
 {"name":"init","path":"internal/obs/log.go","line":48,"kind":"func","signature":"()","scope":"obs","language":"Go"}
-{"name":"init","path":"operator/api/v1alpha1/truenascsidriver_types.go","line":628,"kind":"func","signature":"()","scope":"v1alpha1","language":"Go"}
 {"name":"init","path":"operator/cmd/main.go","line":24,"kind":"func","signature":"()","scope":"main","language":"Go"}
 {"name":"initiatorComment","path":"internal/backend/iscsi/target.go","line":20,"kind":"const","scope":"iscsi","language":"Go"}
 {"name":"initiatorGroups","path":"internal/backend/iscsi/fake_test.go","line":541,"kind":"func","signature":"()","scope":"iscsi.nas","language":"Go"}
@@ -3313,6 +3313,7 @@
 {"name":"metav1","path":"internal/replication/controller/controller_test.go","line":8,"kind":"packageName","language":"Go"}
 {"name":"metav1","path":"internal/replication/v1alpha1/types.go","line":12,"kind":"packageName","language":"Go"}
 {"name":"metav1","path":"operator/api/v1alpha1/envtest_validation_test.go","line":10,"kind":"packageName","language":"Go"}
+{"name":"metav1","path":"operator/api/v1alpha1/groupversion_info.go","line":9,"kind":"packageName","language":"Go"}
 {"name":"metav1","path":"operator/api/v1alpha1/truenascsidriver_types.go","line":5,"kind":"packageName","language":"Go"}
 {"name":"metav1","path":"operator/internal/controller/truenascsidriver_controller.go","line":19,"kind":"packageName","language":"Go"}
 {"name":"metav1","path":"operator/internal/controller/truenascsidriver_controller_test.go","line":18,"kind":"packageName","language":"Go"}
@@ -3399,7 +3400,7 @@
 {"name":"nameOf","path":"test/chart/chart_test.go","line":147,"kind":"func","signature":"(doc map[string]any)","scope":"chart_test","language":"Go"}
 {"name":"namespaceFor","path":"internal/csi/controller.go","line":154,"kind":"func","signature":"(b config.Backend, params map[string]string)","scope":"csi","language":"Go"}
 {"name":"namespaceOf","path":"operator/internal/chartrender/render.go","line":347,"kind":"func","signature":"(cr *truenasv1alpha1.TrueNASCSIDriver)","scope":"chartrender","language":"Go"}
-{"name":"namespaced","path":"operator/internal/controller/truenascsidriver_controller.go","line":816,"kind":"func","signature":"(kind string)","scope":"controller","language":"Go"}
+{"name":"namespaced","path":"operator/internal/controller/truenascsidriver_controller.go","line":827,"kind":"func","signature":"(kind string)","scope":"controller","language":"Go"}
 {"name":"namespaces","path":"internal/backend/nvme/nvme_test.go","line":32,"kind":"member","scope":"nvme.nas","language":"Go"}
 {"name":"namingSchema","path":"internal/replication/manager.go","line":948,"kind":"func","signature":"(g Group)","scope":"replication","language":"Go"}
 {"name":"nas","path":"internal/backend/iscsi/fake_test.go","line":20,"kind":"struct","scope":"iscsi","language":"Go"}
@@ -3495,7 +3496,7 @@
 {"name":"node","path":"internal/node/wiring_test.go","line":1,"kind":"package","language":"Go"}
 {"name":"node","path":"test/bench/main.go","line":31,"kind":"const","scope":"main","language":"Go"}
 {"name":"nodeDaemonSet","path":"operator/internal/controller/truenascsidriver_controller_test.go","line":180,"kind":"func","signature":"(desired int32)","scope":"controller","language":"Go"}
-{"name":"nodeDaemonSetState","path":"operator/internal/controller/truenascsidriver_controller.go","line":505,"kind":"func","signature":"(ctx context.Context, ns string)","scope":"controller.TrueNASCSIDriverReconciler","language":"Go"}
+{"name":"nodeDaemonSetState","path":"operator/internal/controller/truenascsidriver_controller.go","line":516,"kind":"func","signature":"(ctx context.Context, ns string)","scope":"controller.TrueNASCSIDriverReconciler","language":"Go"}
 {"name":"nodeErr","path":"internal/csi/node.go","line":164,"kind":"func","signature":"(err error)","scope":"csi","language":"Go"}
 {"name":"nodeExec","path":"test/integration/smb_test.go","line":79,"kind":"struct","scope":"integration","language":"Go"}
 {"name":"nodeHasFailed","path":"internal/fencing/controller.go","line":473,"kind":"func","signature":"(node *corev1.Node)","scope":"fencing","language":"Go"}
@@ -3505,7 +3506,7 @@
 {"name":"nodeID","path":"test/integration/integration_test.go","line":31,"kind":"member","scope":"integration.env","language":"Go"}
 {"name":"nodePlugin","path":"test/integration/smb_test.go","line":171,"kind":"func","signature":"(t *testing.T, r *NodeRunner)","scope":"integration","language":"Go"}
 {"name":"nodeRefFrom","path":"internal/backend/nodes.go","line":173,"kind":"func","signature":"(n *corev1.Node)","scope":"backend","language":"Go"}
-{"name":"nodeRolloutResult","path":"operator/internal/controller/truenascsidriver_controller.go","line":526,"kind":"struct","scope":"controller","language":"Go"}
+{"name":"nodeRolloutResult","path":"operator/internal/controller/truenascsidriver_controller.go","line":537,"kind":"struct","scope":"controller","language":"Go"}
 {"name":"nodeServer","path":"internal/csi/node.go","line":19,"kind":"struct","scope":"csi","language":"Go"}
 {"name":"nodeStageSecretNameKey","path":"internal/backend/smb/smb.go","line":88,"kind":"const","scope":"smb","language":"Go"}
 {"name":"nodeStageSecretNamespaceKey","path":"internal/backend/smb/smb.go","line":89,"kind":"const","scope":"smb","language":"Go"}
@@ -3523,7 +3524,7 @@
 {"name":"now","path":"internal/podmon/nodecheck.go","line":320,"kind":"func","signature":"()","scope":"podmon.NodeSelfCheck","language":"Go"}
 {"name":"now","path":"internal/truenas/call.go","line":69,"kind":"member","scope":"truenas.breaker","language":"Go"}
 {"name":"now","path":"internal/truenas/call_test.go","line":20,"kind":"func","signature":"()","scope":"truenas.clock","language":"Go"}
-{"name":"now","path":"operator/internal/controller/truenascsidriver_controller.go","line":388,"kind":"func","signature":"()","scope":"controller.TrueNASCSIDriverReconciler","language":"Go"}
+{"name":"now","path":"operator/internal/controller/truenascsidriver_controller.go","line":399,"kind":"func","signature":"()","scope":"controller.TrueNASCSIDriverReconciler","language":"Go"}
 {"name":"nowFn","path":"internal/podmon/iocounters.go","line":38,"kind":"member","scope":"podmon.ioCounters","language":"Go"}
 {"name":"nsCtl","path":"internal/csi/namespacequota_test.go","line":20,"kind":"func","signature":"(t *testing.T, q config.NamespaceQuotas)","scope":"csi","language":"Go"}
 {"name":"nsDataset","path":"internal/backend/namespace_test.go","line":18,"kind":"func","signature":"(id, namespace, ownerSource, recordedQuota string, used int64)","scope":"backend","language":"Go"}
@@ -3628,9 +3629,9 @@
 {"name":"podIsReady","path":"internal/fencing/controller.go","line":457,"kind":"func","signature":"(pod *corev1.Pod)","scope":"fencing","language":"Go"}
 {"name":"podManifest","path":"test/integration/nodeexec.go","line":45,"kind":"func","signature":"(name, script string)","scope":"integration.NodeRunner","language":"Go"}
 {"name":"podNamespace","path":"cmd/truenas-csi/replication.go","line":102,"kind":"func","signature":"()","scope":"main","language":"Go"}
-{"name":"podReady","path":"operator/internal/controller/truenascsidriver_controller.go","line":825,"kind":"func","signature":"(p *corev1.Pod)","scope":"controller","language":"Go"}
+{"name":"podReady","path":"operator/internal/controller/truenascsidriver_controller.go","line":836,"kind":"func","signature":"(p *corev1.Pod)","scope":"controller","language":"Go"}
 {"name":"podSpec","path":"test/chart/podmon_test.go","line":38,"kind":"func","signature":"(doc map[string]any)","scope":"chart_test","language":"Go"}
-{"name":"podTemplateRevision","path":"operator/internal/controller/truenascsidriver_controller.go","line":780,"kind":"func","signature":"(objs []*unstructured.Unstructured)","scope":"controller","language":"Go"}
+{"name":"podTemplateRevision","path":"operator/internal/controller/truenascsidriver_controller.go","line":791,"kind":"func","signature":"(objs []*unstructured.Unstructured)","scope":"controller","language":"Go"}
 {"name":"podmon","path":"internal/podmon/connectivity.go","line":1,"kind":"package","language":"Go"}
 {"name":"podmon","path":"internal/podmon/connectivity_test.go","line":1,"kind":"package","language":"Go"}
 {"name":"podmon","path":"internal/podmon/iocounters.go","line":1,"kind":"package","language":"Go"}
@@ -3694,7 +3695,7 @@
 {"name":"protocols","path":"test/external/external_test.go","line":35,"kind":"var","scope":"external_test","language":"Go"}
 {"name":"provision","path":"internal/backend/nfs/nfs.go","line":224,"kind":"func","signature":"(ctx context.Context, dsPath string, r backend.CreateRequest)","scope":"nfs.Backend","language":"Go"}
 {"name":"provision","path":"internal/backend/smb/smb.go","line":360,"kind":"func","signature":"(ctx context.Context, dsPath string, r backend.CreateRequest)","scope":"smb.Backend","language":"Go"}
-{"name":"ptr","path":"operator/internal/controller/truenascsidriver_controller.go","line":811,"kind":"func","signature":"[T any]","scope":"controller","language":"Go"}
+{"name":"ptr","path":"operator/internal/controller/truenascsidriver_controller.go","line":822,"kind":"func","signature":"[T any]","scope":"controller","language":"Go"}
 {"name":"pubReq","path":"internal/csi/publish_test.go","line":166,"kind":"func","signature":"(volID, nodeID string, mode csipb.VolumeCapability_AccessMode_Mode)","scope":"csi","language":"Go"}
 {"name":"publish","path":"test/integration/e2e_test.go","line":53,"kind":"func","signature":"(t *testing.T, c csipb.ControllerServer, vol *csipb.Volume)","scope":"integration.env","language":"Go"}
 {"name":"publishBlock","path":"internal/node/block.go","line":19,"kind":"func","signature":"(ctx context.Context, req PublishRequest)","scope":"node.Node","language":"Go"}
@@ -3758,10 +3759,10 @@
 {"name":"reconcile","path":"internal/reconcile/kube.go","line":1,"kind":"package","language":"Go"}
 {"name":"reconcile","path":"internal/reconcile/orphans.go","line":3,"kind":"package","language":"Go"}
 {"name":"reconcile","path":"internal/reconcile/orphans_test.go","line":1,"kind":"package","language":"Go"}
-{"name":"reconcile","path":"operator/internal/controller/truenascsidriver_controller.go","line":172,"kind":"func","signature":"(ctx context.Context, cr *truenasv1alpha1.TrueNASCSIDriver, status *truenasv1alpha1.TrueNASCSIDriverStatus,)","scope":"controller.TrueNASCSIDriverReconciler","language":"Go"}
+{"name":"reconcile","path":"operator/internal/controller/truenascsidriver_controller.go","line":178,"kind":"func","signature":"(ctx context.Context, cr *truenasv1alpha1.TrueNASCSIDriver, status *truenasv1alpha1.TrueNASCSIDriverStatus,)","scope":"controller.TrueNASCSIDriverReconciler","language":"Go"}
 {"name":"reconcileOnce","path":"operator/internal/controller/truenascsidriver_controller_test.go","line":195,"kind":"func","signature":"(t *testing.T, r *TrueNASCSIDriverReconciler)","scope":"controller","language":"Go"}
 {"name":"record","path":"internal/node/health.go","line":325,"kind":"func","signature":"(ctx context.Context, t HealthTarget, err error)","scope":"node.HealthMonitor","language":"Go"}
-{"name":"recordAppliedVersion","path":"operator/internal/controller/truenascsidriver_controller.go","line":330,"kind":"func","signature":"(ctx context.Context, cr *truenasv1alpha1.TrueNASCSIDriver, previous, applied string,)","scope":"controller.TrueNASCSIDriverReconciler","language":"Go"}
+{"name":"recordAppliedVersion","path":"operator/internal/controller/truenascsidriver_controller.go","line":336,"kind":"func","signature":"(ctx context.Context, cr *truenasv1alpha1.TrueNASCSIDriver, previous, applied string,)","scope":"controller.TrueNASCSIDriverReconciler","language":"Go"}
 {"name":"recordNetworkPolicy","path":"internal/backend/nfs/nfs.go","line":311,"kind":"func","signature":"(ctx context.Context, dsPath string, p params)","scope":"nfs.Backend","language":"Go"}
 {"name":"recorder","path":"internal/node/preflight_test.go","line":58,"kind":"struct","scope":"node","language":"Go"}
 {"name":"recordingApplier","path":"operator/internal/controller/truenascsidriver_controller_test.go","line":42,"kind":"struct","scope":"controller","language":"Go"}
@@ -3851,7 +3852,7 @@
 {"name":"resetState","path":"internal/backend/iscsi/lun.go","line":35,"kind":"func","signature":"()","scope":"iscsi","language":"Go"}
 {"name":"resetTargetLocks","path":"internal/backend/iscsi/target.go","line":28,"kind":"func","signature":"()","scope":"iscsi","language":"Go"}
 {"name":"resolve","path":"internal/podmon/connectivity.go","line":342,"kind":"func","signature":"(ctx context.Context, nodeID string)","scope":"podmon.Connectivity","language":"Go"}
-{"name":"resolveCredentials","path":"operator/internal/controller/truenascsidriver_controller.go","line":397,"kind":"func","signature":"(ctx context.Context, cr *truenasv1alpha1.TrueNASCSIDriver, ns string,)","scope":"controller.TrueNASCSIDriverReconciler","language":"Go"}
+{"name":"resolveCredentials","path":"operator/internal/controller/truenascsidriver_controller.go","line":408,"kind":"func","signature":"(ctx context.Context, cr *truenasv1alpha1.TrueNASCSIDriver, ns string,)","scope":"controller.TrueNASCSIDriverReconciler","language":"Go"}
 {"name":"resolveDevice","path":"internal/node/iscsi.go","line":251,"kind":"func","signature":"(root, naa string)","scope":"node","language":"Go"}
 {"name":"resolveHostBinary","path":"internal/node/hostbin.go","line":23,"kind":"func","signature":"(root, name string)","scope":"node","language":"Go"}
 {"name":"resolveID","path":"internal/csi/controller.go","line":101,"kind":"func","signature":"(name string, params map[string]string)","scope":"csi.controller","language":"Go"}
@@ -3871,7 +3872,7 @@
 {"name":"revoked","path":"internal/fencing/controller_test.go","line":51,"kind":"func","signature":"()","scope":"fencing.recordingFencer","language":"Go"}
 {"name":"revokes","path":"internal/csi/publish_test.go","line":72,"kind":"func","signature":"()","scope":"csi.fencingBackend","language":"Go"}
 {"name":"roles","path":"test/docs/docs_test.go","line":158,"kind":"var","scope":"docs_test","language":"Go"}
-{"name":"rollNodes","path":"operator/internal/controller/truenascsidriver_controller.go","line":535,"kind":"func","signature":"(ctx context.Context, cr *truenasv1alpha1.TrueNASCSIDriver, ns, revision string,)","scope":"controller.TrueNASCSIDriverReconciler","language":"Go"}
+{"name":"rollNodes","path":"operator/internal/controller/truenascsidriver_controller.go","line":546,"kind":"func","signature":"(ctx context.Context, cr *truenasv1alpha1.TrueNASCSIDriver, ns, revision string,)","scope":"controller.TrueNASCSIDriverReconciler","language":"Go"}
 {"name":"rollout","path":"operator/internal/rollout/busy.go","line":1,"kind":"package","language":"Go"}
 {"name":"rollout","path":"operator/internal/rollout/rollout.go","line":13,"kind":"package","language":"Go"}
 {"name":"rollout_test","path":"operator/internal/rollout/rollout_test.go","line":1,"kind":"package","language":"Go"}
@@ -3928,7 +3929,7 @@
 {"name":"scrubErrors","path":"internal/obs/pool.go","line":37,"kind":"var","scope":"obs","language":"Go"}
 {"name":"scrubState","path":"internal/obs/pool.go","line":32,"kind":"var","scope":"obs","language":"Go"}
 {"name":"secret","path":"internal/server/server_test.go","line":149,"kind":"member","scope":"server.erroringController","language":"Go"}
-{"name":"secretHandler","path":"operator/internal/controller/truenascsidriver_controller.go","line":865,"kind":"func","signature":"()","scope":"controller.TrueNASCSIDriverReconciler","language":"Go"}
+{"name":"secretHandler","path":"operator/internal/controller/truenascsidriver_controller.go","line":886,"kind":"func","signature":"()","scope":"controller.TrueNASCSIDriverReconciler","language":"Go"}
 {"name":"secretLen","path":"internal/backend/iscsi/target.go","line":238,"kind":"const","scope":"iscsi","language":"Go"}
 {"name":"secretName","path":"internal/backend/smb/smb.go","line":141,"kind":"member","scope":"smb.params","language":"Go"}
 {"name":"secretNamespace","path":"internal/backend/smb/smb.go","line":142,"kind":"member","scope":"smb.params","language":"Go"}
@@ -3946,7 +3947,7 @@
 {"name":"serve","path":"internal/truenas/core/fake/server.go","line":144,"kind":"func","signature":"(w http.ResponseWriter, r *http.Request)","scope":"fake.Server","language":"Go"}
 {"name":"serve","path":"internal/truenas/fake/server.go","line":261,"kind":"func","signature":"(w http.ResponseWriter, r *http.Request)","scope":"fake.Server","language":"Go"}
 {"name":"serveAppliance","path":"internal/arraymetrics/collector_test.go","line":46,"kind":"func","signature":"(s *fake.Server, datasets []map[string]any, sessions int)","scope":"arraymetrics","language":"Go"}
-{"name":"serveHTTP","path":"cmd/truenas-csi/main.go","line":354,"kind":"func","signature":"(cfg *config.Config)","scope":"main","language":"Go"}
+{"name":"serveHTTP","path":"cmd/truenas-csi/main.go","line":368,"kind":"func","signature":"(cfg *config.Config)","scope":"main","language":"Go"}
 {"name":"serveNamespaceDataset","path":"internal/csi/namespacequota_test.go","line":49,"kind":"func","signature":"(s *fake.Server, path, namespace, recordedQuota string, used int64)","scope":"csi","language":"Go"}
 {"name":"server","path":"internal/backend/nfs/nfs.go","line":85,"kind":"member","scope":"nfs.params","language":"Go"}
 {"name":"server","path":"internal/backend/nfs/nfs.go","line":71,"kind":"member","scope":"nfs.Backend","language":"Go"}
@@ -3955,15 +3956,15 @@
 {"name":"server","path":"internal/server/server.go","line":2,"kind":"package","language":"Go"}
 {"name":"server","path":"internal/server/server_test.go","line":1,"kind":"package","language":"Go"}
 {"name":"server","path":"test/integration/integration_test.go","line":28,"kind":"member","scope":"integration.env","language":"Go"}
-{"name":"serverSideApplier","path":"operator/internal/controller/truenascsidriver_controller.go","line":838,"kind":"struct","scope":"controller","language":"Go"}
+{"name":"serverSideApplier","path":"operator/internal/controller/truenascsidriver_controller.go","line":849,"kind":"struct","scope":"controller","language":"Go"}
 {"name":"sessions","path":"internal/arraymetrics/collector.go","line":114,"kind":"member","scope":"arraymetrics.snapshot","language":"Go"}
 {"name":"sessions","path":"internal/node/iscsi_test.go","line":65,"kind":"member","scope":"node.iscsiHandler","language":"Go"}
 {"name":"sessions","path":"internal/podmon/connectivity_test.go","line":40,"kind":"member","scope":"podmon.fakeAppliances","language":"Go"}
 {"name":"setCondition","path":"internal/replication/controller/controller.go","line":225,"kind":"func","signature":"(spg *v1alpha1.StorageProtectionGroup, typ string, status metav1.ConditionStatus, reason, message string)","scope":"controller","language":"Go"}
-{"name":"setCondition","path":"operator/internal/controller/truenascsidriver_controller.go","line":710,"kind":"func","signature":"(status *truenasv1alpha1.TrueNASCSIDriverStatus, generation int64, condType string, state metav1.ConditionStatus, reason, message string,)","scope":"controller","language":"Go"}
+{"name":"setCondition","path":"operator/internal/controller/truenascsidriver_controller.go","line":721,"kind":"func","signature":"(status *truenasv1alpha1.TrueNASCSIDriverStatus, generation int64, condType string, state metav1.ConditionStatus, reason, message string,)","scope":"controller","language":"Go"}
 {"name":"setHosts","path":"internal/backend/nfs/access.go","line":92,"kind":"func","signature":"(ctx context.Context, shareID int, hosts []string)","scope":"nfs.Backend","language":"Go"}
 {"name":"setHostsAllow","path":"internal/backend/smb/access.go","line":147,"kind":"func","signature":"(ctx context.Context, share *smbShare, allow []string)","scope":"smb.Backend","language":"Go"}
-{"name":"setOwner","path":"operator/internal/controller/truenascsidriver_controller.go","line":799,"kind":"func","signature":"(obj *unstructured.Unstructured, cr *truenasv1alpha1.TrueNASCSIDriver)","scope":"controller","language":"Go"}
+{"name":"setOwner","path":"operator/internal/controller/truenascsidriver_controller.go","line":810,"kind":"func","signature":"(obj *unstructured.Unstructured, cr *truenasv1alpha1.TrueNASCSIDriver)","scope":"controller","language":"Go"}
 {"name":"setProp","path":"internal/backend/smb/smb_test.go","line":99,"kind":"func","signature":"(m map[string]any)","scope":"smb.fakeDataset","language":"Go"}
 {"name":"setSuspended","path":"internal/replication/manager.go","line":846,"kind":"func","signature":"(ctx context.Context, g Group, suspended bool)","scope":"replication.Manager","language":"Go"}
 {"name":"setTransfers","path":"internal/replication/manager.go","line":536,"kind":"func","signature":"(ctx context.Context, src caller, g Group, st *State, enabled bool)","scope":"replication.Manager","language":"Go"}
@@ -4089,7 +4090,7 @@
 {"name":"strings_","path":"test/chart/chart_test.go","line":176,"kind":"func","signature":"(v any)","scope":"chart_test","language":"Go"}
 {"name":"stripComments","path":"internal/fencing/controller_test.go","line":463,"kind":"func","signature":"(body string)","scope":"fencing","language":"Go"}
 {"name":"stripComments","path":"internal/podmon/connectivity_test.go","line":431,"kind":"func","signature":"(body string)","scope":"podmon","language":"Go"}
-{"name":"stripTransitionTimes","path":"operator/internal/controller/truenascsidriver_controller.go","line":740,"kind":"func","signature":"(s *truenasv1alpha1.TrueNASCSIDriverStatus)","scope":"controller","language":"Go"}
+{"name":"stripTransitionTimes","path":"operator/internal/controller/truenascsidriver_controller.go","line":751,"kind":"func","signature":"(s *truenasv1alpha1.TrueNASCSIDriverStatus)","scope":"controller","language":"Go"}
 {"name":"stubBackend","path":"internal/backend/registry_test.go","line":15,"kind":"struct","scope":"backend","language":"Go"}
 {"name":"stubChecker","path":"internal/fencing/controller_test.go","line":58,"kind":"struct","scope":"fencing","language":"Go"}
 {"name":"stubLister","path":"internal/reconcile/orphans_test.go","line":15,"kind":"struct","scope":"reconcile","language":"Go"}
@@ -4243,7 +4244,7 @@
 {"name":"updateSnapshotTask","path":"internal/replication/calls.go","line":186,"kind":"func","signature":"(ctx context.Context, c caller, id int, patch map[string]any)","scope":"replication","language":"Go"}
 {"name":"upgrade","path":"operator/internal/upgrade/upgrade.go","line":36,"kind":"package","language":"Go"}
 {"name":"upgradeCase","path":"operator/internal/controller/truenascsidriver_controller_test.go","line":533,"kind":"struct","scope":"controller","language":"Go"}
-{"name":"upgradeTable","path":"operator/internal/controller/truenascsidriver_controller.go","line":357,"kind":"func","signature":"()","scope":"controller.TrueNASCSIDriverReconciler","language":"Go"}
+{"name":"upgradeTable","path":"operator/internal/controller/truenascsidriver_controller.go","line":363,"kind":"func","signature":"()","scope":"controller.TrueNASCSIDriverReconciler","language":"Go"}
 {"name":"upgradeTable","path":"operator/internal/controller/truenascsidriver_controller_test.go","line":525,"kind":"var","scope":"controller","language":"Go"}
 {"name":"upgrade_test","path":"operator/internal/upgrade/upgrade_test.go","line":1,"kind":"package","language":"Go"}
 {"name":"upgrader","path":"internal/truenas/fake/server.go","line":252,"kind":"var","scope":"fake","language":"Go"}
@@ -4349,7 +4350,7 @@
 {"name":"writeSMBCredentials","path":"internal/node/cifs.go","line":188,"kind":"func","signature":"(volumeID string, c smbCredentials)","scope":"node.Node","language":"Go"}
 {"name":"writeStageRecord","path":"internal/csi/node.go","line":105,"kind":"func","signature":"(stagingPath string, pc map[string]string)","scope":"csi","language":"Go"}
 {"name":"writeStatus","path":"internal/replication/controller/controller.go","line":293,"kind":"func","signature":"(spg *v1alpha1.StorageProtectionGroup, g replication.Group, s *replication.Status)","scope":"controller","language":"Go"}
-{"name":"writeStatus","path":"operator/internal/controller/truenascsidriver_controller.go","line":688,"kind":"func","signature":"(ctx context.Context, cr *truenasv1alpha1.TrueNASCSIDriver, status *truenasv1alpha1.TrueNASCSIDriverStatus,)","scope":"controller.TrueNASCSIDriverReconciler","language":"Go"}
+{"name":"writeStatus","path":"operator/internal/controller/truenascsidriver_controller.go","line":699,"kind":"func","signature":"(ctx context.Context, cr *truenasv1alpha1.TrueNASCSIDriver, status *truenasv1alpha1.TrueNASCSIDriverStatus,)","scope":"controller.TrueNASCSIDriverReconciler","language":"Go"}
 {"name":"writeTicks","path":"internal/podmon/volumeio.go","line":85,"kind":"member","scope":"podmon.volumeIO","language":"Go"}
 {"name":"writeVerbs","path":"test/chart/chart_test.go","line":32,"kind":"var","scope":"chart_test","language":"Go"}
 {"name":"writerMode","path":"internal/csi/publish_test.go","line":180,"kind":"const","scope":"csi","language":"Go"}

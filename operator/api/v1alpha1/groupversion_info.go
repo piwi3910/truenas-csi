@@ -6,8 +6,9 @@
 package v1alpha1
 
 import (
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"sigs.k8s.io/controller-runtime/pkg/scheme"
 )
 
 var (
@@ -15,8 +16,18 @@ var (
 	GroupVersion = schema.GroupVersion{Group: "truenas.watteel.com", Version: "v1alpha1"}
 
 	// SchemeBuilder registers the Go types with a scheme.
-	SchemeBuilder = &scheme.Builder{GroupVersion: GroupVersion}
+	//
+	// apimachinery's builder rather than controller-runtime's, which is
+	// deprecated for the reason that applies here: an api package should be
+	// cheap to import, so it should not pull controller-runtime in behind it.
+	SchemeBuilder = runtime.NewSchemeBuilder(addKnownTypes)
 
 	// AddToScheme adds the types in this group-version to a scheme.
 	AddToScheme = SchemeBuilder.AddToScheme
 )
+
+func addKnownTypes(s *runtime.Scheme) error {
+	s.AddKnownTypes(GroupVersion, &TrueNASCSIDriver{}, &TrueNASCSIDriverList{})
+	metav1.AddToGroupVersion(s, GroupVersion)
+	return nil
+}

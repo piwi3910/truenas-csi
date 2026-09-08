@@ -43,7 +43,9 @@ func Fingerprint(refs []Ref) string {
 	})
 	h := sha256.New()
 	for _, r := range ordered {
-		fmt.Fprintf(h, "%s\x00%s\x00%s\x00", r.Secret, r.Key, r.ResourceVersion)
+		// hash.Hash.Write is documented never to return an error, so the
+		// discard is the honest form rather than a check that can never fire.
+		_, _ = fmt.Fprintf(h, "%s\x00%s\x00%s\x00", r.Secret, r.Key, r.ResourceVersion)
 	}
 	return hex.EncodeToString(h.Sum(nil))[:16]
 }

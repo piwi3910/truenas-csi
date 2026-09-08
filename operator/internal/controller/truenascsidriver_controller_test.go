@@ -19,7 +19,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -612,7 +612,7 @@ func TestUpgradePathGating(t *testing.T) {
 			}
 
 			applier := &recordingApplier{}
-			recorder := record.NewFakeRecorder(16)
+			recorder := events.NewFakeRecorder(16)
 			r := newReconciler(t, applier, nil, driver, credentialSecret("1", "1-secret-key"),
 				nodeDaemonSet(0))
 			r.Recorder = recorder
@@ -694,7 +694,7 @@ func TestSuccessfulUpgradeEmitsAnEvent(t *testing.T) {
 	driver.Spec.Image.Tag = "0.9.0"
 	driver.Annotations = map[string]string{PreviousVersionAnnotation: "0.5.0"}
 
-	recorder := record.NewFakeRecorder(16)
+	recorder := events.NewFakeRecorder(16)
 	r := newReconciler(t, &recordingApplier{}, nil, driver, credentialSecret("1", "1-secret-key"),
 		nodeDaemonSet(0))
 	r.Recorder = recorder
@@ -711,7 +711,7 @@ func TestFreshInstallEmitsNoUpgradeEvent(t *testing.T) {
 	driver := testDriver()
 	driver.Spec.Image.Tag = "0.9.0"
 
-	recorder := record.NewFakeRecorder(16)
+	recorder := events.NewFakeRecorder(16)
 	r := newReconciler(t, &recordingApplier{}, nil, driver, credentialSecret("1", "1-secret-key"),
 		nodeDaemonSet(0))
 	r.Recorder = recorder
@@ -727,7 +727,7 @@ func TestFreshInstallEmitsNoUpgradeEvent(t *testing.T) {
 
 // assertEvent drains the recorder looking for one event of the given type and
 // reason.
-func assertEvent(t *testing.T, recorder *record.FakeRecorder, eventType, reason string) {
+func assertEvent(t *testing.T, recorder *events.FakeRecorder, eventType, reason string) {
 	t.Helper()
 	var seen []string
 	for {

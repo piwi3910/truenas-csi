@@ -288,13 +288,13 @@ spec:
               resources: ["leases"]
               verbs:
                 ["get", "list", "watch", "create", "update", "patch", "delete"]
-            - apiGroups: [""]
+            - apiGroups: ["", "events.k8s.io"]
               resources: ["events"]
               verbs: ["create", "patch"]
       clusterPermissions:
         - serviceAccountName: truenas-csi-operator
           rules:
-            - apiGroups: [""]
+            - apiGroups: ["", "events.k8s.io"]
               resources: ["events"]
               verbs: ["create", "patch"]
             - apiGroups: [""]

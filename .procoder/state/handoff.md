@@ -1,14 +1,14 @@
 # procoder handoff
 
 <!-- procoder:facts -->
-generated: 2026-09-08T13:32:59Z
-branch: main — 12 ahead, 0 behind feat/foundation
-head: 3ff809f
+generated: 2026-09-08T14:42:33Z
+branch: main — 13 ahead, 0 behind feat/foundation
+head: 689a95e
 dirty files: none (clean tree)
 sprint: none — no backlog yet (`procoder backlog` starts one)
 open tasks: none
 unlearned lessons: none — no ledger at .procoder/github/LESSONS.md
-index: none — `procoder index build` has not run here
+index: built at 3ff809f (304 files, 4359 symbols) — STALE, HEAD is 689a95e; run `procoder index build`
 <!-- /procoder:facts -->
 
 ## Notes

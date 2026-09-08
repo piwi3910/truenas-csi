@@ -625,6 +625,6 @@ type TrueNASCSIDriverList struct {
 	Items           []TrueNASCSIDriver `json:"items"`
 }
 
-func init() {
-	SchemeBuilder.Register(&TrueNASCSIDriver{}, &TrueNASCSIDriverList{})
-}
+// The types are registered by addKnownTypes in groupversion_info.go, which
+// apimachinery's SchemeBuilder calls. controller-runtime's Builder.Register
+// took the objects directly; apimachinery's takes functions.
