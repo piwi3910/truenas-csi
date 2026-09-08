@@ -1,9 +1,9 @@
 # procoder handoff
 
 <!-- procoder:facts -->
-generated: 2026-09-08T10:23:44Z
-branch: main — 10 ahead, 0 behind feat/foundation
-head: 071344f
+generated: 2026-09-08T13:32:59Z
+branch: main — 12 ahead, 0 behind feat/foundation
+head: 3ff809f
 dirty files: none (clean tree)
 sprint: none — no backlog yet (`procoder backlog` starts one)
 open tasks: none

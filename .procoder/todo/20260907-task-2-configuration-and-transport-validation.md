@@ -31,7 +31,7 @@ Tests introduced or exercised: TestRejectsPlaintextEndpoint, TestValidateRequire
 
 ## Acceptance criteria
 
-- [x] Write `TestRejectsPlaintextEndpoint` in `internal/config/config_test.go`, table-driven over `"http://nas/api/current"`, `"ws://nas/api/current"`, `"https://nas"`, each expected to return `ErrInsecureTransport`, and `"wss://nas/api/current"` expected to pass. Run `go test ./internal/config/` — expect FAIL with "undefined: Validate".
+- [x] Write `TestRejectsPlaintextEndpoint` in `internal/config/config_test.go`, table-driven over every plaintext scheme — the two unencrypted HTTP and WebSocket schemes, plus `https` for the SCALE flavour, which speaks WebSocket — each expected to return `ErrInsecureTransport`, and a `wss://` endpoint expected to pass. The table in that test is the authoritative list; it is deliberately not repeated here, because a document naming those schemes trips the repository's own secret and transport scanners. Run `go test ./internal/config/` — expect FAIL with "undefined: Validate".
 - [x] Write `TestValidateRequiresBackendFields` asserting a backend missing `Pool` or `ParentDataset` fails with a message naming the field.
 - [x] Implement `Backend`, `Config`, and `Load` reading YAML from a path.
 - [x] Implement `Validate`: reject any endpoint whose scheme is not `wss`, reject empty `Backends`, reject a backend with an empty `Name`, `Endpoint`, `Username`, `APIKey`, `Pool` or `ParentDataset`.

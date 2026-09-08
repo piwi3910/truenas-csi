@@ -168,6 +168,20 @@ func run(o options) error {
 	if err != nil {
 		return err
 	}
+
+	// Certificate verification is a per-backend trust decision, and turning it
+	// off is silent everywhere else: the connection succeeds, nothing fails, and
+	// the driver keeps presenting an API key with storage-administrator rights
+	// over a channel it has stopped authenticating. Said once at startup rather
+	// than in TLSConfig, which runs on every dial AND every reconnect.
+	for name, b := range cfg.Backends {
+		if b.InsecureSkipVerify {
+			slog.Warn("certificate verification is DISABLED for this appliance: the "+
+				"connection is encrypted but unauthenticated, so anything that can "+
+				"intercept it can read the API key. Supply caCert instead",
+				"backend", name)
+		}
+	}
 	if o.nodeID != "" {
 		cfg.NodeID = o.nodeID
 	}
