@@ -10,7 +10,9 @@ package release_test
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"strings"
@@ -158,9 +160,38 @@ func TestReleaseArtifacts(t *testing.T) {
 			"--certificate-identity-regexp", identity,
 			"--certificate-oidc-issuer", issuer,
 			rel.ref())
-		if !strings.Contains(out, "spdx") && !strings.Contains(out, "SPDX") {
-			t.Errorf("attestation on %s does not look like an SPDX SBOM:\n%s", rel.ref(), out)
+
+		// cosign writes its human-readable verification block to stderr and a
+		// DSSE envelope to stdout, and the envelope's payload is BASE64 — so
+		// grepping the combined output for "spdx" tests nothing: it cannot match
+		// a valid SBOM, and would match a stray mention in the preamble. The
+		// payload has to be decoded and inspected.
+		env, err := dssePayload(out)
+		if err != nil {
+			t.Fatalf("reading the attestation envelope for %s: %v\n%s", rel.ref(), err, out)
 		}
+		var doc struct {
+			Predicate struct {
+				SPDXVersion string `json:"spdxVersion"`
+				SPDXID      string `json:"SPDXID"`
+				Packages    []struct {
+					Name string `json:"name"`
+				} `json:"packages"`
+			} `json:"predicate"`
+		}
+		if err := json.Unmarshal(env, &doc); err != nil {
+			t.Fatalf("decoding the attestation predicate for %s: %v", rel.ref(), err)
+		}
+		if doc.Predicate.SPDXVersion == "" {
+			t.Errorf("the attestation on %s carries no spdxVersion, so it is not an SPDX SBOM:\n%s",
+				rel.ref(), truncate(string(env), 2000))
+		}
+		// An SBOM listing nothing is not an SBOM. syft on a scratch image with a
+		// single static binary still reports the binary and its Go modules.
+		if len(doc.Predicate.Packages) == 0 {
+			t.Errorf("the SBOM attested on %s lists no packages", rel.ref())
+		}
+		t.Logf("SBOM %s lists %d packages", doc.Predicate.SPDXVersion, len(doc.Predicate.Packages))
 	})
 }
 
@@ -186,4 +217,31 @@ func keys(m map[string]bool) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// dssePayload extracts and decodes the base64 payload of the first DSSE
+// envelope in cosign's output, ignoring the human-readable lines around it.
+func dssePayload(out string) ([]byte, error) {
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "{") {
+			continue
+		}
+		var env struct {
+			Payload string `json:"payload"`
+		}
+		if err := json.Unmarshal([]byte(line), &env); err != nil || env.Payload == "" {
+			continue
+		}
+		return base64.StdEncoding.DecodeString(env.Payload)
+	}
+	return nil, errors.New("no DSSE envelope with a payload found in the output")
+}
+
+// truncate keeps a failure message readable when the payload is enormous.
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "\n...[truncated]"
 }
