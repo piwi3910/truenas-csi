@@ -41,6 +41,27 @@ type fakeShare struct {
 	id   int
 	name string
 	path string
+	// options is the nested object the appliance really returns. It is kept
+	// whole, and not reduced to the two host lists, because a share's other
+	// options must survive an access-list update — a LEGACY_SHARE carries a
+	// dozen of them and an update replaces the object outright.
+	options map[string]any
+}
+
+func (s *fakeShare) json() map[string]any {
+	return map[string]any{"id": s.id, "path": s.path, "name": s.name, "options": s.options}
+}
+
+// hostList reads one of the share's access lists back out.
+func (s *fakeShare) hostList(key string) []string {
+	raw, _ := s.options[key].([]any)
+	out := make([]string, 0, len(raw))
+	for _, e := range raw {
+		if v, ok := e.(string); ok {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 type fakeDataset struct {
@@ -186,8 +207,13 @@ func newNAS(t *testing.T) *nas {
 		path, _ := payload["path"].(string)
 		name, _ := payload["name"].(string)
 		n.nextID++
-		n.shares[path] = &fakeShare{id: n.nextID, name: name, path: path}
-		return map[string]any{"id": n.nextID, "path": path, "name": name}, nil
+		opts, _ := payload["options"].(map[string]any)
+		if opts == nil {
+			opts = map[string]any{}
+		}
+		sh := &fakeShare{id: n.nextID, name: name, path: path, options: opts}
+		n.shares[path] = sh
+		return sh.json(), nil
 	})
 
 	n.Handle("sharing.smb.query", func(p []json.RawMessage) (any, error) {
@@ -198,7 +224,28 @@ func newNAS(t *testing.T) *nas {
 		if !ok {
 			return []any{}, nil
 		}
-		return []any{map[string]any{"id": s.id, "path": s.path, "name": s.name}}, nil
+		return []any{s.json()}, nil
+	})
+
+	n.Handle("sharing.smb.update", func(p []json.RawMessage) (any, error) {
+		var id int
+		var patch map[string]any
+		mustJSON(t, p[0], &id)
+		mustJSON(t, p[1], &patch)
+		n.mu.Lock()
+		defer n.mu.Unlock()
+		for _, sh := range n.shares {
+			if sh.id != id {
+				continue
+			}
+			// The appliance replaces `options` wholesale, which is exactly why
+			// the driver has to read-modify-write it.
+			if opts, ok := patch["options"].(map[string]any); ok {
+				sh.options = opts
+			}
+			return sh.json(), nil
+		}
+		return nil, &fake.RPCError{Code: -32602, ErrName: "EINVAL", Reason: "[ENOENT] share"}
 	})
 
 	n.Handle("sharing.smb.delete", func(p []json.RawMessage) (any, error) {
@@ -215,6 +262,13 @@ func newNAS(t *testing.T) *nas {
 	})
 
 	return n
+}
+
+// share returns the appliance's view of the share for a path.
+func (n *nas) share(path string) *fakeShare {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.shares[path]
 }
 
 func (n *nas) dataset(id string) *fakeDataset {

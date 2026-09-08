@@ -222,9 +222,29 @@ snapshotter:
   install: false
 
 csidriver:
-  # This driver has no appliance-side attach step: everything happens when the
-  # node stages the volume, so no VolumeAttachment is needed.
-  attachRequired: false
+  # The driver grants and revokes appliance-side access per node:
+  # ControllerPublishVolume creates the iSCSI LUN mapping / NVMe port binding or
+  # adds the node to the NFS/SMB host list, and ControllerUnpublishVolume takes
+  # it away. That revoke is the FENCE a stuck node is removed with, and the CO
+  # only ever calls it for a driver that declares an attach step.
+  #
+  # UPGRADING FROM A RELEASE THAT HAD THIS false: spec.attachRequired is
+  # IMMUTABLE. Helm cannot change it in place; the upgrade fails, or silently
+  # leaves the old value. The CSIDriver object must be deleted and recreated:
+  #
+  #   kubectl delete csidriver csi.truenas.watteel.com
+  #   helm upgrade truenas-csi deploy/helm/truenas-csi -n truenas-csi
+  #
+  # During that window: volumes that are already mounted keep working — the
+  # mount is a node-side fact and nothing in this change touches it — and reads
+  # and writes continue uninterrupted. What does NOT work is anything that needs
+  # a new attachment: a pod starting, rescheduling, or a new PVC being bound.
+  # Those retry, so they recover on their own once the object is back.
+  #
+  # After the upgrade, the first ControllerPublishVolume of each existing volume
+  # adopts the mapping it already has rather than making a second one, so no
+  # running workload has to be restarted to migrate it.
+  attachRequired: true
   podInfoOnMount: true
   storageCapacity: true
   fsGroupPolicy: File

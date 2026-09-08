@@ -56,9 +56,10 @@ func readStageRecord(stagingPath string) map[string]string {
 
 // mergeCtx combines the volume context with the publish context.
 //
-// This driver has no ControllerPublishVolume step, so everything the node needs
-// travels in the volume context; the publish context is still honoured when a
-// CO supplies one, and wins on conflict because it is the fresher value.
+// Everything known at provisioning time travels in the volume context; what is
+// decided per attachment — the iSCSI LUN above all — arrives in the publish
+// context from ControllerPublishVolume. The publish context wins on conflict
+// because it is both the fresher value and the attachment-specific one.
 func mergeCtx(volumeCtx, publishCtx map[string]string) map[string]string {
 	out := make(map[string]string, len(volumeCtx)+len(publishCtx))
 	for k, v := range volumeCtx {

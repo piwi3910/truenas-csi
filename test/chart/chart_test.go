@@ -237,11 +237,12 @@ func TestChartRendersBothWorkloads(t *testing.T) {
 			t.Errorf("CSIDriver spec.%s = %v, want true", field, dig(csiDriver, "spec", field))
 		}
 	}
-	// This driver has no appliance-side attach step: everything happens when the
-	// node stages the volume. Declaring attachRequired would make Kubernetes wait
-	// for a VolumeAttachment that nothing ever creates.
-	if v, ok := boolOf(dig(csiDriver, "spec", "attachRequired")); !ok || v {
-		t.Errorf("CSIDriver spec.attachRequired = %v, want false", dig(csiDriver, "spec", "attachRequired"))
+	// The driver grants and revokes appliance-side access per node, and that
+	// revoke is the fence. A CO only calls ControllerUnpublishVolume for a
+	// driver that declares an attach step, so attachRequired=false would leave
+	// the fence unreachable — every volume would stay mapped forever.
+	if v, ok := boolOf(dig(csiDriver, "spec", "attachRequired")); !ok || !v {
+		t.Errorf("CSIDriver spec.attachRequired = %v, want true", dig(csiDriver, "spec", "attachRequired"))
 	}
 	if got := str(dig(csiDriver, "spec", "fsGroupPolicy")); got != "File" {
 		t.Errorf("CSIDriver spec.fsGroupPolicy = %q, want File", got)

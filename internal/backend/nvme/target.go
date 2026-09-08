@@ -131,28 +131,6 @@ func (b *nvmeBackend) ensurePort(ctx context.Context, p Params, rollback *[]func
 	return created, nil
 }
 
-// ensurePortBinding exports the subsystem through the port.
-func (b *nvmeBackend) ensurePortBinding(ctx context.Context, portID, subsysID int, rollback *[]func()) error {
-	bindings, err := b.c.NVMePortSubsysList(ctx, subsysID)
-	if err != nil {
-		return fmt.Errorf("listing port bindings: %w", err)
-	}
-	for _, ps := range bindings {
-		if ps.PortID.ID == portID {
-			return nil
-		}
-	}
-	created, err := b.c.NVMePortSubsysCreate(ctx, portID, subsysID)
-	if err != nil {
-		return fmt.Errorf("binding subsystem %d to port %d: %w", subsysID, portID, err)
-	}
-	psID := created.ID
-	*rollback = append(*rollback, func() {
-		_ = b.c.NVMePortSubsysDelete(context.WithoutCancel(ctx), psID)
-	})
-	return nil
-}
-
 // ensureHostACL registers the configured initiator NQNs and grants them access
 // to this volume's subsystem.
 //

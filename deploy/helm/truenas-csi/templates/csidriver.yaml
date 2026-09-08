@@ -9,6 +9,11 @@ metadata:
 spec:
   # An iSCSI LUN must be attached before a pod can use it, and the attachment is
   # the controller's business, not the kubelet's.
+  #
+  # This field is IMMUTABLE. Changing it in values.yaml is not enough: the
+  # CSIDriver object has to be deleted and recreated. See the upgrade note in
+  # values.yaml and the "Upgrading to the fenced attach model" section of
+  # README.md.
   attachRequired: {{ .Values.csidriver.attachRequired }}
   # Pod metadata reaches NodePublishVolume, which is what makes per-workload
   # diagnostics possible.

@@ -2,7 +2,9 @@ package csi
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -22,6 +24,7 @@ type controller struct {
 	reg   *backend.Registry
 	cfg   *config.Config
 	locks *VolumeLocks
+	nodes backend.NodeResolver
 }
 
 // NewController builds the Controller service.
@@ -33,7 +36,8 @@ func NewController(reg *backend.Registry, cfg *config.Config) csipb.ControllerSe
 		}
 		return backendPaths{pool: b.Pool, parent: b.ParentDataset}, nil
 	}
-	return &controller{reg: reg, cfg: cfg, locks: NewVolumeLocks()}
+	return &controller{reg: reg, cfg: cfg, locks: NewVolumeLocks(),
+		nodes: backend.NewNodeResolver(cfg.NodeID)}
 }
 
 func (c *controller) ControllerGetCapabilities(context.Context, *csipb.ControllerGetCapabilitiesRequest) (*csipb.ControllerGetCapabilitiesResponse, error) {
@@ -49,6 +53,10 @@ func (c *controller) ControllerGetCapabilities(context.Context, *csipb.Controlle
 		rpc(csipb.ControllerServiceCapability_RPC_EXPAND_VOLUME),
 		rpc(csipb.ControllerServiceCapability_RPC_CLONE_VOLUME),
 		rpc(csipb.ControllerServiceCapability_RPC_GET_CAPACITY),
+		// PUBLISH_UNPUBLISH_VOLUME is what gives this driver a fence at all:
+		// without it the CO never calls ControllerUnpublishVolume, and nothing
+		// ever revokes a node's appliance-side access to a volume.
+		rpc(csipb.ControllerServiceCapability_RPC_PUBLISH_UNPUBLISH_VOLUME),
 	}}, nil
 }
 
@@ -176,8 +184,12 @@ func (c *controller) CreateVolume(ctx context.Context, req *csipb.CreateVolumeRe
 	}
 	obs.Logger(ctx).Info("volume created", "capacity", vol.CapacityBytes, "protocol", id.Protocol)
 
-	// Without a ControllerPublishVolume step the node receives everything it
-	// needs through the volume context, so the publish context is merged in here.
+	// Everything the node can be told before an attach travels in the volume
+	// context, so a PersistentVolume carries the server, share and identity of
+	// its volume without a round trip. What is decided per attachment — the
+	// iSCSI LUN, above all — is deliberately NOT here: it does not exist yet,
+	// and ControllerPublishVolume returns it. PublishContext is read-only, so a
+	// volume it cannot describe yet is skipped rather than provisioned open.
 	vctx := map[string]string{}
 	for k, v := range vol.Context {
 		vctx[k] = v
@@ -279,25 +291,209 @@ func (c *controller) ControllerExpandVolume(ctx context.Context, req *csipb.Cont
 	return &csipb.ControllerExpandVolumeResponse{CapacityBytes: got, NodeExpansionRequired: needsNode}, nil
 }
 
-func (c *controller) ControllerPublishVolume(ctx context.Context, req *csipb.ControllerPublishVolumeRequest) (*csipb.ControllerPublishVolumeResponse, error) {
+// ControllerPublishVolume grants one node appliance-side access to a volume.
+//
+// The grant is recorded in the volume's own publish ledger as well as made on
+// the appliance, because the appliance cannot answer "which node holds this".
+// A shared iSCSI target has no per-node LUN, and an export's host list does not
+// say which entry belongs to whom — so the single-writer rule below, and the
+// revoke that has to work after the Node object is deleted, both read from the
+// ledger rather than from appliance state.
+func (c *controller) ControllerPublishVolume(ctx context.Context, req *csipb.ControllerPublishVolumeRequest) (resp *csipb.ControllerPublishVolumeResponse, err error) {
+	start := time.Now()
+	defer func() { obs.ObserveCSI("ControllerPublishVolume", err, time.Since(start)) }()
+
+	if req.GetVolumeId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "volume id is required")
+	}
+	if req.GetNodeId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "node id is required")
+	}
+	if req.GetVolumeCapability() == nil {
+		return nil, status.Error(codes.InvalidArgument, "volume capability is required")
+	}
 	id, err := volume.ParseID(req.GetVolumeId())
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "unknown volume %q", req.GetVolumeId())
 	}
-	be, err := c.reg.For(ctx, id.Backend, id.Protocol)
+	mode := req.GetVolumeCapability().GetAccessMode().GetMode()
+	if !supportsAccessMode(id.Protocol, mode) {
+		return nil, status.Errorf(codes.InvalidArgument,
+			"protocol %s does not support access mode %s", id.Protocol, mode)
+	}
+	ctx = obs.WithVolume(ctx, id.String())
+
+	release, ok := c.locks.TryAcquire(id.String())
+	if !ok {
+		return nil, status.Errorf(codes.Aborted, "another operation is in progress for volume %s", id)
+	}
+	defer release()
+
+	if err := c.requireVolumeExists(ctx, id); err != nil {
+		return nil, err
+	}
+	node, err := c.nodes.Resolve(ctx, req.GetNodeId())
+	if err != nil {
+		if errors.Is(err, backend.ErrNodeNotFound) {
+			return nil, status.Errorf(codes.NotFound, "node %q does not exist", req.GetNodeId())
+		}
+		return nil, status.Errorf(codes.Internal, "resolving node %q: %v", req.GetNodeId(), obs.Redact(err.Error()))
+	}
+
+	cl, err := c.reg.Client(ctx, id.Backend)
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	pc, err := be.PublishContext(ctx, id)
+	grants, err := backend.ReadGrants(ctx, cl, id)
 	if err != nil {
+		return nil, toStatus(err)
+	}
+	if others := grants.Others(node.ID); len(others) > 0 && singleNode(mode) {
+		// The whole point of the fence: a SINGLE_NODE volume must not be
+		// reachable from two nodes at once, and the second publisher is the one
+		// that has to be refused. FailedPrecondition rather than AlreadyExists
+		// is what tells the CO to keep retrying until the first node's
+		// ControllerUnpublishVolume lands.
+		return nil, status.Errorf(codes.FailedPrecondition,
+			"volume %s is published to %v with access mode %s and cannot also be published to %s",
+			id, others, mode, node.ID)
+	}
+
+	pub, err := c.publisher(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	pc, err := pub.Publish(ctx, id, node)
+	if err != nil {
+		return nil, toStatus(err)
+	}
+
+	// Recorded only after the grant succeeded: a ledger entry for access that
+	// was never made would make the next single-writer check refuse a healthy
+	// publish.
+	grants[node.ID] = node.Addrs
+	if err := backend.SaveGrants(ctx, cl, id, grants); err != nil {
 		return nil, toStatus(err)
 	}
 	return &csipb.ControllerPublishVolumeResponse{PublishContext: pc}, nil
 }
 
-func (c *controller) ControllerUnpublishVolume(context.Context, *csipb.ControllerUnpublishVolumeRequest) (*csipb.ControllerUnpublishVolumeResponse, error) {
-	// Detach happens entirely on the node; there is no appliance-side state.
+// ControllerUnpublishVolume revokes a node's appliance-side access — the fence.
+//
+// It is deliberately forgiving about everything except the revoke itself: an
+// unparseable id, a deleted volume and a node that was never published are all
+// success, because CSI requires the CO to be able to retire an attachment whose
+// backing objects have already gone. What it will NOT do is report success
+// while the appliance still serves the data.
+func (c *controller) ControllerUnpublishVolume(ctx context.Context, req *csipb.ControllerUnpublishVolumeRequest) (resp *csipb.ControllerUnpublishVolumeResponse, err error) {
+	start := time.Now()
+	defer func() { obs.ObserveCSI("ControllerUnpublishVolume", err, time.Since(start)) }()
+
+	if req.GetVolumeId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "volume id is required")
+	}
+	id, err := volume.ParseID(req.GetVolumeId())
+	if err != nil {
+		// An unparseable id cannot name anything this driver published.
+		obs.Logger(ctx).Warn("ignoring unpublish for unparseable volume id", "error", err)
+		return &csipb.ControllerUnpublishVolumeResponse{}, nil
+	}
+	ctx = obs.WithVolume(ctx, id.String())
+
+	release, ok := c.locks.TryAcquire(id.String())
+	if !ok {
+		return nil, status.Errorf(codes.Aborted, "another operation is in progress for volume %s", id)
+	}
+	defer release()
+
+	cl, err := c.reg.Client(ctx, id.Backend)
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	grants, err := backend.ReadGrants(ctx, cl, id)
+	if err != nil {
+		if errors.Is(err, backend.ErrVolumeGone) {
+			return &csipb.ControllerUnpublishVolumeResponse{}, nil
+		}
+		return nil, toStatus(err)
+	}
+
+	// An empty node id means "from every node", which is what the CSI spec says
+	// and also what a fencing controller wants when it no longer trusts any of
+	// them.
+	targets := []string{req.GetNodeId()}
+	if req.GetNodeId() == "" {
+		targets = grants.Nodes()
+	}
+	if len(targets) == 0 {
+		return &csipb.ControllerUnpublishVolumeResponse{}, nil
+	}
+
+	pub, err := c.publisher(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	for _, nodeID := range targets {
+		// The ledger, not the Node object, is what the revoke is written from.
+		// Fencing a node most often happens because that node is gone, and a
+		// resolve that fails then would leave its addresses on the share
+		// forever — the exact hole this call exists to close.
+		node := backend.NodeRef{ID: nodeID, Addrs: grants[nodeID]}
+		if live, rErr := c.nodes.Resolve(ctx, nodeID); rErr == nil {
+			node.IQN, node.NQN = live.IQN, live.NQN
+			node.Addrs = union(node.Addrs, live.Addrs)
+		}
+		if err := pub.Unpublish(ctx, id, node); err != nil {
+			return nil, toStatus(err)
+		}
+		delete(grants, nodeID)
+	}
+	if err := backend.SaveGrants(ctx, cl, id, grants); err != nil {
+		return nil, toStatus(err)
+	}
 	return &csipb.ControllerUnpublishVolumeResponse{}, nil
+}
+
+// publisher returns the backend for a volume as a Publisher.
+func (c *controller) publisher(ctx context.Context, id volume.ID) (backend.Publisher, error) {
+	be, err := c.reg.For(ctx, id.Backend, id.Protocol)
+	if err != nil {
+		return nil, toStatus(err)
+	}
+	pub, ok := be.(backend.Publisher)
+	if !ok {
+		return nil, status.Errorf(codes.Internal,
+			"protocol %s cannot grant or revoke node access", id.Protocol)
+	}
+	return pub, nil
+}
+
+// singleNode reports whether an access mode admits at most one node.
+func singleNode(m csipb.VolumeCapability_AccessMode_Mode) bool {
+	switch m {
+	case csipb.VolumeCapability_AccessMode_SINGLE_NODE_WRITER,
+		csipb.VolumeCapability_AccessMode_SINGLE_NODE_READER_ONLY,
+		csipb.VolumeCapability_AccessMode_SINGLE_NODE_SINGLE_WRITER,
+		csipb.VolumeCapability_AccessMode_SINGLE_NODE_MULTI_WRITER:
+		return true
+	}
+	return false
+}
+
+// union merges two address lists without duplicates, in a stable order.
+func union(a, b []string) []string {
+	set := map[string]bool{}
+	for _, v := range append(append([]string{}, a...), b...) {
+		if v != "" {
+			set[v] = true
+		}
+	}
+	out := make([]string, 0, len(set))
+	for v := range set {
+		out = append(out, v)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func (c *controller) ValidateVolumeCapabilities(ctx context.Context, req *csipb.ValidateVolumeCapabilitiesRequest) (*csipb.ValidateVolumeCapabilitiesResponse, error) {

@@ -293,6 +293,23 @@ func (n *nas) install() {
 		return s, nil
 	})
 
+	n.handle("nvmet.subsys.update", func(p []json.RawMessage) (any, error) {
+		id := arg[float64](t, p, 0)
+		patch := arg[map[string]any](t, p, 1)
+		n.mu.Lock()
+		defer n.mu.Unlock()
+		for _, sub := range n.subsys {
+			if norm(sub["id"]) != norm(id) {
+				continue
+			}
+			for k, v := range patch {
+				sub[k] = v
+			}
+			return sub, nil
+		}
+		return nil, notFound("subsystem")
+	})
+
 	n.handle("nvmet.subsys.delete", func(p []json.RawMessage) (any, error) {
 		id := arg[float64](t, p, 0)
 		n.mu.Lock()
@@ -485,6 +502,13 @@ func (n *nas) firstSubsys() map[string]any {
 	return n.subsys[0]
 }
 
+// hostGrants counts the host-to-subsystem ACL entries on the appliance.
+func (n *nas) hostGrants() int {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return len(n.hostSubsys)
+}
+
 func (n *nas) firstPort() map[string]any {
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -583,8 +607,8 @@ func TestNVMeCreateStampsOwnership(t *testing.T) {
 	}
 
 	dsN, subs, nss, ports, links := n.counts()
-	if dsN != 1 || subs != 1 || nss != 1 || ports != 1 || links != 1 {
-		t.Fatalf("want one of each object, got datasets=%d subsys=%d namespaces=%d ports=%d port_subsys=%d",
+	if dsN != 1 || subs != 1 || nss != 1 || ports != 1 || links != 0 {
+		t.Fatalf("want one of each object and NO port binding before publish, got datasets=%d subsys=%d namespaces=%d ports=%d port_subsys=%d",
 			dsN, subs, nss, ports, links)
 	}
 
@@ -626,7 +650,7 @@ func TestNVMeCreateIsIdempotent(t *testing.T) {
 	}
 
 	ds, subs, nss, ports, links := n.counts()
-	if ds != 1 || subs != 1 || nss != 1 || ports != 1 || links != 1 {
+	if ds != 1 || subs != 1 || nss != 1 || ports != 1 || links != 0 {
 		t.Fatalf("a retry must not stack objects, got datasets=%d subsys=%d namespaces=%d ports=%d port_subsys=%d",
 			ds, subs, nss, ports, links)
 	}
@@ -639,7 +663,7 @@ func TestNVMeCreateIsIdempotent(t *testing.T) {
 		t.Fatalf("Create pvc-2: %v", err)
 	}
 	ds, subs, nss, ports, links = n.counts()
-	if ds != 2 || subs != 2 || nss != 2 || links != 2 {
+	if ds != 2 || subs != 2 || nss != 2 || links != 0 {
 		t.Fatalf("a second volume needs its own subsystem and namespace, got datasets=%d subsys=%d namespaces=%d port_subsys=%d",
 			ds, subs, nss, links)
 	}
@@ -662,9 +686,9 @@ func TestNVMeCreateRollsBackOnFailure(t *testing.T) {
 
 	preexisting := n.seedPort("TCP", "192.168.10.253", 4420)
 
-	n.failOn("nvmet.port_subsys.create", &fake.RPCError{Code: -32001, ErrName: "EFAULT", Reason: "boom"})
+	n.failOn("nvmet.namespace.create", &fake.RPCError{Code: -32001, ErrName: "EFAULT", Reason: "boom"})
 	if _, err := b.Create(ctx, createReq("pvc-rb", 1<<30, nil)); err == nil {
-		t.Fatal("Create must fail when the subsystem cannot be bound to the port")
+		t.Fatal("Create must fail when the namespace cannot be made")
 	}
 	if n.hasDataset("Pool0/k8s/pvc-rb") {
 		t.Fatal("the zvol must be rolled back")
@@ -677,12 +701,12 @@ func TestNVMeCreateRollsBackOnFailure(t *testing.T) {
 		t.Fatalf("rollback destroyed a port it did not create: %v", n.firstPort())
 	}
 
-	n.clearFail("nvmet.port_subsys.create")
+	n.clearFail("nvmet.namespace.create")
 	if _, err := b.Create(ctx, createReq("pvc-rb", 1<<30, nil)); err != nil {
 		t.Fatalf("retry after rollback: %v", err)
 	}
 	ds, subs, nss, ports, links := n.counts()
-	if ds != 1 || subs != 1 || nss != 1 || ports != 1 || links != 1 {
+	if ds != 1 || subs != 1 || nss != 1 || ports != 1 || links != 0 {
 		t.Fatalf("retry must build exactly one volume, got datasets=%d subsys=%d namespaces=%d ports=%d port_subsys=%d",
 			ds, subs, nss, ports, links)
 	}
@@ -778,10 +802,13 @@ func TestNVMeExpandRejectsShrink(t *testing.T) {
 	if _, err := b.Create(ctx, createReq("pvc-e", 2<<30, nil)); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
+	// Counted from after Create, which writes the volume's port id as a user
+	// property and so issues a dataset update of its own.
+	before := n.s.CallsTo("pool.dataset.update")
 	if _, err := b.Expand(ctx, volID("pvc-e"), 1<<30); !errors.Is(err, ErrShrinkNotAllowed) {
 		t.Fatalf("want ErrShrinkNotAllowed, got %v", err)
 	}
-	if got := n.s.CallsTo("pool.dataset.update"); got != 0 {
+	if got := n.s.CallsTo("pool.dataset.update") - before; got != 0 {
 		t.Fatalf("a shrink must never reach the middleware, got %d updates", got)
 	}
 
@@ -825,11 +852,12 @@ func TestNVMePortalNeverWildcard(t *testing.T) {
 		t.Fatalf("portal = %q, want the appliance host %q", vol.Context["portal"], want)
 	}
 
-	// PublishContext reads live state and must apply the same rule; the node
-	// may attach long after the controller that provisioned the volume died.
-	pc, err := b.PublishContext(ctx, volID("pvc-w"))
+	// Publish reads live state and must apply the same rule; the node may
+	// attach long after the controller that provisioned the volume died.
+	pc, err := b.Publish(ctx, volID("pvc-w"),
+		backend.NodeRef{ID: "worker-1", Addrs: []string{"10.0.0.1"}})
 	if err != nil {
-		t.Fatalf("PublishContext: %v", err)
+		t.Fatalf("Publish: %v", err)
 	}
 	if pc["portal"] != vol.Context["portal"] {
 		t.Fatalf("PublishContext portal = %q, want %q", pc["portal"], vol.Context["portal"])

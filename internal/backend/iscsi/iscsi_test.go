@@ -93,17 +93,17 @@ func TestISCSICreateIsIdempotent(t *testing.T) {
 	}
 
 	ds, extents, targets, texts := n.counts()
-	if ds != 1 || extents != 1 || targets != 1 || texts != 1 {
-		t.Fatalf("want one of each object, got datasets=%d extents=%d targets=%d targetextents=%d",
+	if ds != 1 || extents != 1 || targets != 1 || texts != 0 {
+		t.Fatalf("want one of each object and NO mapping before publish, got datasets=%d extents=%d targets=%d targetextents=%d",
 			ds, extents, targets, texts)
 	}
 	if first.Context["naa"] == "" || first.Context["naa"] != second.Context["naa"] {
 		t.Fatalf("a retry must return the same NAA: %q then %q", first.Context["naa"], second.Context["naa"])
 	}
-	if first.Context["lun"] != second.Context["lun"] {
-		t.Fatalf("a retry must return the same LUN: %q then %q", first.Context["lun"], second.Context["lun"])
+	if _, ok := first.Context["lun"]; ok {
+		t.Fatalf("CreateVolume must hand out no LUN: the mapping is the fence and belongs to publish, got %v", first.Context)
 	}
-	for _, k := range []string{"portal", "iqn", "lun", "naa"} {
+	for _, k := range []string{"portal", "iqn", "naa"} {
 		if first.Context[k] == "" {
 			t.Fatalf("publish context is missing %q: %v", k, first.Context)
 		}
@@ -112,16 +112,24 @@ func TestISCSICreateIsIdempotent(t *testing.T) {
 		t.Fatalf("iqn must be basename:target, got %q", first.Context["iqn"])
 	}
 
-	// A second volume lands on the next LUN of the SAME target.
-	other, err := b.Create(ctx, createReq("pvc-2", 1<<30, nil))
-	if err != nil {
+	// A second volume lands on the next LUN of the SAME target, once published.
+	if _, err := b.Create(ctx, createReq("pvc-2", 1<<30, nil)); err != nil {
 		t.Fatalf("Create pvc-2: %v", err)
 	}
 	if _, _, targets, _ := n.counts(); targets != 1 {
 		t.Fatalf("the target is shared across volumes, got %d targets", targets)
 	}
-	if other.Context["lun"] == first.Context["lun"] {
-		t.Fatalf("two volumes share LUN %q", other.Context["lun"])
+	node := backend.NodeRef{ID: "worker-1", Addrs: []string{"10.0.0.1"}}
+	firstPC, err := b.Publish(ctx, volID("pvc-1"), node)
+	if err != nil {
+		t.Fatalf("Publish pvc-1: %v", err)
+	}
+	otherPC, err := b.Publish(ctx, volID("pvc-2"), node)
+	if err != nil {
+		t.Fatalf("Publish pvc-2: %v", err)
+	}
+	if otherPC["lun"] == firstPC["lun"] {
+		t.Fatalf("two volumes share LUN %q", otherPC["lun"])
 	}
 }
 
@@ -133,9 +141,9 @@ func TestISCSICreateRollsBackOnFailure(t *testing.T) {
 	b := n.backend()
 	ctx := context.Background()
 
-	n.failOn("iscsi.targetextent.create", &fake.RPCError{Code: -32001, ErrName: "EFAULT", Reason: "boom"})
+	n.failOn("iscsi.extent.create", &fake.RPCError{Code: -32001, ErrName: "EFAULT", Reason: "boom"})
 	if _, err := b.Create(ctx, createReq("pvc-rb", 1<<30, nil)); err == nil {
-		t.Fatal("Create must fail when the LUN mapping cannot be made")
+		t.Fatal("Create must fail when the extent cannot be made")
 	}
 	if n.hasDataset("Pool0/k8s/pvc-rb") {
 		t.Fatal("the zvol must be rolled back")
@@ -145,12 +153,12 @@ func TestISCSICreateRollsBackOnFailure(t *testing.T) {
 	}
 
 	// With the failure cleared, the same request must now succeed cleanly.
-	n.clearFail("iscsi.targetextent.create")
+	n.clearFail("iscsi.extent.create")
 	if _, err := b.Create(ctx, createReq("pvc-rb", 1<<30, nil)); err != nil {
 		t.Fatalf("retry after rollback: %v", err)
 	}
 	ds, extents, _, texts := n.counts()
-	if ds != 1 || extents != 1 || texts != 1 {
+	if ds != 1 || extents != 1 || texts != 0 {
 		t.Fatalf("retry must build exactly one volume, got datasets=%d extents=%d targetextents=%d", ds, extents, texts)
 	}
 }
