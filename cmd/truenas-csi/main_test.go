@@ -47,7 +47,7 @@ backends:
 		t.Fatalf("error should explain the wss requirement, got %v", err)
 	}
 	if _, statErr := os.Stat("/tmp/never-created.sock"); statErr == nil {
-		os.Remove("/tmp/never-created.sock")
+		_ = os.Remove("/tmp/never-created.sock")
 		t.Fatal("the driver must fail before it opens a socket")
 	}
 }

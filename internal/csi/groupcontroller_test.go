@@ -61,7 +61,7 @@ func gctlWith(t *testing.T) (csipb.GroupControllerServer, csipb.ControllerServer
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { r.Close() })
+	t.Cleanup(func() { _ = r.Close() })
 	return NewGroupController(r, cfg), NewController(r, cfg), s
 }
 
@@ -82,7 +82,7 @@ func gctlTwoBackends(t *testing.T) (csipb.GroupControllerServer, *fake.Server, *
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { r.Close() })
+	t.Cleanup(func() { _ = r.Close() })
 	return NewGroupController(r, cfg), s1, s2
 }
 

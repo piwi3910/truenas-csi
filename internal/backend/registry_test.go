@@ -58,7 +58,7 @@ func TestBackendSelectionAndIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRegistry must succeed even with an unreachable appliance: %v", err)
 	}
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 
 	if _, err := r.For(context.Background(), "nas3", "stub"); !errors.Is(err, ErrUnknownBackend) {
 		t.Fatalf("unknown backend: want ErrUnknownBackend, got %v", err)
@@ -91,7 +91,7 @@ func TestRegistryUnknownProtocol(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 	_, err = r.For(context.Background(), "nas1", "smb")
 	if !errors.Is(err, ErrUnsupportedProtocol) {
 		t.Fatalf("want ErrUnsupportedProtocol, got %v", err)
@@ -107,7 +107,7 @@ func TestRegistryReusesOneClientPerBackend(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 	for i := 0; i < 5; i++ {
 		if _, err := r.Client(context.Background(), "nas1"); err != nil {
 			t.Fatal(err)

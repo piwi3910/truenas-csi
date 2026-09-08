@@ -263,7 +263,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	var writeMu sync.Mutex
 	send := func(v any) {

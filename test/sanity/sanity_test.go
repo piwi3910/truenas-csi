@@ -246,13 +246,13 @@ func TestCSISanity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { reg.Close() })
+	t.Cleanup(func() { _ = reg.Close() })
 
 	dir, err := os.MkdirTemp("/tmp", "tncsi-sanity")
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { os.RemoveAll(dir) })
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	sock := filepath.Join(dir, "csi.sock")
 
 	hostRoot := filepath.Join(dir, "host")
@@ -275,7 +275,7 @@ func TestCSISanity(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	go srv.Serve(ctx)
+	go func() { _ = srv.Serve(ctx) }()
 	t.Cleanup(cancel)
 
 	sanity.Test(t, sanity.TestConfig{
@@ -325,7 +325,7 @@ func TestSanityFakeIsRealistic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	// A missing dataset must come back as the appliance really reports it:
 	// errname EINVAL with the true errno only in the reason text.

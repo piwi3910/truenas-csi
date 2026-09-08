@@ -23,7 +23,7 @@ func TestConcurrencyCapUnderLoad(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -59,7 +59,7 @@ func TestConnectionFailureRetries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	if _, err := c.Call(context.Background(), "system.info"); err != nil {
 		t.Fatalf("first call: %v", err)
@@ -80,7 +80,7 @@ func TestNotificationsAreRouted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	s.Notify("collection_update", map[string]any{
 		"collection": "core.get_jobs", "id": 9615,
@@ -111,7 +111,7 @@ func TestTooManyConcurrentIsTypedError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	_, err = c.Call(context.Background(), "boom")
 	if err == nil || !isTooMany(err) {
 		t.Fatalf("want ErrTooManyConcurrent, got %v", err)

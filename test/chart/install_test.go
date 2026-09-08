@@ -288,7 +288,7 @@ umount /tmp/%[1]s; rmdir /tmp/%[1]s`, name, server, export)
 	if out, err := apply.CombinedOutput(); err != nil {
 		t.Fatalf("creating the verification pod: %v\n%s", err, out)
 	}
-	defer exec.Command("kubectl", "delete", "pod", "-n", "default", name, "--wait=false").Run()
+	defer func() { _ = exec.Command("kubectl", "delete", "pod", "-n", "default", name, "--wait=false").Run() }()
 
 	waitFor(t, 3*time.Minute, "verification pod to finish", func() bool {
 		out, _ := run(t, time.Minute, "kubectl", "get", "pod", "-n", "default", name,

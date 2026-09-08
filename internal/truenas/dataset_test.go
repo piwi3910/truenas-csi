@@ -16,7 +16,7 @@ func dialFake(t *testing.T, s *fake.Server) *Client {
 	if err != nil {
 		t.Fatalf("Dial: %v", err)
 	}
-	t.Cleanup(func() { c.Close() })
+	t.Cleanup(func() { _ = c.Close() })
 	return c
 }
 

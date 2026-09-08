@@ -51,17 +51,6 @@ func lunLock(targetID int) *sync.Mutex {
 	return l
 }
 
-func reservations(targetID int) map[int]bool {
-	lunMu.Lock()
-	defer lunMu.Unlock()
-	r, ok := lunReserved[targetID]
-	if !ok {
-		r = map[int]bool{}
-		lunReserved[targetID] = r
-	}
-	return r
-}
-
 // allocateLUN returns the lowest free LUN id on a target.
 //
 // The used set is derived from a LIVE iscsi.targetextent.query on every call.

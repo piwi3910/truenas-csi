@@ -201,7 +201,7 @@ func loadedModules(root string) (map[string]bool, error) {
 		}
 		return nil, fmt.Errorf("read proc/modules under %s: %w", root, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	mods := map[string]bool{}
 	s := bufio.NewScanner(f)

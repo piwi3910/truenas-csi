@@ -75,21 +75,6 @@ func (n *Node) isMounted(path string) (bool, error) {
 	return false, nil
 }
 
-// mountEntryFor returns the host's mount-table entry for path, if it has one.
-func (n *Node) mountEntryFor(path string) (mountEntry, bool, error) {
-	entries, err := n.mounts()
-	if err != nil {
-		return mountEntry{}, false, err
-	}
-	clean := filepath.Clean(path)
-	for _, e := range entries {
-		if e.target == clean {
-			return e, true, nil
-		}
-	}
-	return mountEntry{}, false, nil
-}
-
 // unescapeMountField decodes the \040-style octal escapes /proc/mounts uses for
 // characters that would otherwise split a field.
 func unescapeMountField(s string) string {

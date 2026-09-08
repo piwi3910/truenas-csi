@@ -12,20 +12,25 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"sigs.k8s.io/controller-runtime/pkg/scheme"
 )
 
 // GroupVersion is the API group and version this package serves.
 var GroupVersion = schema.GroupVersion{Group: "replication.truenas.io", Version: "v1alpha1"}
 
 // SchemeBuilder registers the types with a runtime.Scheme.
-var SchemeBuilder = &scheme.Builder{GroupVersion: GroupVersion}
+//
+// This is apimachinery's builder rather than controller-runtime's, which is
+// deprecated for exactly the reason that applies here: an api package should be
+// cheap to import, so it should not drag controller-runtime in behind it.
+var SchemeBuilder = runtime.NewSchemeBuilder(addKnownTypes)
 
 // AddToScheme adds these types to a scheme.
 var AddToScheme = SchemeBuilder.AddToScheme
 
-func init() {
-	SchemeBuilder.Register(&StorageProtectionGroup{}, &StorageProtectionGroupList{})
+func addKnownTypes(s *runtime.Scheme) error {
+	s.AddKnownTypes(GroupVersion, &StorageProtectionGroup{}, &StorageProtectionGroupList{})
+	metav1.AddToGroupVersion(s, GroupVersion)
+	return nil
 }
 
 // Action is a requested replication operation.

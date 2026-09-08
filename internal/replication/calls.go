@@ -2,7 +2,6 @@ package replication
 
 import (
 	"context"
-	"fmt"
 	"sort"
 	"strconv"
 
@@ -124,21 +123,6 @@ func queryReplicationByName(ctx context.Context, c caller, name string) (*Replic
 	var out []ReplicationTask
 	if err := c.CallJSON(ctx, &out, mReplicationQuery,
 		[]any{[]any{"name", "=", name}}, map[string]any{}); err != nil {
-		if truenas.IsNotFound(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	if len(out) == 0 {
-		return nil, nil
-	}
-	return &out[0], nil
-}
-
-func queryReplicationByID(ctx context.Context, c caller, id int) (*ReplicationTask, error) {
-	var out []ReplicationTask
-	if err := c.CallJSON(ctx, &out, mReplicationQuery,
-		[]any{[]any{"id", "=", id}}, map[string]any{}); err != nil {
 		if truenas.IsNotFound(err) {
 			return nil, nil
 		}
@@ -289,5 +273,3 @@ func snapshotShortName(id string) string {
 	}
 	return id
 }
-
-func snapshotID(dataset, name string) string { return fmt.Sprintf("%s@%s", dataset, name) }

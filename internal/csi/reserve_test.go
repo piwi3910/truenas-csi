@@ -37,7 +37,7 @@ func ctlWithPool(t *testing.T, size, free int64, reservedBytes int64, reservedPe
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { r.Close() })
+	t.Cleanup(func() { _ = r.Close() })
 	return NewController(r, cfg), s
 }
 

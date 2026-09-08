@@ -27,7 +27,6 @@ type nas struct {
 	mu        sync.Mutex
 	datasets  map[string]*fakeDataset
 	snapshots map[string][]string // dataset -> snapshot names, oldest first
-	txg       int64
 
 	replTasks map[int]*fakeReplTask
 	snapTasks map[int]*fakeSnapTask

@@ -131,10 +131,23 @@ func TestReloadCredentialsIsANoOpWhenNothingRotated(t *testing.T) {
 // backend silently fall back to "restart the controller", which is the bug this
 // closed.
 func TestCoreSatisfiesTheReloaderContract(t *testing.T) {
+	// The assertion is the assignment: it fails to COMPILE if *Client stops
+	// implementing the interface the hot-reload path type-asserts. Comparing it
+	// to nil afterwards asserts nothing -- the value has a concrete type, so the
+	// comparison is always false and staticcheck says so.
 	var reloader interface {
 		ReloadCredentials(config.Backend) error
-	} = (*Client)(nil)
-	if reloader == nil {
-		t.Fatal("unreachable; the assertion above is the test")
+	} = &Client{}
+
+	// What can actually fail at run time is the type assertion the driver
+	// performs, so that is what this exercises. A CORE backend that fails it
+	// silently falls back to "restart the controller", which is the bug this
+	// closed.
+	var api any = reloader
+	if _, ok := api.(interface {
+		ReloadCredentials(config.Backend) error
+	}); !ok {
+		t.Fatal("a *core.Client no longer satisfies the reloader contract, so every " +
+			"CORE backend would silently need a restart to pick up a rotated key")
 	}
 }

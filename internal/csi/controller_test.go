@@ -90,7 +90,7 @@ func ctlWith(t *testing.T) (csipb.ControllerServer, *fake.Server) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { r.Close() })
+	t.Cleanup(func() { _ = r.Close() })
 	return NewController(r, cfg), s
 }
 

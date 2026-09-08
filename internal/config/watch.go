@@ -41,7 +41,7 @@ func WatchFile(ctx context.Context, path string, onChange func()) error {
 	if err != nil {
 		return fmt.Errorf("create file watcher: %w", err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 	if err := w.Add(dir); err != nil {
 		return fmt.Errorf("watch %s: %w", dir, err)
 	}

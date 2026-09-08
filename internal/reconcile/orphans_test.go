@@ -31,7 +31,7 @@ func regFor(t *testing.T, s *fake.Server) *backend.Registry {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { r.Close() })
+	t.Cleanup(func() { _ = r.Close() })
 	return r
 }
 

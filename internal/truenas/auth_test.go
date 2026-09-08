@@ -62,7 +62,7 @@ func TestDialSucceedsAndCalls(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Dial: %v", err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	var out struct {
 		Version string `json:"version"`
 	}

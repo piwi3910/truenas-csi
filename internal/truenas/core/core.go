@@ -91,7 +91,7 @@ func Dial(_ context.Context, b config.Backend) (*Client, error) {
 		http:    httpClient(tc),
 		sem:     semaphore.NewWeighted(truenas.MaxInFlight),
 	}
-	c.Ops.Transport = c
+	c.Transport = c
 	return c, nil
 }
 
@@ -289,7 +289,7 @@ func (c *Client) do(ctx context.Context, backend config.Backend, hc *http.Client
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s: %v", truenas.ErrConnClosed, method, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, readErr := io.ReadAll(resp.Body)
 	if readErr != nil {
 		return nil, fmt.Errorf("%w: reading %s: %v", truenas.ErrConnClosed, method, readErr)

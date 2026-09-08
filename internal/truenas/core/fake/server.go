@@ -160,7 +160,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 
 	var body any
 	if r.Body != nil {
-		defer r.Body.Close()
+		defer func() { _ = r.Body.Close() }()
 		if raw, err := io.ReadAll(r.Body); err == nil && len(raw) > 0 {
 			_ = json.Unmarshal(raw, &body)
 		}
@@ -169,20 +169,20 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	switch {
-	case path == "core/get_jobs":
+	switch path {
+	case "core/get_jobs":
 		s.getJobs(w)
 		return
-	case path == "filesystem/setperm":
+	case "filesystem/setperm":
 		s.setperm(w)
 		return
-	case path == "pool/dataset/recommended_zvol_blocksize":
+	case "pool/dataset/recommended_zvol_blocksize":
 		writeJSON(w, http.StatusOK, "128K")
 		return
-	case path == "pool/snapshot/clone":
+	case "pool/snapshot/clone":
 		writeJSON(w, http.StatusOK, true)
 		return
-	case path == "iscsi/global":
+	case "iscsi/global":
 		writeJSON(w, http.StatusOK, map[string]any{
 			"basename": "iqn.2005-10.org.freenas.ctl", "listen_port": 3260, "alua": false,
 		})

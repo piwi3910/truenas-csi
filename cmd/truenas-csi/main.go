@@ -179,7 +179,7 @@ func run(o options) error {
 		if err != nil {
 			return err
 		}
-		defer reg.Close()
+		defer func() { _ = reg.Close() }()
 		ctrl = csi.NewController(reg, cfg)
 		// Group snapshots are a controller-side capability: the node plugin has
 		// no part in them.

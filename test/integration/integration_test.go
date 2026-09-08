@@ -62,7 +62,7 @@ func requireAppliance(t *testing.T) *env {
 	if err != nil {
 		t.Fatalf("connecting to the appliance: %v", err)
 	}
-	t.Cleanup(func() { c.Close() })
+	t.Cleanup(func() { _ = c.Close() })
 	return &env{cfg: cfg, client: c, prefix: b.Pool + "/" + b.ParentDataset,
 		server: get("TRUENAS_DATA_ADDRESS", ""),
 		nodeID: os.Getenv("TRUENAS_E2E_NODE")}
@@ -74,7 +74,7 @@ func (e *env) controller(t *testing.T) csipb.ControllerServer {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { reg.Close() })
+	t.Cleanup(func() { _ = reg.Close() })
 	return csi.NewControllerWithNodes(reg, e.cfg, e.resolver(t))
 }
 

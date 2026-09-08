@@ -164,7 +164,7 @@ func Dial(ctx context.Context, b config.Backend) (*Client, error) {
 		notif:   make(chan Notification, 64),
 		waiters: map[int64]chan *response{},
 	}
-	c.Ops.Transport = c
+	c.Transport = c
 	if err := c.ensureConn(ctx); err != nil {
 		return nil, err
 	}
@@ -218,7 +218,7 @@ func (c *Client) ensureConn(ctx context.Context) error {
 	go c.readLoop(newConn)
 
 	if err := c.login(ctx); err != nil {
-		newConn.Close()
+		_ = newConn.Close()
 		c.mu.Lock()
 		if c.conn == newConn {
 			c.conn = nil
@@ -277,7 +277,7 @@ func (c *Client) dropConn(conn *websocket.Conn) {
 		delete(c.waiters, id)
 		close(ch)
 	}
-	conn.Close()
+	_ = conn.Close()
 }
 
 // Host is the appliance's hostname or address, taken from the endpoint URL.
@@ -350,7 +350,7 @@ func (c *Client) ReloadCredentials(b config.Backend) error {
 	c.connMu.Unlock()
 
 	if conn != nil {
-		conn.Close() // readLoop sees the close and fails the waiters
+		_ = conn.Close() // readLoop sees the close and fails the waiters
 	}
 	// A breaker opened by the old credential's failures must not outlive it.
 	c.breaker.reset()

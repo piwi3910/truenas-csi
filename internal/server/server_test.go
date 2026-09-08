@@ -28,7 +28,7 @@ func sockPath(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { os.RemoveAll(dir) })
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	return filepath.Join(dir, "csi.sock")
 }
 
@@ -38,7 +38,7 @@ func dial(t *testing.T, path string) *grpc.ClientConn {
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
-	t.Cleanup(func() { cc.Close() })
+	t.Cleanup(func() { _ = cc.Close() })
 	return cc
 }
 
@@ -49,7 +49,7 @@ func TestServerServesIdentityOverUnixSocket(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	go s.Serve(ctx)
+	go func() { _ = s.Serve(ctx) }()
 	t.Cleanup(func() { cancel() })
 
 	if _, err := os.Stat(sock); err != nil {
@@ -77,7 +77,7 @@ func TestServerRemovesStaleSocket(t *testing.T) {
 		t.Fatalf("a leftover socket file must not stop the plugin starting: %v", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	go s.Serve(ctx)
+	go func() { _ = s.Serve(ctx) }()
 	defer cancel()
 	if _, err := net.Dial("unix", sock); err != nil {
 		t.Fatalf("socket not usable after replacing a stale file: %v", err)
@@ -165,7 +165,7 @@ func TestUnaryInterceptorRecordsMetricsAndRedacts(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	go s.Serve(ctx)
+	go func() { _ = s.Serve(ctx) }()
 	defer cancel()
 
 	_, err = csipb.NewControllerClient(dial(t, sock)).

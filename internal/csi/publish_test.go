@@ -153,7 +153,7 @@ func fencingCtl(t *testing.T) csipb.ControllerServer {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { r.Close() })
+	t.Cleanup(func() { _ = r.Close() })
 
 	c := NewController(r, cfg)
 	c.(*controller).nodes = testResolver{

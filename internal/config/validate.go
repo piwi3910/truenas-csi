@@ -95,7 +95,7 @@ func (b Backend) validate() error {
 		}
 	}
 	if strings.Contains(b.ParentDataset, "..") {
-		return errors.New("parentDataset must not contain ..")
+		return errors.New(`parentDataset must not contain ".." path segments`)
 	}
 	if b.ReservedBytes < 0 {
 		return fmt.Errorf("reservedBytes must not be negative, got %d", b.ReservedBytes)

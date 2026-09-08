@@ -190,7 +190,7 @@ func TestClientBreakerOpensOnADeadApplianceAndRecovers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	if _, err := c.Call(context.Background(), "system.info"); err != nil {
 		t.Fatalf("first call: %v", err)
 	}
@@ -240,7 +240,7 @@ func forceFailures(t *testing.T, c *Client) {
 	c.connMu.Lock()
 	c.mu.Lock()
 	if c.conn != nil {
-		c.conn.Close()
+		_ = c.conn.Close()
 		c.conn = nil
 	}
 	c.mu.Unlock()
@@ -269,7 +269,7 @@ func TestReloadCredentialsSwapsTheKeyWithoutARestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	if _, err := c.Call(context.Background(), "system.info"); err != nil {
 		t.Fatal(err)
 	}
@@ -307,7 +307,7 @@ func TestReloadCredentialsRefusesIdentityChanges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	for _, tc := range []struct {
 		name   string
@@ -346,7 +346,7 @@ func TestReloadCredentialsRefusesAPlaintextEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	next := b
 	next.Endpoint = "http://192.168.10.253/api/current"
@@ -367,7 +367,7 @@ func TestReloadCredentialsIsANoOpWhenNothingRotated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	if _, err := c.Call(context.Background(), "system.info"); err != nil {
 		t.Fatal(err)
 	}
@@ -403,7 +403,7 @@ func TestDialUsesTheRotatedCredential(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	c.connMu.Lock()
 	got := c.backend.APIKey
 	c.connMu.Unlock()

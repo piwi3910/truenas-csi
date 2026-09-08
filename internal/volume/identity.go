@@ -168,7 +168,7 @@ func sanitiseIdentityValue(v string) string {
 		switch {
 		case r == '-' || r == '.' || r == '_':
 			b.WriteRune(r)
-		case r > unicode.MaxASCII || !(unicode.IsLetter(r) || unicode.IsDigit(r)):
+		case r > unicode.MaxASCII || (!unicode.IsLetter(r) && !unicode.IsDigit(r)):
 			b.WriteRune('_')
 		default:
 			b.WriteRune(r)
