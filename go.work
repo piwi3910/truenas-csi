@@ -7,7 +7,7 @@
 // driver's types is seen by the operator without a replace directive or a
 // tagged release. CI builds each module on its own with GOWORK=off, because
 // that is what `go install` and the release build actually do.
-go 1.26.0
+go 1.27.0
 
 use (
 	.
