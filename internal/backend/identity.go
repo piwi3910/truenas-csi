@@ -52,16 +52,17 @@ func RecordIdentity(ctx context.Context, c truenas.API, dsPath string, id volume
 	// record and comments for the field the UI actually shows.
 	//
 	// Both are fields of the same pool.dataset.update `data` object, and the key
-	// format namespace:property is the one the middleware's own schema requires
-	// (verified against https://192.168.10.253/api/docs/current/, API v25.10.5;
-	// note that pool.dataset.query returns comments as a SIBLING of
-	// user_properties, not inside it — nothing here reads it back, but anything
-	// that later does must look in the right place).
+	// format namespace:property is the one the middleware's own schema requires.
 	//
-	// UNVERIFIED: sending comments and user_properties_update in one update has
-	// not been run against the appliance — no API key was available — only
-	// checked against the published schema. A hardware run should confirm both
-	// land, and that a failure here is the harmless no-op this treats it as.
+	// VERIFIED against the live appliance (25.10.6, 2026-09-08): one update
+	// carrying both is accepted, and both land with source=LOCAL. Note the
+	// read-back path, which is the opposite of what the schema suggests:
+	// pool.dataset.query returns the top-level `comments` field as null and
+	// surfaces the comment INSIDE `user_properties` as `user_properties.comments`.
+	// Nothing here reads it back, but anything that later does must look there.
+	//
+	// A failure is treated as a harmless no-op: the volume is provisioned and
+	// usable, and a diagnostic label is not worth rolling that back.
 	if _, err := c.DatasetUpdate(ctx, dsPath, map[string]any{
 		"user_properties_update": updates,
 		"comments":               id.Description(),
