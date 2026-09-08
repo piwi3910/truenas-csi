@@ -75,6 +75,14 @@ namespace do not fight over one lease. */}}
 {{- printf "%s-array-metrics" (include "truenas-csi.fullname" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
+{{/* fencingLeaseName is the Lease electing the ONE controller replica allowed to
+fence. It is deliberately not the metrics lease: a replica may poll the
+appliance without being the one permitted to force-delete pods, and the driver
+refuses to fence at all without a lease of its own. */}}
+{{- define "truenas-csi.fencingLeaseName" -}}
+{{- printf "%s-fencing" (include "truenas-csi.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
 {{- define "truenas-csi.controllerServiceAccountName" -}}
 {{- if .Values.serviceAccounts.controller.create -}}
 {{- default (printf "%s-controller" (include "truenas-csi.fullname" .)) .Values.serviceAccounts.controller.name -}}

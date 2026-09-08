@@ -626,36 +626,93 @@ it is reporting about. Only volumes this driver staged are watched — the monit
 reads `/proc/mounts`, so another storage system's mounts can never be reported as this
 driver's.
 
-### `ValidateVolumeHostConnectivity` — a driver extension, not CSI
+### Connectivity answers and pod fencing — driver extensions, not CSI
 
-Off by default; enable with `podmon.enabled=true`. The driver then serves one JSON-over-HTTP
-route on a listener of its own (`127.0.0.1:9820` by default, or a UNIX socket via
-`-podmon-addr=unix:///csi/podmon.sock`), alongside — never on — the CSI socket:
+**The CSI specification defines no connectivity call.** Dell's CSM for Resiliency defines one
+in its own proto and its podmon sidecar calls it; this driver answers the same questions as
+its own JSON-over-HTTP extension, so a sidecar, an operator or `curl` can ask without
+generated stubs. No CO will ever call it.
+
+There are two services, and they are named apart because they answer different questions.
+
+#### The controller: the appliance-backed connectivity report
+
+Enable with `podmon.enabled=true`. On the controller, the listener serves:
 
 ```
-POST /podmon/v1/validate-volume-host-connectivity
+POST /podmon/v1/connectivity
+{"nodeId": "worker-21", "volumeIds": ["nas1/nfs/tank/k8s/pvc-a"]}
+```
+
+It asks the **appliance** — never the node — what it can still see of that node:
+
+| Protocol       | Signal                                                                           | Source                                          |
+| -------------- | -------------------------------------------------------------------------------- | ----------------------------------------------- |
+| iSCSI          | a live session from the node's IQN or address                                    | `iscsi.global.sessions`                         |
+| NFS            | the node's address, and the age of its NFSv4 lease                               | `nfs.get_nfs4_clients` / `nfs.get_nfs3_clients` |
+| SMB            | **unknown** — the appliance publishes no SMB session or status call              | —                                               |
+| NVMe-oF        | **unknown** — `nvmet.global.sessions` exists but is not yet on this driver's API | —                                               |
+| per-volume I/O | **unobservable** — the appliance has no per-dataset or per-zvol counter          | —                                               |
+
+Every answer carries an explicit state (`connected`, `disconnected`, `unknown`,
+`unobservable`) rather than a bare boolean, and the zero value is `unknown`. An unknown is
+treated exactly like a connected node: **any error, timeout or unknown means assume
+connected and do not fence.** The dangerous failure is fencing a live node, not failing to
+fence a dead one.
+
+The per-volume I/O gap is stated on every report rather than silently filled in. It does not
+block a fence, for one reason: I/O implies a session, so the session and lease signals veto
+everything the I/O signal would have. The node's own kernel counters are _not_ used as a
+substitute — the node is unreachable in exactly the case this exists for.
+
+#### The node: a self-check, and not a fencing input
+
+The same flag on the node DaemonSet serves a different route:
+
+```
+POST /podmon/v1/node-self-check
 {"nodeId": "worker-21", "volumeIds": ["nas1/nfs/tank/k8s/pvc-a"], "ioSampleWindow": 60000000000}
 
 {"nodeId": "worker-21", "connected": true, "iosInProgress": true, "messages": []}
 ```
 
-**The CSI specification defines no such call.** Dell's CSM for Resiliency defines one in its
-own proto and its podmon sidecar calls it; this is the same question and the same shape of
-answer, served as this driver's own extension with no generated stubs, so a sidecar, an
-operator or `curl` can ask. No CO will ever call it.
+This is a self-diagnosis: "can _I_ still reach the appliance and my own mounts?" It shares
+nothing that a stalled driver could hold — its own listener, its own `http.Server`, its own
+bounded probes (a TCP dial to the appliance, a `statfs` per volume) on its own deadlines, and
+never a call through the driver's middleware client or CSI socket. An optional probe of the
+driver itself is advisory only, so a driver that never answers costs one line in `messages`
+instead of the whole response. `TestPodmonAnswersWhileDriverStalled` pins that with a driver
+fake that never responds.
 
-The point of a second health checker is that it survives the first one stalling, so it
-shares nothing that a stalled driver could hold: its own listener, its own `http.Server`,
-its own bounded probes (a TCP dial to the appliance, a `statfs` per volume) on its own
-deadlines, and never a call through the driver's middleware client or CSI socket. An
-optional probe of the driver itself is advisory only — it runs concurrently under its own
-timeout, and a driver that never answers costs one line in `messages` instead of the whole
-response. `TestPodmonAnswersWhileDriverStalled` pins that with a driver fake that never
-responds.
+It is **not** an input to fencing, and the code refuses to make it one: a node that has
+stopped answering cannot report that it has stopped answering.
 
-`iosInProgress` is evidence, not proof: it reports whether the volume's mount point was
-modified within the sample window, so "no I/O observed" means no evidence of activity, not
-a guarantee of idleness. Weigh it alongside `connected` rather than acting on it alone.
+#### Pod fencing
+
+Off by default (`fencing.enabled=false`) and opt-in per pod. Only pods labelled
+`csi.truenas.watteel.com/fence=true` are ever considered.
+
+When an opted-in pod is not ready and its node carries the unreachable or not-ready
+`NoExecute` taint, one elected controller replica:
+
+1. re-reads the pod's **UID**, so a pod recreated under the same name is never the one killed;
+2. asks the appliance. It **aborts**, with a Warning event saying exactly why, if the node is
+   still connected, if an NFS lease is fresh, if any signal is unknown (which includes every
+   SMB and NVMe-oF volume), if nothing could be positively observed, or on any error;
+3. **revokes** appliance-side access for every volume the pod holds — the same fence
+   `ControllerUnpublishVolume` performs. If any single revoke fails, the cleanup aborts and
+   the pod is **not** deleted: a partially fenced node is still a writer;
+4. taints the node, deletes the VolumeAttachments, and force-deletes the pod — in that order.
+   The pod object is the interlock; deleting it before access is provably gone is the exact
+   race that `kubectl delete pod --force` loses.
+
+Leader election is mandatory: without a lease the driver refuses to fence at all, because two
+replicas would each revoke access the other had just checked.
+
+**RWX:** fencing is per node. Revoking removes only the failed node's addresses from the
+share's host access list, so other healthy pods on other nodes keep using the same
+ReadWriteMany volume — and their live sessions are never mistaken for the failed node's,
+because sessions are matched against that node's own addresses and IQN.
 
 - [docs/replication.md](docs/replication.md) — StorageProtectionGroup: cross-appliance
   replication, failover, test failover and failback, their safety rules, and what has

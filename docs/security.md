@@ -78,6 +78,20 @@ are read-only** — it runs privileged on every node, so its API token is the mo
 thing on the node and must not be able to write cluster state. The controller runs as
 non-root.
 
+#### Pod fencing adds three destructive grants — only when it is enabled
+
+`fencing.enabled=true` renders `pods: delete`, `nodes: patch` (to add the fence taint, never
+`update`, which would allow rewriting an arbitrary Node) and `volumeattachments: delete` onto
+the controller ClusterRole. A default install holds none of them, and the chart's RBAC test
+fails if any appears without the flag.
+
+They are destructive by design: the controller force-deletes a pod. Three things bound that.
+Only pods carrying the opt-in label are ever considered; the appliance must first report that
+the pod's node holds no session and no lease, with any unknown or error aborting; and one
+replica is elected by a Lease, without which the driver refuses to fence at all. Access is
+revoked before the pod object is deleted, and a single failed revoke aborts the whole cleanup
+— see the fencing section of the README.
+
 ---
 
 ## TLS trust

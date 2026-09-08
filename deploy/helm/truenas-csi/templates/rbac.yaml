@@ -80,6 +80,32 @@ rules:
   - apiGroups: ["storage.k8s.io"]
     resources: ["csistoragecapacities"]
     verbs: ["get", "list", "watch", "create", "update", "delete"]
+  {{- if .Values.fencing.enabled }}
+  # Pod fencing. Every grant here is destructive, which is why they are rendered
+  # ONLY when fencing is enabled — an install that never fences never holds
+  # them. Each is the minimum the documented protocol needs:
+  #
+  #   pods: delete    — force-delete the stuck pod, last, after appliance
+  #                     access has provably been revoked.
+  #   nodes: patch    — add the NoSchedule fence taint. `patch` and not
+  #                     `update`: adding a taint must not imply the ability to
+  #                     rewrite an arbitrary Node.
+  #   volumeattachments: delete — drop attachments to a node that will never
+  #                     answer a detach, so the replacement pod is not queued
+  #                     behind one that cannot complete.
+  #
+  # events: create is already granted above for the sidecars, and carries the
+  # Warning event explaining every refusal to fence.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["delete"]
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["patch"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["volumeattachments"]
+    verbs: ["delete"]
+  {{- end }}
   {{- if .Values.snapshotter.enabled }}
   - apiGroups: ["snapshot.storage.k8s.io"]
     resources: ["volumesnapshotclasses"]

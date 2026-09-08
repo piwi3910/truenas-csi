@@ -26,6 +26,7 @@ import (
 	"github.com/piwi3910/truenas-csi/internal/config"
 	"github.com/piwi3910/truenas-csi/internal/csi"
 	"github.com/piwi3910/truenas-csi/internal/driver"
+	"github.com/piwi3910/truenas-csi/internal/fencing"
 	"github.com/piwi3910/truenas-csi/internal/node"
 	"github.com/piwi3910/truenas-csi/internal/obs"
 	"github.com/piwi3910/truenas-csi/internal/podmon"
@@ -41,8 +42,20 @@ func main() {
 		configPath = flag.String("config", "/etc/truenas-csi/config.yaml", "path to the driver configuration")
 		nodeID     = flag.String("node-id", "", "node name (overrides the configuration)")
 		hostRoot   = flag.String("host-root", "/host", "path where the host filesystem is mounted")
-		podmonAddr = flag.String("podmon-addr", "", "address for the ValidateVolumeHostConnectivity extension "+
-			"(a driver extension, not CSI); empty disables it. Either a TCP address or unix:///path/to.sock")
+		podmonAddr = flag.String("podmon-addr", "", "address for the podmon extension listener "+
+			"(a driver extension, not CSI); empty disables it. Either a TCP address or unix:///path/to.sock. "+
+			"On the node it serves the node self-check; on the controller it serves the appliance-backed "+
+			"connectivity report")
+		fencingLabel = flag.String("fencing-label", "",
+			"opt-in pod label (key=value) for the fencing controller; empty disables fencing entirely. "+
+				"Only pods carrying this label are ever force-deleted, and only after the APPLIANCE has "+
+				"confirmed their node holds no session or lease")
+		fencingLease = flag.String("fencing-lease", "",
+			"name of the Lease electing the single controller replica allowed to fence. Fencing is "+
+				"REFUSED without it: two replicas racing to fence the same pod would each revoke access "+
+				"the other believed it held")
+		fencingInterval = flag.Duration("fencing-interval", fencing.DefaultInterval,
+			"how often the fencing controller sweeps the opted-in pods")
 		logConfig = flag.String("log-config", "", "path to a mounted logging ConfigMap holding logLevel and "+
 			"logFormat, re-read live; empty disables dynamic logging")
 		metricsLease = flag.String("metrics-lease", "",
@@ -63,14 +76,17 @@ func main() {
 		os.Exit(1)
 	}
 	if err := run(options{
-		mode:         *mode,
-		endpoint:     *endpoint,
-		configPath:   *configPath,
-		nodeID:       *nodeID,
-		hostRoot:     *hostRoot,
-		podmonAddr:   *podmonAddr,
-		logConfig:    *logConfig,
-		metricsLease: *metricsLease,
+		mode:            *mode,
+		endpoint:        *endpoint,
+		configPath:      *configPath,
+		nodeID:          *nodeID,
+		hostRoot:        *hostRoot,
+		podmonAddr:      *podmonAddr,
+		fencingLabel:    *fencingLabel,
+		fencingLease:    *fencingLease,
+		fencingInterval: *fencingInterval,
+		logConfig:       *logConfig,
+		metricsLease:    *metricsLease,
 	}); err != nil {
 		slog.Error("driver exited", "error", obs.Redact(err.Error()))
 		os.Exit(1)
@@ -92,6 +108,13 @@ type options struct {
 	// metricsLease names the Lease electing the array-metrics poller. Empty
 	// means no election: this replica polls.
 	metricsLease string
+
+	// fencingLabel is the opt-in pod label; empty disables fencing. fencingLease
+	// elects the one replica allowed to fence, and is mandatory when fencing is
+	// on. fencingInterval is the sweep period.
+	fencingLabel    string
+	fencingLease    string
+	fencingInterval time.Duration
 }
 
 // orphanInterval is how often the controller compares appliance state against
@@ -142,7 +165,12 @@ func run(o options) error {
 		gc   csipb.GroupControllerServer
 		nd   csipb.NodeServer
 		reg  *backend.Registry
-		pm   *podmon.Service
+		// podmonHandler is whichever podmon service this mode serves: the
+		// appliance-backed connectivity report on the controller, the node
+		// self-check on the node. They answer different questions and are named
+		// apart on purpose; see internal/podmon.
+		podmonHandler http.Handler
+		podmonWhat    string
 	)
 
 	switch mode {
@@ -177,6 +205,18 @@ func run(o options) error {
 		// Array-level metrics run on the controller only: the node plugin has
 		// no appliance client.
 		startArrayMetrics(ctx, arraymetrics.New(reg, cfg.MetricsPollInterval()), o)
+
+		// The connectivity service answers from the APPLIANCE — is that node
+		// still holding a session, still renewing a lease? — which is the only
+		// vantage point that still works when the node is the thing that has
+		// failed. It lives on the controller for the same reason.
+		nodes := backend.NewNodeResolver(cfg.NodeID)
+		conn := podmon.NewConnectivity(reg, nodes)
+		podmonHandler, podmonWhat = conn.Handler(), "the appliance-backed connectivity report"
+
+		// The consumer. Off unless an operator opted in, and refused outright
+		// without a lease: see startFencing.
+		startFencing(ctx, o, reg, nodes, conn)
 		obs.MarkReady()
 
 	case "node":
@@ -203,12 +243,13 @@ func run(o options) error {
 			"timeout", node.DefaultHealthTimeout.String())
 		nd = csi.NewNode(nn)
 
-		// The connectivity extension answers from the node plugin's own state
-		// and its own bounded probes. It is given a lookup function, not the
-		// driver's client or its socket, so that it keeps answering when the
-		// driver it lives beside has stalled -- which is the only reason to run
-		// a second health checker at all.
-		pm = podmon.New(cfg.NodeID, applianceName(cfg), applianceAddr(cfg))
+		// The node self-check answers from the node plugin's own state and its
+		// own bounded probes. It is given a lookup function, not the driver's
+		// client or its socket, so that it keeps answering when the driver it
+		// lives beside has stalled -- which is the only reason to run a second
+		// health checker at all. It is a self-diagnosis and NOT a fencing
+		// input: the fencing controller asks the appliance instead.
+		pm := podmon.NewNodeSelfCheck(cfg.NodeID, applianceName(cfg), applianceAddr(cfg))
 		pm.Volumes = func(id string) (podmon.VolumeRef, bool) {
 			t, ok := nn.Health().Target(id)
 			if !ok {
@@ -216,14 +257,15 @@ func run(o options) error {
 			}
 			return podmon.VolumeRef{VolumeID: t.VolumeID, Protocol: t.Protocol, Path: t.Path}, true
 		}
+		podmonHandler, podmonWhat = pm.Handler(), "the node self-check"
 		obs.MarkReady()
 	}
 
-	if podmonAddr != "" && pm != nil {
+	if podmonAddr != "" && podmonHandler != nil {
 		go func() {
-			slog.Info("serving the ValidateVolumeHostConnectivity extension "+
-				"(a driver extension, not CSI)", "address", podmonAddr, "path", podmon.ValidatePath)
-			if err := podmon.Serve(ctx, podmonAddr, pm); err != nil {
+			slog.Info("serving "+podmonWhat+" (a driver extension, not CSI)",
+				"address", podmonAddr, "mode", mode)
+			if err := podmon.Serve(ctx, podmonAddr, podmonHandler); err != nil {
 				slog.Warn("podmon extension listener stopped", "error", obs.Redact(err.Error()))
 			}
 		}()

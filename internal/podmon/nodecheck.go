@@ -1,25 +1,38 @@
-// Package podmon serves this driver's ValidateVolumeHostConnectivity
-// extension: "can this node still reach the appliance, and has any I/O been
-// seen on these volumes lately?"
+// Package podmon answers "should this node be fenced?" — and does it from two
+// different vantage points, which are deliberately named apart.
 //
-// # This is a driver extension, not CSI
+// # The two services in this package
+//
+//   - Connectivity (connectivity.go) runs on the CONTROLLER and answers from the
+//     APPLIANCE: is that node still holding an iSCSI session, or renewing an NFS
+//     lease? It is the answer a fencing decision is allowed to use, because it
+//     is still available when the node is gone — which is the only situation
+//     fencing exists for.
+//   - NodeSelfCheck (this file) runs on the NODE and answers a genuinely
+//     different question: can *I*, this node, still reach the appliance and my
+//     own mounts? It is a self-diagnosis for an operator or a node-local
+//     watchdog. It is worthless as a fencing input and must never be used as
+//     one: a node that has stopped answering cannot report that it has stopped
+//     answering. internal/fencing therefore consumes Connectivity and nothing
+//     from this file; TestFencingNeverConsultsTheNodeSelfCheck pins that.
+//
+// # Neither is CSI
 //
 // The CSI specification has no ValidateVolumeHostConnectivity call. Dell's CSM
 // for Resiliency defines one in its own proto and its podmon sidecar calls it;
-// this package answers the same question with the same shape of answer, but as
-// this driver's own service. It is deliberately proto-free: a JSON request and
-// a JSON response over HTTP on a listener of the driver's own, so that a
-// sidecar, an operator or a curl(1) can ask without generated stubs. Nothing
-// here is registered on the CSI socket, and no CO will ever call it.
+// this package answers the same questions as its own service. It is
+// deliberately proto-free: JSON requests and responses over HTTP on a listener
+// of the driver's own, so that a sidecar, an operator or a curl(1) can ask
+// without generated stubs. Nothing here is registered on the CSI socket.
 //
-// # Why it does not share anything with the driver
+// # Why the node self-check shares nothing with the driver
 //
 // The entire value of an independent connectivity checker is that it survives
 // the driver stalling. A checker that reaches its answer through the driver's
 // middleware client, its goroutine pool or its CSI socket is worth nothing at
 // the one moment it is needed: when those are wedged, it wedges with them.
 //
-// So this service:
+// So NodeSelfCheck:
 //
 //   - listens on its own socket or port, served by its own http.Server, and
 //     never on the CSI socket;
@@ -47,8 +60,12 @@ import (
 	"time"
 )
 
-// ValidatePath is the HTTP path of the extension's single RPC.
-const ValidatePath = "/podmon/v1/validate-volume-host-connectivity"
+// NodeSelfCheckPath is the HTTP path of the node self-check.
+//
+// The path names the node on purpose, so that nobody wires a fencing decision
+// to it by mistake; the appliance-backed answer lives at ConnectivityPath and
+// is served by the controller.
+const NodeSelfCheckPath = "/podmon/v1/node-self-check"
 
 // DefaultTimeout bounds one probe. It is short on purpose: a caller asking
 // whether a node is still connected wants an answer now, and "did not answer
@@ -68,8 +85,8 @@ type VolumeRef struct {
 	Path string
 }
 
-// Request is the extension's request message.
-type Request struct {
+// NodeSelfCheckRequest is the node self-check's request message.
+type NodeSelfCheckRequest struct {
 	// NodeID is the node the caller believes it is asking about. A mismatch is
 	// reported in Messages rather than rejected: the caller's view of node
 	// naming is not this driver's to police.
@@ -81,8 +98,11 @@ type Request struct {
 	IOSampleWindow time.Duration `json:"ioSampleWindow,omitempty"`
 }
 
-// Response is the extension's reply message.
-type Response struct {
+// NodeSelfCheckResponse is the node self-check's reply message.
+//
+// It carries no fencing verdict on purpose. Whether a node may be fenced is
+// decided from the appliance side; see Report.Verdict in connectivity.go.
+type NodeSelfCheckResponse struct {
 	NodeID string `json:"nodeId"`
 	// Connected is true when the node reached the appliance and every named
 	// volume's data path answered.
@@ -95,8 +115,9 @@ type Response struct {
 	Messages []string `json:"messages,omitempty"`
 }
 
-// Service answers the extension's RPC.
-type Service struct {
+// NodeSelfCheck answers the node self-check RPC, from the node's own point of
+// view and with the node's own probes.
+type NodeSelfCheck struct {
 	// NodeID is this node's name.
 	NodeID string
 	// Backend and DataAddr name the appliance and its data address (host:port).
@@ -122,10 +143,10 @@ type Service struct {
 	Now func() time.Time
 }
 
-// New builds a service with the production probes. Volumes and LastIO are left
-// nil; the caller wires them to the node plugin's target set.
-func New(nodeID, backend, dataAddr string) *Service {
-	return &Service{
+// NewNodeSelfCheck builds the node service with the production probes. Volumes
+// and LastIO are left nil; the caller wires them to the node plugin's target set.
+func NewNodeSelfCheck(nodeID, backend, dataAddr string) *NodeSelfCheck {
+	return &NodeSelfCheck{
 		NodeID:   nodeID,
 		Backend:  backend,
 		DataAddr: dataAddr,
@@ -157,11 +178,6 @@ func statfsProbe(path string) error {
 	return nil
 }
 
-// lastIOProbe uses the mount point's own modification time as the cheapest
-// available evidence of recent activity. It is deliberately coarse: a pod
-// rewriting one file in place does not move it, so "no I/O observed" means
-// exactly what it says — no evidence, not proof of idleness — and the caller
-// weighs it alongside Connected rather than acting on it alone.
 // defaultIOCounters backs the production LastIO probe.
 var defaultIOCounters = newIOCounters("/host")
 
@@ -177,13 +193,13 @@ func lastIOProbe(path string) (time.Time, bool) {
 	return defaultIOCounters.Active(path)
 }
 
-// ValidateVolumeHostConnectivity answers the extension's RPC. Every probe it
-// runs is bounded, and it never waits on the driver.
-func (s *Service) ValidateVolumeHostConnectivity(ctx context.Context, req *Request) (*Response, error) {
+// Check answers the node self-check. Every probe it runs is bounded, and it
+// never waits on the driver.
+func (s *NodeSelfCheck) Check(ctx context.Context, req *NodeSelfCheckRequest) (*NodeSelfCheckResponse, error) {
 	if req == nil {
 		return nil, errors.New("nil request")
 	}
-	resp := &Response{NodeID: s.NodeID, Connected: true}
+	resp := &NodeSelfCheckResponse{NodeID: s.NodeID, Connected: true}
 	if req.NodeID != "" && s.NodeID != "" && req.NodeID != s.NodeID {
 		resp.Messages = append(resp.Messages,
 			fmt.Sprintf("this node is %s, not %s", s.NodeID, req.NodeID))
@@ -265,7 +281,7 @@ func (s *Service) ValidateVolumeHostConnectivity(ctx context.Context, req *Reque
 // bounded runs one probe under its own deadline, in its own goroutine, and
 // returns whichever arrives first. The buffered channel lets a hung probe's
 // goroutine finish and be collected whenever the kernel finally releases it.
-func (s *Service) bounded(ctx context.Context, fn func(context.Context) error) error {
+func (s *NodeSelfCheck) bounded(ctx context.Context, fn func(context.Context) error) error {
 	ctx, cancel := context.WithTimeout(ctx, s.timeout())
 	defer cancel()
 
@@ -280,51 +296,51 @@ func (s *Service) bounded(ctx context.Context, fn func(context.Context) error) e
 	}
 }
 
-func (s *Service) dial(ctx context.Context, addr string) error {
+func (s *NodeSelfCheck) dial(ctx context.Context, addr string) error {
 	if s.Dial == nil {
 		return dialProbe(ctx, addr)
 	}
 	return s.Dial(ctx, addr)
 }
 
-func (s *Service) statfs(path string) error {
+func (s *NodeSelfCheck) statfs(path string) error {
 	if s.Statfs == nil {
 		return statfsProbe(path)
 	}
 	return s.Statfs(path)
 }
 
-func (s *Service) timeout() time.Duration {
+func (s *NodeSelfCheck) timeout() time.Duration {
 	if s.Timeout <= 0 {
 		return DefaultTimeout
 	}
 	return s.Timeout
 }
 
-func (s *Service) now() time.Time {
+func (s *NodeSelfCheck) now() time.Time {
 	if s.Now == nil {
 		return time.Now()
 	}
 	return s.Now()
 }
 
-// Handler serves the extension over HTTP. It is a plain mux with one route, so
-// nothing else on the process' listeners can be reached through it.
-func (s *Service) Handler() http.Handler {
+// Handler serves the node self-check over HTTP. It is a plain mux with one
+// route, so nothing else on the process' listeners can be reached through it.
+func (s *NodeSelfCheck) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc(ValidatePath, func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc(NodeSelfCheckPath, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "POST a ValidateVolumeHostConnectivity request", http.StatusMethodNotAllowed)
+			http.Error(w, "POST a node self-check request", http.StatusMethodNotAllowed)
 			return
 		}
-		var req Request
+		var req NodeSelfCheckRequest
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
 			http.Error(w, "malformed request", http.StatusBadRequest)
 			return
 		}
-		resp, err := s.ValidateVolumeHostConnectivity(r.Context(), &req)
+		resp, err := s.Check(r.Context(), &req)
 		if err != nil {
-			http.Error(w, "connectivity check failed", http.StatusInternalServerError)
+			http.Error(w, "node self-check failed", http.StatusInternalServerError)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -333,13 +349,13 @@ func (s *Service) Handler() http.Handler {
 	return mux
 }
 
-// Serve listens on addr and serves the extension until ctx is cancelled.
+// Serve listens on addr and serves handler until ctx is cancelled.
 //
 // addr is either "unix:///path/to.sock" or a TCP address. A UNIX socket is the
 // safer default — it is reachable only by a container sharing the volume — and
 // a TCP address should be bound to localhost unless the operator has a reason
 // to expose it, which is why the chart binds 127.0.0.1 by default.
-func Serve(ctx context.Context, addr string, s *Service) error {
+func Serve(ctx context.Context, addr string, handler http.Handler) error {
 	network, address := "tcp", addr
 	if path, ok := strings.CutPrefix(addr, "unix://"); ok {
 		network, address = "unix", path
@@ -353,13 +369,13 @@ func Serve(ctx context.Context, addr string, s *Service) error {
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", addr, err)
 	}
-	return ServeListener(ctx, lis, s)
+	return ServeListener(ctx, lis, handler)
 }
 
-// ServeListener serves the extension on an existing listener.
-func ServeListener(ctx context.Context, lis net.Listener, s *Service) error {
+// ServeListener serves handler on an existing listener.
+func ServeListener(ctx context.Context, lis net.Listener, handler http.Handler) error {
 	srv := &http.Server{
-		Handler:           s.Handler(),
+		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	go func() {
