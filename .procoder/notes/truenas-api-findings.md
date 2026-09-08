@@ -668,3 +668,35 @@ Note this needs a node resolver that can see real Node objects:
 from a laptop grants the laptop and the cluster node still cannot mount. That is
 correct and safe, and it is why `csi.NewController` needs the resolver to be
 injectable for the node-side suite to run outside the cluster.
+
+## Mutable dataset properties, verified 2026-09-08
+
+Driving `pool.dataset.update` against a real dataset, exactly as
+`ControllerModifyVolume` does:
+
+| property       | sent       | result                                                                     |
+| -------------- | ---------- | -------------------------------------------------------------------------- |
+| `sync`         | `DISABLED` | accepted, `source=LOCAL`                                                   |
+| `compression`  | `ZSTD`     | accepted, `source=LOCAL`                                                   |
+| `atime`        | `OFF`      | accepted, `source=LOCAL`                                                   |
+| `recordsize`   | `1M`       | accepted, `source=LOCAL`                                                   |
+| `sync`         | `INHERIT`  | accepted — reverts to `STANDARD` with `source=DEFAULT`                     |
+| `primarycache` | `metadata` | **rejected**: `[EINVAL] data.primarycache: Extra inputs are not permitted` |
+| `logbias`      | `metadata` | **rejected**: `[EINVAL] data.logbias: Extra inputs are not permitted`      |
+
+Three things this settles:
+
+1. **`INHERIT` is the undo, and it works.** The property returns to the pool
+   default and its `source` returns to `DEFAULT`. That is why idempotency in
+   `ControllerModifyVolume` is checked by **source** and not by value: a
+   dataset whose `sync` reads `STANDARD` may be inheriting it or holding it
+   locally, and those are different states to re-apply.
+
+2. **`primarycache` and `logbias` are not settable through the middleware**,
+   whatever ZFS itself allows. They were proposed for the allowlist from
+   memory and refused on the strength of the published schema; the appliance
+   confirms the schema. Do not re-propose them.
+
+3. The uppercase enum spellings are what the middleware wants
+   (`STANDARD`/`ALWAYS`/`DISABLED`/`INHERIT`), so a `VolumeAttributesClass`
+   written in ZFS's natural lowercase has to be normalised, not rejected.
