@@ -401,6 +401,40 @@ storageClasses:
       # Multipath degrades to single path with a warning when the node lacks
       # multipath-tools.
       multipath: "false"
+      #
+      # PER-VOLUME I/O LIMITS — see docs/io-limits.md before using these.
+      #
+      # They are enforced on the NODE with cgroup v2 io.max, not on the
+      # appliance: TrueNAS/OpenZFS has no per-dataset or per-zvol throttle, so
+      # there is nothing the appliance could enforce. What that means in
+      # practice:
+      #
+      #   - the cap applies to ONE pod's traffic to the volume's block device on
+      #     ONE node. Another pod, on another node, hitting the same pool is
+      #     unaffected, and nothing here protects the appliance from the
+      #     aggregate of every capped pod in the cluster;
+      #   - the cap does not travel with the volume. A pod that reschedules is
+      #     capped again by the new node at its own NodePublishVolume, and a pod
+      #     restart re-applies it;
+      #   - it works for the iscsi and nvme protocols ONLY. Setting any of these
+      #     on an nfs or smb StorageClass makes the pod's publish FAIL with an
+      #     explanatory message, deliberately: a network mount is not a block
+      #     device, so the limit could never be enforced, and accepting it
+      #     silently would leave you believing in a cap that does not exist.
+      #
+      # Bandwidth is BYTES PER SECOND, written as a Kubernetes quantity — "100Mi"
+      # is 104857600 B/s, "100M" is 100000000 B/s. IOPS is operations per second.
+      # An empty value, "0" and "max" all mean "no limit".
+      #
+      # The undirected keys cap both directions; the directional keys override
+      # them per direction.
+      #
+      # bandwidthLimit: "100Mi"
+      # readBandwidthLimit: ""
+      # writeBandwidthLimit: "50Mi"
+      # iopsLimit: "2000"
+      # readIOPSLimit: ""
+      # writeIOPSLimit: "500"
 
 # podmon exposes the driver's connectivity answers on a listener of its own,
 # alongside the CSI socket. It is a DRIVER EXTENSION, NOT CSI: the CSI

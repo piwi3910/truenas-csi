@@ -421,11 +421,24 @@ func (n *Node) Publish(ctx context.Context, req PublishRequest) error {
 
 	// The pod's identity arrives here and nowhere else — podInfoOnMount puts it
 	// in the volume context of this call only — so this is where a volume's
-	// metrics learn which workload they belong to.
+	// metrics learn which workload they belong to, and where a per-pod I/O
+	// throttle can be written at all.
 	n.attachIO(req)
 
+	// A limit that can never be enforced is refused BEFORE anything is mounted,
+	// so the user gets a message about their StorageClass rather than a running
+	// pod they wrongly believe is capped. See checkIOLimits.
+	protocol := protocolOf(req.PublishContext)
+	if err := checkIOLimits(protocol, req.PublishContext); err != nil {
+		return err
+	}
+
 	if req.VolumeCapability.Block {
-		return n.publishBlock(ctx, req)
+		if err := n.publishBlock(ctx, req); err != nil {
+			return err
+		}
+		n.applyIOLimits(ctx, req, protocol)
+		return nil
 	}
 
 	mounted, err := n.isMounted(req.TargetPath)
@@ -433,6 +446,10 @@ func (n *Node) Publish(ctx context.Context, req PublishRequest) error {
 		return err
 	}
 	if mounted {
+		// A republish of an already-published path is a no-op for the mount but
+		// NOT for the throttle: the kubelet retries NodePublishVolume after a
+		// pod restart, and the pod's cgroup is new each time.
+		n.applyIOLimits(ctx, req, protocol)
 		return nil
 	}
 	if err := os.MkdirAll(req.TargetPath, 0o750); err != nil {
@@ -441,6 +458,9 @@ func (n *Node) Publish(ctx context.Context, req PublishRequest) error {
 	if err := n.bindMount(ctx, req.StagingPath, req.TargetPath, req.Readonly || req.VolumeCapability.Readonly); err != nil {
 		return err
 	}
+	// Applied after the mount succeeds: a throttle written for a volume that
+	// then failed to publish would be a limit on a device the pod never gets.
+	n.applyIOLimits(ctx, req, protocol)
 	return nil
 }
 
