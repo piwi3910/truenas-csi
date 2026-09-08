@@ -87,6 +87,41 @@ type Dataset struct {
 
 	Origin         propField            `json:"origin"`
 	UserProperties map[string]propField `json:"user_properties"`
+
+	// The native ZFS properties the driver is allowed to change on a live
+	// volume. They are decoded — rather than read back from a second call —
+	// because ControllerModifyVolume has to be idempotent: the only way to
+	// answer "is this already the value?" without writing is to compare
+	// against what pool.dataset.query already returned.
+	Sync        propField `json:"sync"`
+	Compression propField `json:"compression"`
+	ATime       propField `json:"atime"`
+	RecordSize  propField `json:"recordsize"`
+}
+
+// ZFSProperty returns one of the native ZFS properties this client decodes,
+// looked up by its ZFS name, and reports whether the name is one of them.
+//
+// Both halves of the Property matter to a caller deciding whether a change is
+// needed. Value is the effective setting; Source distinguishes a value set on
+// this dataset ("LOCAL") from one that merely follows the parent ("INHERITED",
+// "DEFAULT") — which is the difference between "already disabled" and
+// "inheriting a parent that happens to be disabled today".
+func (d *Dataset) ZFSProperty(name string) (Property, bool) {
+	if d == nil {
+		return Property{}, false
+	}
+	switch name {
+	case "sync":
+		return d.Sync.Property, true
+	case "compression":
+		return d.Compression.Property, true
+	case "atime":
+		return d.ATime.Property, true
+	case "recordsize":
+		return d.RecordSize.Property, true
+	}
+	return Property{}, false
 }
 
 // Owned reports whether this driver created the dataset, requiring the marker to

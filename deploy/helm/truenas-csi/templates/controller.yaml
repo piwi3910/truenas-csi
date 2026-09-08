@@ -182,7 +182,14 @@ spec:
             # maintains the CSIStorageCapacity objects.
             - --enable-capacity
             - --capacity-ownerref-level=2
+            {{- if .Values.volumeAttributesClass.enabled }}
+            # VolumeAttributesClass is what carries mutable_parameters into
+            # CreateVolume, so a claim provisioned WITH a class gets its ZFS
+            # properties from the start rather than on a later modify.
+            - --feature-gates=Topology=true,VolumeAttributesClass=true
+            {{- else }}
             - --feature-gates=Topology=true
+            {{- end }}
             - --extra-create-metadata
             {{- with .Values.sidecars.provisioner.extraArgs }}
             {{- toYaml . | nindent 12 }}
@@ -255,6 +262,13 @@ spec:
             # ZFS refuses to shrink a dataset, so a failed expansion must not be
             # retried into a shrink.
             - --handle-volume-inuse-error=false
+            {{- if .Values.volumeAttributesClass.enabled }}
+            # The resizer, not the provisioner, is the sidecar that watches a
+            # claim's volumeAttributesClassName and calls ControllerModifyVolume.
+            # Without this gate a VolumeAttributesClass attached to a live PVC
+            # is inert: nothing errors, nothing changes.
+            - --feature-gates=VolumeAttributesClass=true
+            {{- end }}
             {{- with .Values.sidecars.resizer.extraArgs }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

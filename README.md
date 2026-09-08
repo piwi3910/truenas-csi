@@ -647,6 +647,9 @@ design more than any other requirement:
   cannot tell the scheduler.
 - [docs/metrics.md](docs/metrics.md) — every exported series, where the per-volume figures
   come from, and what they cannot show.
+- [docs/volume-attributes.md](docs/volume-attributes.md) — VolumeAttributesClass: changing
+  a live volume's ZFS properties in place, the closed set the driver will change, and what
+  `sync: disabled` costs.
 
 ## Observability
 

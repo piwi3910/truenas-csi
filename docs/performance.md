@@ -61,9 +61,12 @@ So the ranking depends entirely on the workload:
 **What would move the write numbers**, in order of effect: an SLOG (a fast
 mirrored log device) would transform the NFS and SMB figures, since it is
 precisely the sync-write commit that is being measured; `sync=disabled` on the
-dataset would do the same and trade durability for it, which is why this driver
-does not set it. Multiple parallel flows, or per-mount link pinning, would lift
-the 294 MB/s read ceiling.
+dataset would do the same and trade durability for it. No volume gets that by
+default, and it is never inferred — but it is available per volume, reversibly,
+through a `VolumeAttributesClass`: see
+[docs/volume-attributes.md](volume-attributes.md) for what it costs and how to
+take it back. Multiple parallel flows, or per-mount link pinning, would lift the
+294 MB/s read ceiling.
 
 ## Reproducing
 

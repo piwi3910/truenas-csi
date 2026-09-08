@@ -80,6 +80,15 @@ rules:
   - apiGroups: ["storage.k8s.io"]
     resources: ["csistoragecapacities"]
     verbs: ["get", "list", "watch", "create", "update", "delete"]
+  {{- if .Values.volumeAttributesClass.enabled }}
+  # VolumeAttributesClass: the provisioner reads the class named on a claim at
+  # creation, the resizer watches for it changing on a live claim. Read-only —
+  # neither sidecar creates or edits a class, and the driver must never be able
+  # to widen the set of ZFS properties it is allowed to change by writing one.
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["volumeattributesclasses"]
+    verbs: ["get", "list", "watch"]
+  {{- end }}
   {{- if .Values.fencing.enabled }}
   # Pod fencing. Every grant here is destructive, which is why they are rendered
   # ONLY when fencing is enabled — an install that never fences never holds
