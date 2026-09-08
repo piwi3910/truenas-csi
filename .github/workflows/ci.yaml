@@ -104,7 +104,10 @@ jobs:
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: v2.13.2
-          args: --timeout=10m
+          # Report EVERY finding. The defaults cap output at 50 per linter and 3
+          # per repeated issue, which turns one fix-and-rerun cycle into several
+          # and makes a large batch look smaller than it is.
+          args: --timeout=10m --max-issues-per-linter=0 --max-same-issues=0
 
   # The chart tests only assert anything when helm is installed, so CI installs
   # it: RBAC minimality and the snapshot-CRD default are exactly the properties
@@ -179,6 +182,23 @@ jobs:
           go build ./...
           go vet ./...
           go test -race -count=1 ./...
+
+      # golangci-lint is MODULE-scoped: the lint job above runs in the
+      # repository root and never reaches this module, so without this step the
+      # operator is linted by nothing at all. That gap hid six real findings,
+      # including a deprecated events API whose replacement needs different
+      # RBAC -- the kind of thing that fails silently rather than loudly.
+      #
+      # GOWORK=off for the same reason the build above uses it: the workspace
+      # can resolve an import the module's own go.mod does not require.
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.13.2
+          working-directory: operator
+          args: --timeout=10m --max-issues-per-linter=0 --max-same-issues=0
+        env:
+          GOWORK: "off"
 
   # Chart testing against a REAL API server. `helm lint` checks the template
   # renders; only a server-side dry run checks that what it rendered is
