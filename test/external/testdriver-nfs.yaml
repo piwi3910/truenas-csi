@@ -1,0 +1,120 @@
+# Upstream Kubernetes external-storage test driver definition — NFS.
+#
+# Consumed by the `e2e.test` binary's External.Storage suite via
+# `-storage.testdriver`. Every flag below was decided by reading the driver, not
+# by watching which tests go green: a flag that claims a capability we do not
+# have produces a false failure, and a flag turned off to quieten a test is a
+# lie that outlives whoever told it.
+#
+# `__STORAGE_CLASS__` and `__SNAPSHOT_CLASS__` are rendered by run.sh; this file
+# is never handed to e2e.test as-is.
+
+StorageClass:
+  FromExistingClassName: __STORAGE_CLASS__
+SnapshotClass:
+  FromExistingClassName: __SNAPSHOT_CLASS__
+
+DriverInfo:
+  Name: csi.truenas.watteel.com
+
+  # CreateVolume defaults to 1 GiB when a request carries no capacity range
+  # (internal/csi/controller.go), and the NFS backend enforces the size with
+  # refquota. Nothing smaller is meaningful, so the suite is told not to ask.
+  SupportedSizeRange:
+    Min: 1Gi
+
+  # An NFS volume is a dataset the appliance already formatted. fsType is
+  # ignored end to end: internal/node/nfs.go mounts with -t nfs and never runs
+  # mkfs. The empty string is the "driver default" the framework uses.
+  SupportedFsType:
+    "": {}
+
+  SupportedMountOption:
+    noatime: {}
+
+  # Topology: the driver publishes per-capability node labels
+  # (internal/node/topology.go) and CreateVolume requires the matching segment
+  # (requiredTopology in internal/csi/controller.go), so
+  # VOLUME_ACCESSIBILITY_CONSTRAINTS is genuinely in use.
+  #
+  # JUDGEMENT CALL: the label VALUES are "true"/"false" rather than locations,
+  # and the topology testsuite picks one observed value at random and pins a
+  # StorageClass to it. On a cluster where some node lacks nfs-common it can pin
+  # "false" and every provision then fails for a reason that is not a driver
+  # defect. The suite therefore requires a homogeneous cluster — see README.md.
+  TopologyKeys:
+    - csi.truenas.watteel.com/nfs
+  NumAllowedTopologies: 1
+
+  Capabilities:
+    # CREATE_DELETE_VOLUME, and the data survives a pod restart.
+    persistence: true
+
+    # volumeMode: Block. internal/node/node.go dispatches NFS to stageNFS, which
+    # only ever mounts; there is no device to bind onto a pod's device file.
+    block: false
+
+    # A binary on an NFS mount executes: nothing in stageNFS adds noexec.
+    exec: true
+
+    # JUDGEMENT CALL: false. fsGroupPolicy is File, so kubelet WOULD attempt the
+    # recursive chown — but the NFS backend sets ownership on the appliance at
+    # provision time precisely because it must (internal/backend/nfs/nfs.go), and
+    # the export is root-squashed unless an operator sets `maproot`. A chown from
+    # the node is therefore not a capability this driver offers; claiming it
+    # would make a correct configuration look broken.
+    fsGroup: false
+
+    # The driver never advertises VOLUME_MOUNT_GROUP on the node service
+    # (internal/csi/node.go NodeGetCapabilities), so mount flags carry no group.
+    volumeMountGroup: false
+
+    # CREATE_DELETE_SNAPSHOT + LIST_SNAPSHOTS, restored by ZFS clone.
+    snapshotDataSource: true
+
+    # CLONE_VOLUME: CreateVolume takes an intermediate snapshot and clones it.
+    pvcDataSource: true
+
+    # Several pods on one node sharing a volume: an NFS mount is bind-mounted
+    # per pod, and NodePublishVolume is idempotent.
+    multipods: true
+
+    # supportsAccessMode() in internal/csi/controller.go returns true for every
+    # mode when the protocol is nfs, and an export genuinely serves many nodes.
+    RWX: true
+
+    # SINGLE_NODE_SINGLE_WRITER is accepted, which is what ReadWriteOncePod needs.
+    readWriteOncePod: true
+
+    # EXPAND_VOLUME, implemented as a refquota change.
+    controllerExpansion: true
+
+    # ControllerExpandVolume reports NodeExpansionRequired for every non-block
+    # capability, so the CO does call NodeExpandVolume; for NFS it is a
+    # deliberate no-op (internal/node/expand.go).
+    nodeExpansion: true
+
+    # GetPluginCapabilities advertises VolumeExpansion ONLINE and nothing else
+    # (internal/csi/identity.go), and a refquota change lands live.
+    onlineExpansion: true
+    # OFFLINE is not advertised. Adding it is plan task 8, not a test-list edit.
+    offlineExpansion: false
+
+    # NodeGetInfo returns MaxVolumesPerNode = 128 (internal/node/node.go).
+    # Honest, and expensive to exercise — run.sh skips the limits suite unless
+    # TRUENAS_E2E_INCLUDE_HEAVY is set.
+    volumeLimits: true
+
+    # The driver works on a one-node cluster.
+    singleNodeVolume: true
+
+    topology: true
+
+    # GET_CAPACITY, plus the chart's CSIDriver storageCapacity: true and the
+    # provisioner's --enable-capacity.
+    capacity: true
+
+    # Two PVs sharing one volume handle. Untested against this driver, and not a
+    # claim worth making blind: the stage record is keyed by staging path so it
+    # may well work, but "may well" is not a capability.
+    multiplePVsSameID: false

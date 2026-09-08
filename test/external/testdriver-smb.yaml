@@ -1,0 +1,85 @@
+# Upstream Kubernetes external-storage test driver definition — SMB.
+#
+# THIS DEFINITION CANNOT PASS TODAY, AND THAT IS THE POINT OF SHIPPING IT.
+#
+# The SMB backend provisions correctly (internal/backend/smb/smb.go, verified
+# against a live TrueNAS 25.10.6) but there is no node data path for it:
+#
+#   * internal/node/node.go declares only ProtocolNFS, ProtocolISCSI and
+#     ProtocolNVMe, and protocolOf() cannot resolve "smb", so NodeStageVolume
+#     fails with InvalidArgument "publish context names no supported protocol";
+#   * internal/node/preflight.go has no cifs capability, so no node ever
+#     publishes a `csi.truenas.watteel.com/smb` topology label — while
+#     requiredTopology() in internal/csi/controller.go asks for exactly that
+#     segment. An SMB PVC is therefore unschedulable before it is unmountable.
+#
+# README.md already calls SMB a "deferred protocol". This file records what the
+# harness must assert the day the node path lands, so the capability claims are
+# written from the backend's real behaviour rather than reconstructed later.
+# run.sh refuses to run this definition unless TRUENAS_E2E_ALLOW_SMB=true.
+
+StorageClass:
+  FromExistingClassName: __STORAGE_CLASS__
+SnapshotClass:
+  FromExistingClassName: __SNAPSHOT_CLASS__
+
+DriverInfo:
+  Name: csi.truenas.watteel.com
+
+  SupportedSizeRange:
+    Min: 1Gi
+
+  # Like NFS, the appliance owns the filesystem; the cifs client never formats.
+  SupportedFsType:
+    "": {}
+
+  SupportedMountOption:
+    noserverino: {}
+
+  TopologyKeys:
+    - csi.truenas.watteel.com/smb
+  NumAllowedTopologies: 1
+
+  Capabilities:
+    persistence: true
+
+    # A share is not a block device.
+    block: false
+
+    exec: true
+
+    # SMB ownership is a MOUNT-TIME concern handled by the cifs client's
+    # uid/gid/file_mode/dir_mode options, which the backend publishes for the
+    # node to apply. kubelet's fsGroup chown is neither used nor meaningful.
+    fsGroup: false
+    volumeMountGroup: false
+
+    # ZFS snapshot and clone, identical to the NFS backend's.
+    snapshotDataSource: true
+    pvcDataSource: true
+
+    multipods: true
+
+    # JUDGEMENT CALL, and a KNOWN MISMATCH. An SMB share genuinely serves many
+    # nodes at once, so RWX is the truthful value for the storage. But
+    # supportsAccessMode() in internal/csi/controller.go special-cases only
+    # "nfs" and drops SMB into the default branch, which refuses every
+    # MULTI_NODE_* mode. This flag is set to the storage's real capability so
+    # the suite fails loudly on that bug rather than encoding it as fact; the
+    # fix belongs in the controller, not here. See README.md.
+    RWX: true
+
+    readWriteOncePod: true
+
+    # refquota change, same as NFS. NodeExpandVolume would be a no-op.
+    controllerExpansion: true
+    nodeExpansion: true
+    onlineExpansion: true
+    offlineExpansion: false
+
+    volumeLimits: true
+    singleNodeVolume: true
+    topology: true
+    capacity: true
+
+    multiplePVsSameID: false

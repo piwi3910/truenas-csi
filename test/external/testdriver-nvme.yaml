@@ -1,0 +1,70 @@
+# Upstream Kubernetes external-storage test driver definition — NVMe/TCP.
+#
+# See testdriver-nfs.yaml for the rule this file follows.
+#
+# NVMe/TCP is the same storage shape as iSCSI — one zvol, one block device on
+# one node — so the capability set matches testdriver-iscsi.yaml. The two files
+# are kept separate rather than shared because they describe different
+# StorageClasses and different node tooling, and a single file with a rendered
+# protocol would hide exactly the divergence this suite exists to catch.
+
+StorageClass:
+  FromExistingClassName: __STORAGE_CLASS__
+SnapshotClass:
+  FromExistingClassName: __SNAPSHOT_CLASS__
+
+DriverInfo:
+  Name: csi.truenas.watteel.com
+
+  SupportedSizeRange:
+    Min: 1Gi
+
+  # Same node-side filesystem support as iSCSI: internal/node/nvme.go resolves a
+  # device and then uses the shared formatIfBlank/mount/requireFS path.
+  SupportedFsType:
+    "": {}
+    ext4: {}
+    xfs: {}
+
+  SupportedMountOption:
+    noatime: {}
+
+  # See the topology note in testdriver-nfs.yaml.
+  TopologyKeys:
+    - csi.truenas.watteel.com/nvme
+  NumAllowedTopologies: 1
+
+  Capabilities:
+    persistence: true
+
+    # internal/node/nvme.go hands the raw device to internal/node/block.go for a
+    # block capability, exactly as the iSCSI path does.
+    block: true
+
+    exec: true
+    fsGroup: true
+    volumeMountGroup: false
+
+    snapshotDataSource: true
+    pvcDataSource: true
+    multipods: true
+
+    # A namespace is a single block device. supportsAccessMode() takes the same
+    # default branch as iSCSI and refuses every MULTI_NODE_* mode.
+    RWX: false
+
+    readWriteOncePod: true
+
+    # ControllerExpandVolume grows the zvol; the node rescans the namespace
+    # scoped to our own subsystem serial and grows the filesystem in place.
+    controllerExpansion: true
+    nodeExpansion: true
+    onlineExpansion: true
+    offlineExpansion: false
+
+    volumeLimits: true
+    singleNodeVolume: true
+    topology: true
+    capacity: true
+
+    multiplePVsSameID: false
