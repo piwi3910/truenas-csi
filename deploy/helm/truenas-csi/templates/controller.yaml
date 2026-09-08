@@ -27,8 +27,19 @@ spec:
         {{- toYaml . | nindent 8 }}
         {{- end }}
       annotations:
-        # Roll the controller when the credentials change.
+        {{- if .Values.controller.restartOnConfigChange }}
+        # Roll the controller when the configuration changes.
+        #
+        # The driver hot-reloads a rotated CREDENTIAL on its own and does not
+        # need this; what it cannot swap in place is identity — endpoint, pool,
+        # parent dataset — and a helm upgrade that changes one of those would
+        # otherwise be refused at runtime and quietly ignored. Set
+        # controller.restartOnConfigChange=false if you rotate keys through this
+        # chart and would rather not restart the controller to do it.
         checksum/config: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- end }}
+        {{- /* The logging ConfigMap is deliberately NOT checksummed: the whole
+        point is that a log level changes without a rollout. */}}
         {{- with .Values.controller.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -74,6 +85,19 @@ spec:
             - -endpoint=$(CSI_ENDPOINT)
             # Credentials come from the mounted Secret, never from an argument.
             - -config=/etc/truenas-csi/config.yaml
+            {{- if .Values.dynamicLogging.enabled }}
+            # Log level and format, re-read live from a mounted ConfigMap.
+            - -log-config=/etc/truenas-csi-logging/logging.yaml
+            {{- end }}
+            {{- if .Values.controller.metricsLeaderElection }}
+            # Naming a Lease here elects the ONE replica that polls the
+            # appliance for array metrics. This is not the sidecars' election:
+            # they elect a writer, this elects the single replica allowed to
+            # spend the appliance's 20-call concurrency budget on polling. A
+            # non-leader exports no array metrics at all, which is the honest
+            # answer — see the driver's startArrayMetrics.
+            - -metrics-lease={{ include "truenas-csi.metricsLeaseName" . }}
+            {{- end }}
             {{- if .Values.podmon.enabled }}
             # The ValidateVolumeHostConnectivity extension. Not CSI: a driver
             # extension on a listener of its own, so a stalled driver cannot
@@ -87,6 +111,13 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+            # The array-metrics lease identity. A pod name is unique in the
+            # namespace at any instant, so a lease held by a dead replica names
+            # a pod an operator can actually look up.
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
           ports:
             - name: metrics
               containerPort: 9090
@@ -118,6 +149,11 @@ spec:
             - name: config
               mountPath: /etc/truenas-csi
               readOnly: true
+            {{- if .Values.dynamicLogging.enabled }}
+            - name: logging
+              mountPath: /etc/truenas-csi-logging
+              readOnly: true
+            {{- end }}
             - name: tmp
               mountPath: /tmp
         - name: csi-provisioner
@@ -294,3 +330,13 @@ spec:
           secret:
             secretName: {{ include "truenas-csi.secretName" . }}
             defaultMode: 0440
+        {{- if .Values.dynamicLogging.enabled }}
+        # A ConfigMap volume, so the kubelet keeps the mounted copy in step with
+        # the object. The driver watches the directory, because a projected
+        # update swaps a symlinked "..data" directory rather than writing the
+        # file, and a watch on the file itself would never see it.
+        - name: logging
+          configMap:
+            name: {{ include "truenas-csi.loggingConfigMapName" . }}
+            defaultMode: 0444
+        {{- end }}

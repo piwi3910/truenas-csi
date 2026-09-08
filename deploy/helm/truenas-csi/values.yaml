@@ -14,8 +14,25 @@ imagePullSecrets: []
 # Driver-level settings. These end up in the mounted config Secret, not in
 # container arguments, so nothing here can leak through `ps` or a pod spec.
 logLevel: info
+# logFormat is text or json. It only takes effect through the logging ConfigMap
+# below; the startup format is text.
+logFormat: text
 metricsAddr: ":9090"
 healthAddr: ":9808"
+
+# dynamicLogging mounts logLevel and logFormat as a ConfigMap that the driver
+# re-reads live, so verbosity can be raised during an incident without a
+# rollout — `kubectl edit configmap`, and every replica picks it up in seconds.
+#
+# It is deliberately a ConfigMap and not the credential Secret: whoever is
+# handling the incident needs the log level, not the API key. Nothing else is
+# reloadable this way; see `credential hot-reload` below for what is.
+dynamicLogging:
+  enabled: true
+  # existingConfigMap names a ConfigMap you manage yourself, holding key
+  # `logging.yaml` with logLevel and logFormat. When set, the chart renders no
+  # ConfigMap of its own.
+  existingConfigMap: ""
 
 # How often the controller polls each appliance for array-level metrics (pool,
 # dataset and iSCSI figures). Polling never happens on the Prometheus scrape
@@ -52,7 +69,43 @@ metricsInterval: "60s"
 #     # LARGER reservation wins. reservedPercent is a share of the pool size.
 #     reservedBytes: 53687091200 # 50 GiB
 #     reservedPercent: 10
+#     # Middleware calls per second this driver will make to the appliance.
+#     # 0 uses the driver's default of 100/s, which is a ceiling on a runaway
+#     # caller rather than a throughput target — a healthy driver never reaches
+#     # it. The appliance's real constraint is CONCURRENCY (20 in flight,
+#     # measured), and the client caps itself at 16 regardless of this.
+#     rateLimit: 0
+#     # Consecutive TRANSPORT failures that open the circuit breaker. 0 uses the
+#     # driver's default of 10; a negative value disables the breaker. Method
+#     # errors do not count — a middleware answering "dataset not found" is a
+#     # healthy appliance. 10 is deliberately above the 16 calls a single
+#     # dropped websocket can fail at once, so a routine reconnect never opens
+#     # it.
+#     breakerThreshold: 0
+#     # How long the breaker stays open before letting a single probe through.
+#     # Empty uses the driver's default of 10s, chosen to be shorter than the
+#     # CSI sidecars' 30s retry ceiling so a recovered appliance is picked up
+#     # within one sidecar retry.
+#     breakerResetTimeout: ""
 backends: {}
+
+# Credential hot-reload
+#
+# The driver watches the mounted config Secret and adopts a rotated credential
+# — username, apiKey, caCert, insecureSkipVerify — without restarting: it
+# revalidates the whole file (including the wss://-only transport check),
+# refuses the change if anything else differs, and reconnects each appliance
+# with the new key.
+#
+# These fields require a RESTART and are refused at runtime, loudly:
+#   endpoint, flavour, pool, parentDataset, the set of backend names,
+#   reservedBytes, reservedPercent, rateLimit, breaker settings,
+#   metricsAddr, healthAddr, metricsInterval.
+#
+# They are identity or startup wiring: every PersistentVolume records which
+# appliance and dataset it lives on, so swapping one in place would silently
+# repoint live volumes at a different array. controller.restartOnConfigChange
+# (below) is what makes a helm upgrade of those fields take effect.
 
 # existingSecret names a Secret you manage yourself holding key `config.yaml`.
 # When set, the chart renders no Secret of its own and `backends` is ignored,
@@ -62,8 +115,26 @@ existingSecret: ""
 controller:
   replicas: 2
   # Leader election makes the second replica a warm standby rather than a
-  # second writer.
+  # second writer. This is the CSI SIDECARS' election.
   leaderElection: true
+  # metricsLeaderElection elects one replica to poll the appliance for array
+  # metrics. It is a separate lease from the sidecars' on purpose: they elect a
+  # writer, this elects the single replica allowed to spend the appliance's
+  # 20-call concurrency budget on polling. Without it every replica polls.
+  #
+  # A non-leader exports no truenas_pool_*, truenas_dataset_* or
+  # truenas_iscsi_* series at all — exporting zeros would read as a pool that
+  # suddenly emptied, and exporting stale values would be a gauge that quietly
+  # stopped tracking reality. Scrape all replicas; only one answers.
+  metricsLeaderElection: true
+  # restartOnConfigChange rolls the controller when the config Secret changes.
+  #
+  # Credential rotation no longer needs it — the driver hot-reloads a rotated
+  # key in place. What it still covers is a helm upgrade that changes endpoint,
+  # pool or parentDataset, which the driver refuses to swap at runtime and
+  # would otherwise ignore until somebody noticed the log line. Turn it off if
+  # you rotate keys through this chart and would rather not restart to do it.
+  restartOnConfigChange: true
   podAnnotations: {}
   podLabels: {}
   nodeSelector: {}

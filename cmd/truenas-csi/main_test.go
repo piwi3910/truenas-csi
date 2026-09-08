@@ -38,7 +38,8 @@ backends:
 `), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	err := run("controller", "unix:///tmp/never-created.sock", path, "worker-21", "/host", "")
+	err := run(options{mode: "controller", endpoint: "unix:///tmp/never-created.sock",
+		configPath: path, nodeID: "worker-21", hostRoot: "/host"})
 	if err == nil {
 		t.Fatal("a plaintext endpoint must stop the driver starting")
 	}
@@ -52,8 +53,8 @@ backends:
 }
 
 func TestRunRejectsMissingConfig(t *testing.T) {
-	if err := run("controller", "unix:///tmp/x.sock",
-		filepath.Join(t.TempDir(), "absent.yaml"), "n", "/host", ""); err == nil {
+	if err := run(options{mode: "controller", endpoint: "unix:///tmp/x.sock",
+		configPath: filepath.Join(t.TempDir(), "absent.yaml"), nodeID: "n", hostRoot: "/host"}); err == nil {
 		t.Fatal("a missing config file must be fatal")
 	}
 }
@@ -136,9 +137,40 @@ func TestArrayCollectorIsWiredIntoTheController(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"arraymetrics.New", "arrayCollector.Run(ctx)"} {
+	for _, want := range []string{"arraymetrics.New", "startArrayMetrics"} {
 		if !strings.Contains(string(src), want) {
 			t.Errorf("main.go never calls %s: the collector would be dead code", want)
+		}
+	}
+	// The poll loop itself moved into hardening.go, behind the leader election.
+	// It is just as dead if nothing there ever runs it.
+	hardening, err := os.ReadFile("hardening.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"arrayCollector.Run(ctx)", "obs.RunLeader"} {
+		if !strings.Contains(string(hardening), want) {
+			t.Errorf("hardening.go never calls %s: the collector would never poll", want)
+		}
+	}
+}
+
+// TestOperationalHardeningIsWiredIn is the same guard for the pieces that only
+// exist if main actually starts them: credential hot-reload, the dynamic log
+// level, and the array-metrics leader election. Each has tests of its own, and
+// those prove nothing about the shipped binary.
+func TestOperationalHardeningIsWiredIn(t *testing.T) {
+	src, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"startCredentialReload", "config.NewReloader", "startLogWatch",
+		"log-config", "metrics-lease",
+	} {
+		if !strings.Contains(string(src), want) {
+			t.Errorf("main.go never references %s: the feature would be dead code "+
+				"in the shipped binary", want)
 		}
 	}
 }

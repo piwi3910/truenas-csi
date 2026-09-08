@@ -2,9 +2,11 @@ package obs
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
+	"sync"
 	"sync/atomic"
 )
 
@@ -15,20 +17,108 @@ type ctxKey struct{}
 
 var volumeCtxKey ctxKey
 
-// base is the handler every Logger wraps. It is replaced wholesale by SetLogOutput.
+// base is the handler every Logger wraps. It is replaced wholesale by
+// SetLogOutput and SetLogFormat.
 var base atomic.Pointer[slog.Handler]
+
+// The live logging state.
+//
+// level is a slog.LevelVar rather than a plain Level because it is the one
+// setting that has to change UNDER handlers that already exist: a logger
+// obtained before an operator raised verbosity must start emitting debug
+// records too, and every Logger call would otherwise have to re-read a global.
+// Format cannot work that way — a text and a JSON handler are different types —
+// so changing it rebuilds the handler, which is fine because nobody changes
+// format during an incident.
+var (
+	level = new(slog.LevelVar)
+
+	outMu     sync.Mutex
+	logWriter io.Writer = os.Stderr
+	logFormat           = FormatText
+)
+
+// Log formats this driver can emit. They mirror config.LogFormat*; obs does not
+// import config, so that a logging package stays usable from anywhere.
+const (
+	FormatText = "text"
+	FormatJSON = "json"
+)
 
 func init() {
 	SetLogOutput(nil, slog.LevelInfo)
 }
 
-// SetLogOutput redirects log output to w at the given level. A nil writer restores
-// os.Stderr. Tests use it to capture output.
-func SetLogOutput(w io.Writer, level slog.Level) {
+// SetLogOutput redirects log output to w at the given level, in the current
+// format. A nil writer restores os.Stderr. Tests use it to capture output.
+func SetLogOutput(w io.Writer, l slog.Level) {
+	outMu.Lock()
+	defer outMu.Unlock()
 	if w == nil {
 		w = os.Stderr
 	}
-	var h slog.Handler = slog.NewTextHandler(w, &slog.HandlerOptions{Level: level})
+	logWriter = w
+	level.Set(l)
+	rebuildLocked()
+}
+
+// SetLogLevel changes the verbosity of every logger, including ones already
+// handed out. It is the hot path of the watched logging ConfigMap.
+func SetLogLevel(l slog.Level) { level.Set(l) }
+
+// LogLevel is the level currently in force.
+func LogLevel() slog.Level { return level.Level() }
+
+// SetLogFormat switches between the text and JSON handlers. An unknown format
+// is an error and leaves the current handler alone.
+func SetLogFormat(format string) error {
+	if format != FormatText && format != FormatJSON {
+		return fmt.Errorf("log format %q is not %q or %q", format, FormatText, FormatJSON)
+	}
+	outMu.Lock()
+	defer outMu.Unlock()
+	if logFormat == format {
+		return nil
+	}
+	logFormat = format
+	rebuildLocked()
+	return nil
+}
+
+// LogFormat is the format currently in force.
+func LogFormat() string {
+	outMu.Lock()
+	defer outMu.Unlock()
+	return logFormat
+}
+
+// ParseLevel maps a configured level name onto slog. An unrecognised name is
+// reported rather than silently treated as info, so a typo in a ConfigMap does
+// not quietly cost an operator their debug logs.
+func ParseLevel(name string) (slog.Level, bool) {
+	switch name {
+	case "debug":
+		return slog.LevelDebug, true
+	case "info", "":
+		return slog.LevelInfo, true
+	case "warn":
+		return slog.LevelWarn, true
+	case "error":
+		return slog.LevelError, true
+	default:
+		return slog.LevelInfo, false
+	}
+}
+
+// rebuildLocked replaces the base handler. The caller holds outMu.
+func rebuildLocked() {
+	opts := &slog.HandlerOptions{Level: level}
+	var h slog.Handler
+	if logFormat == FormatJSON {
+		h = slog.NewJSONHandler(logWriter, opts)
+	} else {
+		h = slog.NewTextHandler(logWriter, opts)
+	}
 	base.Store(&h)
 }
 
