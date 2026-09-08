@@ -229,7 +229,13 @@ func (b *iscsiBackend) ensureZvol(ctx context.Context, r backend.CreateRequest, 
 	}
 
 	if r.SourceSnapshot != "" {
-		return b.cloneZvol(ctx, r, rollback)
+		if err := b.cloneZvol(ctx, r, rollback); err != nil {
+			return err
+		}
+		// Recorded on this path too, from THIS request: a clone gets the
+		// identity of the volume it becomes, never the one its origin carried.
+		backend.RecordIdentity(ctx, b.c, dsPath, volume.IdentityFrom(r.Params))
+		return nil
 	}
 
 	blocksize := p.VolBlockSize
@@ -254,6 +260,7 @@ func (b *iscsiBackend) ensureZvol(ctx context.Context, r backend.CreateRequest, 
 	*rollback = append(*rollback, func() {
 		_ = b.c.DatasetDelete(context.WithoutCancel(ctx), dsPath, true, true)
 	})
+	backend.RecordIdentity(ctx, b.c, dsPath, volume.IdentityFrom(r.Params))
 	return nil
 }
 

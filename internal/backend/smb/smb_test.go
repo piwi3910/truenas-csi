@@ -69,6 +69,8 @@ type fakeDataset struct {
 	marker    string
 	source    string
 	shareType string
+	props     map[string]string
+	comments  string // the ZFS comments field the TrueNAS UI shows
 }
 
 func (d *fakeDataset) json(id string) map[string]any {
@@ -76,13 +78,32 @@ func (d *fakeDataset) json(id string) map[string]any {
 	if d.marker != "" {
 		props[volume.OwnerProperty] = map[string]any{"value": d.marker, "source": d.source}
 	}
+	for k, v := range d.props {
+		props[k] = map[string]any{"value": v, "source": "LOCAL"}
+	}
 	return map[string]any{
 		"id":              id,
 		"type":            "FILESYSTEM",
 		"mountpoint":      "/mnt/" + id,
 		"refquota":        map[string]any{"parsed": d.refquota},
 		"user_properties": props,
+		"comments":        map[string]any{"value": d.comments, "source": "LOCAL"},
 	}
+}
+
+// setProp applies one {key, value} property entry, keeping the ownership
+// marker in its own field so the existing guard tests keep reading it there.
+func (d *fakeDataset) setProp(m map[string]any) {
+	key, _ := m["key"].(string)
+	val, _ := m["value"].(string)
+	if key == volume.OwnerProperty {
+		d.marker, d.source = val, "LOCAL"
+		return
+	}
+	if d.props == nil {
+		d.props = map[string]string{}
+	}
+	d.props[key] = val
 }
 
 func newNAS(t *testing.T) *nas {
@@ -116,13 +137,11 @@ func newNAS(t *testing.T) *nas {
 			ds.refquota = int64(q)
 		}
 		ds.shareType, _ = payload["share_type"].(string)
+		ds.comments, _ = payload["comments"].(string)
 		if props, ok := payload["user_properties"].([]any); ok {
 			for _, raw := range props {
 				m, _ := raw.(map[string]any)
-				if m["key"] == volume.OwnerProperty {
-					ds.marker, _ = m["value"].(string)
-					ds.source = "LOCAL"
-				}
+				ds.setProp(m)
 			}
 		}
 		n.datasets[id] = ds
@@ -143,13 +162,13 @@ func newNAS(t *testing.T) *nas {
 		if q, ok := patch["refquota"].(float64); ok {
 			ds.refquota = int64(q)
 		}
+		if c, ok := patch["comments"].(string); ok {
+			ds.comments = c
+		}
 		if props, ok := patch["user_properties_update"].([]any); ok {
 			for _, raw := range props {
 				m, _ := raw.(map[string]any)
-				if m["key"] == volume.OwnerProperty {
-					ds.marker, _ = m["value"].(string)
-					ds.source = "LOCAL"
-				}
+				ds.setProp(m)
 			}
 		}
 		return ds.json(id), nil

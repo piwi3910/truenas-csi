@@ -227,6 +227,9 @@ func (n *nas) install() {
 		if v, ok := patch["volsize"]; ok {
 			ds["volsize"] = map[string]any{"parsed": v}
 		}
+		if v, ok := patch["comments"]; ok {
+			ds["comments"] = map[string]any{"value": v, "source": "LOCAL"}
+		}
 		if raw, ok := patch["user_properties_update"].([]any); ok {
 			props, _ := ds["user_properties"].(map[string]any)
 			if props == nil {
@@ -250,6 +253,31 @@ func (n *nas) install() {
 			return nil, notFound(id)
 		}
 		delete(n.datasets, id)
+		return true, nil
+	})
+
+	n.handle("pool.snapshot.clone", func(p []json.RawMessage) (any, error) {
+		spec := arg[map[string]any](t, p, 0)
+		snap, _ := spec["snapshot"].(string)
+		dst, _ := spec["dataset_dst"].(string)
+		n.mu.Lock()
+		defer n.mu.Unlock()
+		origin := snap
+		if i := strings.Index(snap, "@"); i >= 0 {
+			origin = snap[:i]
+		}
+		src, ok := n.datasets[origin]
+		if !ok {
+			return nil, notFound(snap)
+		}
+		// A clone inherits NEITHER the ownership marker NOR any user property
+		// of its origin — reproducing that here is the point of this handler.
+		n.datasets[dst] = map[string]any{
+			"id": dst, "type": src["type"],
+			"volsize":         src["volsize"],
+			"origin":          map[string]any{"value": snap, "source": "LOCAL"},
+			"user_properties": map[string]any{},
+		}
 		return true, nil
 	})
 

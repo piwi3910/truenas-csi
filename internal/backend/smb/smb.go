@@ -358,6 +358,19 @@ func (b *Backend) Create(ctx context.Context, r backend.CreateRequest) (*backend
 // provision creates the dataset itself, either empty or as a clone of a
 // snapshot, and returns it already carrying the marker and quota.
 func (b *Backend) provision(ctx context.Context, dsPath string, r backend.CreateRequest) (*truenas.Dataset, error) {
+	ds, err := b.create(ctx, dsPath, r)
+	if err != nil {
+		return nil, err
+	}
+	// Recorded once, at birth, on both paths: a clone gets the identity of the
+	// request that created it, never the one its origin carried.
+	backend.RecordIdentity(ctx, b.c, dsPath, volume.IdentityFrom(r.Params))
+	return ds, nil
+}
+
+// create makes the dataset, empty or cloned, already carrying the marker and
+// the quota.
+func (b *Backend) create(ctx context.Context, dsPath string, r backend.CreateRequest) (*truenas.Dataset, error) {
 	if r.SourceSnapshot == "" {
 		ds, err := b.c.DatasetCreate(ctx, truenas.DatasetSpec{
 			Name:     dsPath,
