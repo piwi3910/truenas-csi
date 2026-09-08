@@ -15,6 +15,17 @@ presented over `http://` or a plaintext WebSocket. Three keys were destroyed
 learning this. `wss://` and `https://` only — in code, tests, scripts, comments
 and documentation examples. There is a commit gate that will catch you.
 
+**Verify against the appliance before you PROPOSE, not just before you merge.**
+The rule below is usually applied to code. It applies just as hard to a design,
+a recommendation, or a sentence in a review that says "the appliance can do X" —
+those are how a wrong assumption gets built rather than caught. Two entries in
+this repository's history exist because that step was skipped: a claim that
+`reporting.get_data` exposes per-dataset graphs (it does not; there are 40
+graphs and none is per-dataset), and a proposal to make `primarycache` and
+`logbias` settable through `VolumeAttributesClass` (`pool.dataset.update`
+accepts neither). Both cost more to unwind than the one `curl` that would have
+settled them.
+
 **Verify against the appliance, not against the mock.** The appliance's API docs
 are served unauthenticated over https at `https://<appliance>/api/docs/current/`,
 so a method signature can be checked without presenting a key. Anything not
