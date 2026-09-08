@@ -4,6 +4,7 @@ package fake
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -79,6 +80,120 @@ func (s *Server) Handle(method string, h Handler) {
 // HandleValue registers a handler that always returns v.
 func (s *Server) HandleValue(method string, v any) {
 	s.Handle(method, func([]json.RawMessage) (any, error) { return v, nil })
+}
+
+// ISCSISession is one entry of an iscsi.global.sessions answer, named with the
+// appliance's own field semantics so a test reads like the box's output.
+type ISCSISession struct {
+	Initiator     string
+	InitiatorAddr string
+	Target        string
+	TargetAlias   string
+}
+
+// SeedISCSISessions makes iscsi.global.sessions answer with these sessions.
+//
+// The payload is built here, once, rather than in each test: the wire field
+// names (initiator_addr, target_alias) are the part a test cannot get wrong
+// without silently proving nothing.
+func (s *Server) SeedISCSISessions(sessions ...ISCSISession) {
+	out := make([]any, 0, len(sessions))
+	for _, sess := range sessions {
+		out = append(out, map[string]any{
+			"initiator":       sess.Initiator,
+			"initiator_addr":  sess.InitiatorAddr,
+			"initiator_alias": nil,
+			"target":          sess.Target,
+			"target_alias":    sess.TargetAlias,
+			"immediate_data":  true,
+			"iser":            false,
+			"offload":         false,
+		})
+	}
+	s.HandleValue("iscsi.global.sessions", out)
+}
+
+// NFSv4Client is one entry of an nfs.get_nfs4_clients answer.
+type NFSv4Client struct {
+	// Address is "ip:port", exactly as /proc/fs/nfsd/clients writes it.
+	Address string
+	// Status is the NFSv4 client state — "confirmed", "courtesy" or
+	// "expirable". Empty means confirmed.
+	Status string
+	// RenewAgeSeconds is the "seconds from last renew" lease age.
+	RenewAgeSeconds int
+}
+
+// SeedNFSClients makes both NFS client listings answer. v3 takes bare addresses,
+// which is all rmtab records.
+//
+// The v4 payload reproduces the appliance's own keys, SPACES INCLUDED —
+// "seconds from last renew" is the shape a decoder has to get right, so a test
+// that invented a tidier key would prove nothing.
+func (s *Server) SeedNFSClients(v3 []string, v4 []NFSv4Client) {
+	out3 := make([]any, 0, len(v3))
+	for _, ip := range v3 {
+		out3 = append(out3, map[string]any{"ip": ip, "export": "/mnt/Pool0/k8s/vol1"})
+	}
+	s.HandleValue("nfs.get_nfs3_clients", out3)
+
+	out4 := make([]any, 0, len(v4))
+	for i, client := range v4 {
+		status := client.Status
+		if status == "" {
+			status = "confirmed"
+		}
+		out4 = append(out4, map[string]any{
+			"id": fmt.Sprint(i + 1),
+			"info": map[string]any{
+				"clientid":                5618032175184784444,
+				"address":                 client.Address,
+				"status":                  status,
+				"seconds from last renew": client.RenewAgeSeconds,
+				"name":                    "Linux NFSv4.2 node",
+				"minor version":           2,
+				"callback state":          "UP",
+				"admin-revoked states":    0,
+			},
+			"states": []any{},
+		})
+	}
+	s.HandleValue("nfs.get_nfs4_clients", out4)
+}
+
+// SeedClientCounts makes the two bare-integer health calls answer.
+func (s *Server) SeedClientCounts(iscsi, nfs int) {
+	s.HandleValue("iscsi.global.client_count", iscsi)
+	s.HandleValue("nfs.client_count", nfs)
+}
+
+// ReportingSeries is one element of a reporting.get_data answer, whose verified
+// shape is {"name", "identifier", "data"}. Data is [][]any rather than
+// [][]float64 so a test can inject the JSON nulls that represent gaps, which is
+// the shape a consumer must survive.
+type ReportingSeries struct {
+	Name       string
+	Identifier any // string, or nil for an appliance-wide graph
+	Legend     []string
+	Data       [][]any
+}
+
+// SeedReportingData makes reporting.get_data answer with these series.
+func (s *Server) SeedReportingData(series ...ReportingSeries) {
+	out := make([]any, 0, len(series))
+	for _, ser := range series {
+		rows := make([]any, 0, len(ser.Data))
+		for _, row := range ser.Data {
+			rows = append(rows, row)
+		}
+		out = append(out, map[string]any{
+			"name":       ser.Name,
+			"identifier": ser.Identifier,
+			"legend":     ser.Legend,
+			"data":       rows,
+		})
+	}
+	s.HandleValue("reporting.get_data", out)
 }
 
 // Calls returns the methods called so far, in order.
