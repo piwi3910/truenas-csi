@@ -31,7 +31,6 @@ import (
 	"github.com/piwi3910/truenas-csi/internal/podmon"
 	"github.com/piwi3910/truenas-csi/internal/reconcile"
 	"github.com/piwi3910/truenas-csi/internal/server"
-	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
@@ -44,6 +43,13 @@ func main() {
 		hostRoot   = flag.String("host-root", "/host", "path where the host filesystem is mounted")
 		podmonAddr = flag.String("podmon-addr", "", "address for the ValidateVolumeHostConnectivity extension "+
 			"(a driver extension, not CSI); empty disables it. Either a TCP address or unix:///path/to.sock")
+		logConfig = flag.String("log-config", "", "path to a mounted logging ConfigMap holding logLevel and "+
+			"logFormat, re-read live; empty disables dynamic logging")
+		metricsLease = flag.String("metrics-lease", "",
+			"name of the Lease electing the single controller replica that polls the appliance for "+
+				"array metrics; empty means every replica polls, multiplying load against the "+
+				"appliance's 20-call concurrency ceiling. Deliberately distinct from the CSI "+
+				"sidecars' own election, which elects a writer rather than a poller")
 		showVersion = flag.Bool("version", false, "print version and exit")
 	)
 	flag.Parse()
@@ -56,46 +62,78 @@ func main() {
 		fmt.Fprintf(os.Stderr, "-mode must be %q or %q, got %q\n", "controller", "node", *mode)
 		os.Exit(1)
 	}
-	if err := run(*mode, *endpoint, *configPath, *nodeID, *hostRoot, *podmonAddr); err != nil {
+	if err := run(options{
+		mode:         *mode,
+		endpoint:     *endpoint,
+		configPath:   *configPath,
+		nodeID:       *nodeID,
+		hostRoot:     *hostRoot,
+		podmonAddr:   *podmonAddr,
+		logConfig:    *logConfig,
+		metricsLease: *metricsLease,
+	}); err != nil {
 		slog.Error("driver exited", "error", obs.Redact(err.Error()))
 		os.Exit(1)
 	}
 }
 
-// logLevel maps the configured level name onto slog.
+// options is everything the command line decides. It is a struct rather than a
+// parameter list because run already took six positional strings and the next
+// reader of a seventh would have had no chance.
+type options struct {
+	mode       string
+	endpoint   string
+	configPath string
+	nodeID     string
+	hostRoot   string
+	podmonAddr string
+
+	logConfig string
+	// metricsLease names the Lease electing the array-metrics poller. Empty
+	// means no election: this replica polls.
+	metricsLease string
+}
+
 // orphanInterval is how often the controller compares appliance state against
 // the cluster's PersistentVolumes.
 const orphanInterval = 30 * time.Minute
 
+// logLevel maps the configured level name onto slog, falling back to info for
+// anything it does not recognise. The startup path tolerates a bad name; the
+// watched ConfigMap deliberately does not, because there somebody is waiting
+// for the debug records they just asked for.
 func logLevel(name string) slog.Level {
-	switch name {
-	case "debug":
-		return slog.LevelDebug
-	case "warn":
-		return slog.LevelWarn
-	case "error":
-		return slog.LevelError
-	default:
-		return slog.LevelInfo
-	}
+	l, _ := obs.ParseLevel(name)
+	return l
 }
 
-func run(mode, endpoint, configPath, nodeID, hostRoot, podmonAddr string) error {
+func run(o options) error {
+	mode, endpoint, hostRoot, podmonAddr := o.mode, o.endpoint, o.hostRoot, o.podmonAddr
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	cfg, err := config.Load(configPath)
+	cfg, err := config.Load(o.configPath)
 	if err != nil {
 		return err
 	}
-	if nodeID != "" {
-		cfg.NodeID = nodeID
+	if o.nodeID != "" {
+		cfg.NodeID = o.nodeID
 	}
 	// Register every credential for redaction before anything can log.
 	for _, b := range cfg.Backends {
 		obs.Register(b.APIKey)
 	}
 	obs.SetLogOutput(os.Stderr, logLevel(cfg.LogLevel))
+	// Route the package-level logger through obs too. Without this the driver's
+	// own slog.Info calls bypass the redacting handler entirely — and would also
+	// ignore a log level raised through the watched ConfigMap.
+	slog.SetDefault(obs.Logger(context.Background()))
+
+	// Dynamic log level and format, from a ConfigMap that is deliberately NOT
+	// the credential Secret: raising verbosity during an incident should not
+	// require access to an API key.
+	startLogWatch(ctx, o.logConfig, cfg.LogLevel)
 
 	go serveHTTP(cfg)
 
@@ -131,20 +169,14 @@ func run(mode, endpoint, configPath, nodeID, hostRoot, podmonAddr string) error 
 			slog.Info("orphan reporting enabled", "interval", orphanInterval.String())
 		}
 
+		// Credentials arrive as a mounted Secret and can be rotated under a
+		// running driver. Only the controller holds appliance connections, so
+		// only the controller has anything to swap.
+		startCredentialReload(ctx, config.NewReloader(o.configPath, cfg), reg)
+
 		// Array-level metrics run on the controller only: the node plugin has
-		// no appliance client. If nothing answers at startup the collector is
-		// skipped with a log rather than failing the process — an appliance
-		// outage must not crash-loop the controller.
-		arrayCollector := arraymetrics.New(reg, cfg.MetricsPollInterval())
-		if aErr := arrayCollector.Start(ctx); aErr != nil {
-			slog.Warn("array metrics disabled: no reachable backend at startup",
-				"error", obs.Redact(aErr.Error()))
-		} else {
-			prometheus.MustRegister(arrayCollector)
-			go arrayCollector.Run(ctx)
-			slog.Info("array metrics enabled",
-				"interval", arrayCollector.Interval().String())
-		}
+		// no appliance client.
+		startArrayMetrics(ctx, arraymetrics.New(reg, cfg.MetricsPollInterval()), o)
 		obs.MarkReady()
 
 	case "node":

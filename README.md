@@ -446,6 +446,65 @@ endpoint, so the backend can be watched without handing anyone a TrueNAS login:
   into a false capacity alert. One unreachable appliance never stops the others.
 - The collector runs on the **controller only** (the node plugin has no appliance client)
   and is skipped with a log line, not a crash loop, when no backend answers at startup.
+- **One replica polls.** `controller.metricsLeaderElection` (on by default) elects a single
+  replica through a Lease of its own, separate from the CSI sidecars' election: they elect a
+  writer, this elects the one replica allowed to spend the appliance's 20-call concurrency
+  budget on polling. A non-leader exports **no** `truenas_pool_*`, `truenas_dataset_*` or
+  `truenas_iscsi_*` series at all — zeros would read as a pool that suddenly emptied, and
+  stale values would be a gauge that quietly stopped tracking reality. Scrape every replica;
+  only one answers.
+
+## Operational hardening
+
+### Credential hot-reload
+
+The driver watches its mounted config Secret and adopts a rotated credential without a
+restart. It watches the **directory**, not the file: Kubernetes projects a Secret by writing
+a new timestamped directory and swapping a symlinked `..data` over it, so the visible file's
+inode is never written and a watch on the path itself would see nothing.
+
+Every reload re-runs the full validation — including the `wss://`-only transport check that
+exists because TrueNAS **revokes** an API key presented over plaintext — and is atomic: a
+bad edit is logged loudly and the driver keeps running on the configuration it has.
+
+| Reloadable                                           | Requires a restart                                                                                                                                                                           |
+| ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `username`, `apiKey`, `caCert`, `insecureSkipVerify` | `endpoint`, `flavour`, `pool`, `parentDataset`, the set of backend names, `reservedBytes`/`reservedPercent`, rate-limit and breaker settings, `metricsAddr`, `healthAddr`, `metricsInterval` |
+
+The second column is identity and startup wiring: every PersistentVolume records the
+appliance and dataset it lives on, so swapping one in place would silently repoint live
+volumes at a different array. A change there is refused by name, never half-applied.
+
+A credential rotated while an appliance is unreachable is still recorded, so the next dial
+presents the **new** key rather than the superseded one.
+
+### Dynamic log level
+
+`dynamicLogging` mounts `logLevel` and `logFormat` (`text` or `json`) as a ConfigMap that
+both plugins re-read live — `kubectl edit configmap`, and verbosity changes within seconds
+with no rollout. It is deliberately a ConfigMap and not the credential Secret: whoever is
+handling an incident needs the log level, not the API key. Only those two settings are
+reloadable this way, and an invalid value is reported and ignored.
+
+### Rate limit and circuit breaker
+
+The appliance accepts 20 concurrent calls (hardware-verified) and the client caps itself at 16. On top of that:
+
+- **Rate limit**, default 100 calls/s with a burst of 16 (`rateLimit` per backend). This is
+  a ceiling on a runaway caller, not a throughput target — a loop whose calls fail instantly
+  never holds more than a slot or two, so the semaphore cannot see it. Nothing the
+  provisioning path or the metrics poller does in steady state comes close to it.
+- **Circuit breaker**, default 10 consecutive transport failures to open and a 10s reset
+  (`breakerThreshold`, `breakerResetTimeout`; a negative threshold disables it). Only
+  transport-level failures count — dial failures, dropped connections, timeouts and `-32000`.
+  A method error means the appliance received the call and answered, and "dataset does not
+  exist" is a healthy appliance, not an outage.
+
+  The threshold is well above Dell's 3 on purpose: one dropped websocket fails every call in
+  flight at once, up to 16, and that is a blip the client's existing single retry already
+  recovers. The reset is not backed off — a growing timeout is how a 30-second appliance blip
+  becomes minutes of failing fast after it has come back — and when it expires exactly one
+  probe is admitted, so a recovering middleware sees a single call rather than a herd.
 
 ## Data safety
 
@@ -539,6 +598,7 @@ responds.
 `iosInProgress` is evidence, not proof: it reports whether the volume's mount point was
 modified within the sample window, so "no I/O observed" means no evidence of activity, not
 a guarantee of idleness. Weigh it alongside `connected` rather than acting on it alone.
+
 - [docs/replication.md](docs/replication.md) — StorageProtectionGroup: cross-appliance
   replication, failover, test failover and failback, their safety rules, and what has
   not been verified against real hardware.

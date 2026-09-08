@@ -4,6 +4,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -40,6 +41,19 @@ type Backend struct {
 	// hardware. See README.md and docs/troubleshooting.md.
 	Flavour string `yaml:"flavour"`
 
+	// RateLimit caps how many middleware calls per second this driver makes to
+	// the appliance, 0 for the client's default. It is a ceiling on a runaway
+	// caller, not a throughput target: see truenas.DefaultRateLimit.
+	RateLimit float64 `yaml:"rateLimit"`
+	// BreakerThreshold is how many consecutive transport-level failures open
+	// the circuit breaker, 0 for the client's default and a negative value to
+	// disable the breaker entirely.
+	BreakerThreshold int `yaml:"breakerThreshold"`
+	// BreakerResetTimeout is how long the breaker stays open before it lets a
+	// single probe through, as a Go duration ("10s"). Empty means the client's
+	// default.
+	BreakerResetTimeout string `yaml:"breakerResetTimeout"`
+
 	// CACert, when set, is the only certificate trusted for this appliance.
 	CACert []byte `yaml:"caCert"`
 	// InsecureSkipVerify disables certificate verification. A stock TrueNAS
@@ -62,6 +76,20 @@ func (b Backend) Reserve(poolSize int64) int64 {
 		return 0
 	}
 	return reserve
+}
+
+// BreakerReset is the configured circuit-breaker reset timeout, or zero when
+// unset. Load has already rejected an unparsable value, so the zero here only
+// covers a Backend built in code; the client substitutes its own default.
+func (b Backend) BreakerReset() time.Duration {
+	if strings.TrimSpace(b.BreakerResetTimeout) == "" {
+		return 0
+	}
+	d, err := time.ParseDuration(b.BreakerResetTimeout)
+	if err != nil || d <= 0 {
+		return 0
+	}
+	return d
 }
 
 // String renders the backend without its credentials, so it is safe to log.

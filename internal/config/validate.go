@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"time"
 )
 
 // ErrInsecureTransport is returned for any endpoint that is not wss://.
@@ -101,6 +102,16 @@ func (b Backend) validate() error {
 	}
 	if b.ReservedPercent < 0 || b.ReservedPercent > 100 {
 		return fmt.Errorf("reservedPercent must be between 0 and 100, got %v", b.ReservedPercent)
+	}
+	if b.RateLimit < 0 {
+		return fmt.Errorf("rateLimit must not be negative, got %v", b.RateLimit)
+	}
+	if s := strings.TrimSpace(b.BreakerResetTimeout); s != "" {
+		d, err := time.ParseDuration(s)
+		if err != nil || d <= 0 {
+			return fmt.Errorf("breakerResetTimeout %q is not a positive Go duration (e.g. 10s)",
+				b.BreakerResetTimeout)
+		}
 	}
 	return nil
 }

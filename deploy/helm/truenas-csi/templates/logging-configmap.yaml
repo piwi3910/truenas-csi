@@ -1,0 +1,25 @@
+{{- /*
+Log level and format, in a ConfigMap the driver re-reads live.
+
+It is deliberately NOT the credential Secret. Raising verbosity during an
+incident should not require access to an API key, and it should not require a
+rollout either: edit this ConfigMap and every replica picks it up within
+seconds, with no pod restart and no annotation checksum.
+
+Only logLevel and logFormat live here. Everything else in the driver's
+configuration is either identity — which appliance, which pool — or a listener
+address that belongs in the pod spec.
+*/ -}}
+{{- if .Values.dynamicLogging.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "truenas-csi.loggingConfigMapName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "truenas-csi.labels" . | nindent 4 }}
+data:
+  logging.yaml: |
+    logLevel: {{ .Values.logLevel | quote }}
+    logFormat: {{ .Values.logFormat | quote }}
+{{- end }}

@@ -57,6 +57,24 @@ API key. Both plugins mount it; RBAC grants `get` on this name only. */}}
 {{- end -}}
 {{- end -}}
 
+{{/* loggingConfigMapName holds the live log level and format. It is separate
+from the credential Secret on purpose: raising verbosity during an incident
+must not require access to an API key. */}}
+{{- define "truenas-csi.loggingConfigMapName" -}}
+{{- if .Values.dynamicLogging.existingConfigMap -}}
+{{- .Values.dynamicLogging.existingConfigMap -}}
+{{- else -}}
+{{- printf "%s-logging" (include "truenas-csi.fullname" .) -}}
+{{- end -}}
+{{- end -}}
+
+{{/* metricsLeaseName is the Lease coordinating which controller replica polls
+the appliance for array metrics. It is per release, so two releases in one
+namespace do not fight over one lease. */}}
+{{- define "truenas-csi.metricsLeaseName" -}}
+{{- printf "%s-array-metrics" (include "truenas-csi.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
 {{- define "truenas-csi.controllerServiceAccountName" -}}
 {{- if .Values.serviceAccounts.controller.create -}}
 {{- default (printf "%s-controller" (include "truenas-csi.fullname" .)) .Values.serviceAccounts.controller.name -}}

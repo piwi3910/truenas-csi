@@ -15,6 +15,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/piwi3910/truenas-csi/internal/config"
 	"golang.org/x/sync/semaphore"
+	"golang.org/x/time/rate"
 )
 
 // MaxInFlight caps concurrent calls per connection.
@@ -22,6 +23,46 @@ import (
 // The appliance accepts exactly 20 in flight and rejects the rest with -32000
 // (measured: 16 concurrent -> 0 errors; 32 -> 12 errors). 16 leaves headroom.
 const MaxInFlight = 16
+
+// Rate limit and circuit breaker defaults.
+//
+// DefaultRateLimit is a ceiling on a runaway caller, not a throughput target.
+// The appliance's documented constraint is CONCURRENCY (20 in flight, measured;
+// see MaxInFlight), not rate, and MaxInFlight already enforces that. What a
+// rate limit adds is protection against the failure mode a semaphore cannot
+// see: a loop whose calls fail instantly — a dropped socket, a breaker that is
+// not yet open — issues thousands of dials a second while never holding more
+// than a handful of slots. 100/s sits far above anything the provisioning path
+// or the metrics poller produces in steady state (a CreateVolume is a dozen
+// calls; a metrics poll is three per appliance per minute), so a healthy driver
+// never waits on it, while a spinning caller is pinned to a rate the middleware
+// can shrug off.
+//
+// DefaultRateBurst is MaxInFlight so a legitimate parallel fan-out — the
+// concurrency the semaphore explicitly permits — is never delayed by the
+// limiter it was already admitted past.
+//
+// DefaultBreakerThreshold is deliberately well above Dell's 3. A single dropped
+// websocket fails EVERY call in flight at once, up to MaxInFlight of them, and
+// that is a blip the existing single retry in Call already recovers from. A
+// threshold of 3 would open the breaker on a routine idle-socket close and turn
+// a 50ms reconnect into a 10-second outage. 10 is more than half a full
+// in-flight window: reachable in a fraction of a second against a genuinely
+// wedged appliance, and not reachable at all by one reconnect.
+//
+// DefaultBreakerReset is short on purpose. The breaker exists to stop the
+// driver hammering a wedged appliance at its 20-call ceiling, not to punish it:
+// 10 seconds is below the CSI sidecars' --retry-interval-max of 30s, so a
+// recovered appliance is picked up within a single sidecar retry and no CSI
+// call fails that would otherwise have succeeded. It is NOT backed off
+// exponentially — a growing timeout is how a 30-second appliance blip becomes
+// minutes of failing fast long after the appliance came back.
+const (
+	DefaultRateLimit        = 100.0
+	DefaultRateBurst        = MaxInFlight
+	DefaultBreakerThreshold = 10
+	DefaultBreakerReset     = 10 * time.Second
+)
 
 const (
 	dialTimeout    = 20 * time.Second
@@ -58,10 +99,28 @@ type response struct {
 type Client struct {
 	Ops
 
+	// host is the appliance's hostname, resolved once at Dial. It is cached
+	// rather than parsed from backend.Endpoint on demand because backend is
+	// guarded by connMu (see below) and Host has callers that hold neither
+	// lock; a cached string is also the honest model, since the endpoint is one
+	// of the fields a reload refuses to change.
+	host string
+
+	sem   *semaphore.Weighted
+	notif chan Notification
+
+	// limiter and breaker are both self-contained and lock-free from this
+	// type's point of view: neither is ever consulted while c.mu or c.connMu is
+	// held, so neither can participate in a lock cycle.
+	limiter *rate.Limiter
+	breaker *breaker
+
+	// backend and tlsConf are guarded by connMu, NOT by mu. They are written
+	// only by ReloadCredentials and read only by ensureConn and login, both of
+	// which run under connMu — so a rotated API key can never be half-applied
+	// to a login that is already in flight.
 	backend config.Backend
 	tlsConf *tls.Config
-	sem     *semaphore.Weighted
-	notif   chan Notification
 
 	// connMu serialises connection establishment. It is NOT held while waiting
 	// for the login response — readLoop needs mu to deliver that response, so
@@ -78,6 +137,12 @@ type Client struct {
 
 // Dial connects to the appliance and authenticates once.
 func Dial(ctx context.Context, b config.Backend) (*Client, error) {
+	// Resolve the credential through the process-wide store first. A Backend
+	// travels through the driver by value, so the key in b may be the one that
+	// was on disk when the driver started rather than the one on disk now — and
+	// presenting a superseded key is not a harmless retry on TrueNAS, it is how
+	// a key gets revoked.
+	b = b.Current()
 	if err := ValidateBackend(b); err != nil {
 		return nil, err
 	}
@@ -85,10 +150,17 @@ func Dial(ctx context.Context, b config.Backend) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	host := ""
+	if u, uErr := url.Parse(b.Endpoint); uErr == nil {
+		host = u.Hostname()
+	}
 	c := &Client{
 		backend: b,
 		tlsConf: tc,
+		host:    host,
 		sem:     semaphore.NewWeighted(MaxInFlight),
+		limiter: limiterFor(b),
+		breaker: breakerFor(b),
 		notif:   make(chan Notification, 64),
 		waiters: map[int64]chan *response{},
 	}
@@ -214,10 +286,73 @@ func (c *Client) dropConn(conn *websocket.Conn) {
 // backend does not have to depend on a StorageClass parameter having been seen
 // earlier in this process's lifetime — a cache that a controller restart would
 // empty, stranding volumes that already exist.
-func (c *Client) Host() string {
-	u, err := url.Parse(c.backend.Endpoint)
-	if err != nil {
-		return ""
+func (c *Client) Host() string { return c.host }
+
+// ReloadCredentials swaps this connection's credentials for the ones in b,
+// without restarting the driver and without disturbing anything else.
+//
+// What may change is exactly the credential: username, API key, CA certificate
+// and the certificate-verification decision. Endpoint, flavour, pool and parent
+// dataset are IDENTITY — every PersistentVolume this driver created records
+// which appliance and dataset it lives on — so changing them here would
+// silently repoint live volumes at a different array. They are refused, and the
+// caller is expected to say so out loud; config.CheckReloadable makes the same
+// distinction for the file as a whole.
+//
+// The full backend validation runs again, so the transport check that stops an
+// API key being presented over plaintext applies to a rotated key exactly as it
+// applies to the one the driver booted with.
+//
+// The live connection is closed rather than re-authenticated in place: the
+// middleware binds authentication to the socket, so the only way to adopt a new
+// key is a new socket. The next Call reconnects, which it already knows how to
+// do — see Call's single retry on ErrConnClosed.
+func (c *Client) ReloadCredentials(b config.Backend) error {
+	if err := ValidateBackend(b); err != nil {
+		return err
 	}
-	return u.Hostname()
+	tc, err := TLSConfig(b)
+	if err != nil {
+		return err
+	}
+
+	c.connMu.Lock()
+	cur := c.backend
+	for _, f := range []struct{ name, old, new string }{
+		{"endpoint", cur.Endpoint, b.Endpoint},
+		{"flavour", cur.NormalisedFlavour(), b.NormalisedFlavour()},
+		{"pool", cur.Pool, b.Pool},
+		{"parentDataset", cur.ParentDataset, b.ParentDataset},
+	} {
+		if f.old != f.new {
+			c.connMu.Unlock()
+			return fmt.Errorf("backend %q: %s cannot be changed without restarting the driver (%q -> %q)",
+				cur.Name, f.name, f.old, f.new)
+		}
+	}
+	if cur.Credentials().Equal(b.Credentials()) {
+		c.connMu.Unlock()
+		return nil // nothing rotated: never drop a healthy connection for a no-op
+	}
+
+	c.backend = b
+	c.tlsConf = tc
+
+	c.mu.Lock()
+	// A new credential deserves a fresh attempt. authFail is terminal for the
+	// key that earned it, not for the appliance: without this, one revoked key
+	// would poison the client for the process's lifetime and rotating the key
+	// — the entire point of this method — would fix nothing.
+	c.authFail = nil
+	conn := c.conn
+	c.conn = nil
+	c.mu.Unlock()
+	c.connMu.Unlock()
+
+	if conn != nil {
+		conn.Close() // readLoop sees the close and fails the waiters
+	}
+	// A breaker opened by the old credential's failures must not outlive it.
+	c.breaker.reset()
+	return nil
 }
