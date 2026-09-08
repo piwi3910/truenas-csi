@@ -99,10 +99,22 @@ spec:
             - -metrics-lease={{ include "truenas-csi.metricsLeaseName" . }}
             {{- end }}
             {{- if .Values.podmon.enabled }}
-            # The ValidateVolumeHostConnectivity extension. Not CSI: a driver
-            # extension on a listener of its own, so a stalled driver cannot
-            # take the health answer down with it.
+            # The podmon extension listener. Not CSI: a driver extension on a
+            # listener of its own, so a stalled driver cannot take the health
+            # answer down with it. On the controller it serves the
+            # APPLIANCE-BACKED connectivity report — is that node still holding
+            # a session or renewing a lease? — which is the answer a fence is
+            # allowed to use.
             - -podmon-addr={{ .Values.podmon.bindAddress }}:{{ .Values.podmon.port }}
+            {{- end }}
+            {{- if .Values.fencing.enabled }}
+            # Pod fencing. Only pods carrying this label are ever force-deleted,
+            # and only after the appliance has confirmed their node holds no
+            # session or lease. The lease elects the single replica allowed to
+            # do it; the driver refuses to fence without one.
+            - -fencing-label={{ .Values.fencing.podLabel }}
+            - -fencing-lease={{ include "truenas-csi.fencingLeaseName" . }}
+            - -fencing-interval={{ .Values.fencing.interval }}
             {{- end }}
           env:
             - name: CSI_ENDPOINT

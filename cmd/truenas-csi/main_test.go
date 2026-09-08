@@ -89,19 +89,57 @@ func TestMetricsAndHealthAreServed(t *testing.T) {
 	}
 }
 
-// TestPodmonIsWiredIntoTheNode is the same guard as the reconciler's: the
+// TestPodmonIsWiredIntoBothPlugins is the same guard as the reconciler's: the
 // podmon extension is worthless if the shipped binary never starts a listener
 // for it, and a package with green tests proves nothing about that.
-func TestPodmonIsWiredIntoTheNode(t *testing.T) {
+//
+// Both ends are pinned, because they are different services: the node serves
+// its self-check, the controller serves the appliance-backed connectivity
+// report the fencing controller consumes.
+func TestPodmonIsWiredIntoBothPlugins(t *testing.T) {
 	src, err := os.ReadFile("main.go")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"podmon.New", "podmon.Serve", "podmon-addr"} {
+	for _, want := range []string{
+		"podmon.NewNodeSelfCheck", "podmon.NewConnectivity", "podmon.Serve", "podmon-addr",
+	} {
 		if !strings.Contains(string(src), want) {
-			t.Errorf("main.go never references %s: the podmon extension would never "+
-				"be reachable in a running node plugin", want)
+			t.Errorf("main.go never references %s: that podmon service would never "+
+				"be reachable in a running plugin", want)
 		}
+	}
+}
+
+// TestFencingIsWiredIntoTheController pins the consumer end.
+//
+// internal/podmon answering "is that node still attached?" with nothing acting
+// on it is exactly the state this work set out to fix, so a binary that builds
+// the connectivity service and never hands it to the fencing controller is the
+// regression to catch here rather than in review.
+func TestFencingIsWiredIntoTheController(t *testing.T) {
+	main, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(main), "startFencing(") {
+		t.Error("main.go never calls startFencing: the connectivity answer would have no consumer")
+	}
+
+	src, err := os.ReadFile("fencing.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(src)
+	for _, want := range []string{"fencing.New(", "fencing.NewRegistryFencer(", "obs.RunLeader("} {
+		if !strings.Contains(body, want) {
+			t.Errorf("fencing.go does not reference %s", want)
+		}
+	}
+	// Leader election is not optional. Two replicas each revoking access the
+	// other had just checked is the failure mode this refusal exists for.
+	if !strings.Contains(body, `o.fencingLease == ""`) {
+		t.Error("fencing.go no longer refuses to fence without a lease")
 	}
 }
 

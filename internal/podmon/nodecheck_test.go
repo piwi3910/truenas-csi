@@ -38,10 +38,10 @@ func (d *stalledDriver) probe(context.Context) error {
 
 func (d *stalledDriver) Close() { close(d.release) }
 
-func healthyService(t *testing.T) *Service {
+func healthyService(t *testing.T) *NodeSelfCheck {
 	t.Helper()
 	dir := t.TempDir()
-	s := New("worker-1", "nas1", "192.0.2.10:2049")
+	s := NewNodeSelfCheck("worker-1", "nas1", "192.0.2.10:2049")
 	s.Timeout = 100 * time.Millisecond
 	s.Dial = func(context.Context, string) error { return nil }
 	s.Statfs = func(string) error { return nil }
@@ -63,12 +63,12 @@ func TestPodmonAnswersWhileDriverStalled(t *testing.T) {
 	s.DriverProbe = driver.probe
 
 	type result struct {
-		resp *Response
+		resp *NodeSelfCheckResponse
 		err  error
 	}
 	done := make(chan result, 1)
 	go func() {
-		resp, err := s.ValidateVolumeHostConnectivity(context.Background(), &Request{
+		resp, err := s.Check(context.Background(), &NodeSelfCheckRequest{
 			NodeID:         "worker-1",
 			VolumeIDs:      []string{"nas1/nfs/tank/k8s/pvc-a"},
 			IOSampleWindow: time.Minute,
@@ -79,7 +79,7 @@ func TestPodmonAnswersWhileDriverStalled(t *testing.T) {
 	select {
 	case r := <-done:
 		if r.err != nil {
-			t.Fatalf("ValidateVolumeHostConnectivity: %v", r.err)
+			t.Fatalf("Check: %v", r.err)
 		}
 		if !r.resp.Connected {
 			t.Errorf("the node's own checks all passed, so it is connected: %+v", r.resp)
@@ -99,12 +99,12 @@ func TestPodmonReportsUnreachableBackend(t *testing.T) {
 	s := healthyService(t)
 	s.Dial = func(context.Context, string) error { return errors.New("connection refused") }
 
-	resp, err := s.ValidateVolumeHostConnectivity(context.Background(), &Request{
+	resp, err := s.Check(context.Background(), &NodeSelfCheckRequest{
 		NodeID:    "worker-1",
 		VolumeIDs: []string{"nas1/nfs/tank/k8s/pvc-a"},
 	})
 	if err != nil {
-		t.Fatalf("ValidateVolumeHostConnectivity: %v", err)
+		t.Fatalf("Check: %v", err)
 	}
 	if resp.Connected {
 		t.Error("a node that cannot reach the appliance is not connected")
@@ -126,9 +126,9 @@ func TestPodmonVolumeCheckIsBounded(t *testing.T) {
 	s := healthyService(t)
 	s.Statfs = func(string) error { <-release; return nil }
 
-	done := make(chan *Response, 1)
+	done := make(chan *NodeSelfCheckResponse, 1)
 	go func() {
-		resp, _ := s.ValidateVolumeHostConnectivity(context.Background(), &Request{
+		resp, _ := s.Check(context.Background(), &NodeSelfCheckRequest{
 			NodeID: "worker-1", VolumeIDs: []string{"nas1/nfs/tank/k8s/pvc-a"}})
 		done <- resp
 	}()
@@ -149,11 +149,11 @@ func TestPodmonZeroIOsReported(t *testing.T) {
 	s.LastIO = func(string) (time.Time, bool) {
 		return time.Now().Add(-time.Hour), true
 	}
-	resp, err := s.ValidateVolumeHostConnectivity(context.Background(), &Request{
+	resp, err := s.Check(context.Background(), &NodeSelfCheckRequest{
 		NodeID: "worker-1", VolumeIDs: []string{"nas1/nfs/tank/k8s/pvc-a"},
 		IOSampleWindow: time.Minute})
 	if err != nil {
-		t.Fatalf("ValidateVolumeHostConnectivity: %v", err)
+		t.Fatalf("Check: %v", err)
 	}
 	if !resp.Connected {
 		t.Error("an idle volume is still connected")
@@ -174,12 +174,12 @@ func TestPodmonServesOnItsOwnListener(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go func() { _ = ServeListener(ctx, lis, s) }()
+	go func() { _ = ServeListener(ctx, lis, s.Handler()) }()
 
-	body, _ := json.Marshal(Request{NodeID: "worker-1",
+	body, _ := json.Marshal(NodeSelfCheckRequest{NodeID: "worker-1",
 		VolumeIDs: []string{"nas1/nfs/tank/k8s/pvc-a"}})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		"http://"+lis.Addr().String()+ValidatePath, bytes.NewReader(body))
+		"http://"+lis.Addr().String()+NodeSelfCheckPath, bytes.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +191,7 @@ func TestPodmonServesOnItsOwnListener(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
-	var out Response
+	var out NodeSelfCheckResponse
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
@@ -278,7 +278,7 @@ func TestIOCountersUseDiskstatsForBlockVolumes(t *testing.T) {
 // written to an existing file, directory mtime unchanged — so its reappearance
 // in this probe is a regression whatever the counter code says.
 func TestLastIOProbeDoesNotUseModTime(t *testing.T) {
-	src, err := os.ReadFile("service.go")
+	src, err := os.ReadFile("nodecheck.go")
 	if err != nil {
 		t.Fatal(err)
 	}
