@@ -1,0 +1,87 @@
+# Upstream Kubernetes external-storage test driver definition — iSCSI.
+#
+# See testdriver-nfs.yaml for the rule this file follows: every flag is derived
+# from the driver's own code, and a flag is never flipped to make a test pass.
+#
+# `__STORAGE_CLASS__` and `__SNAPSHOT_CLASS__` are rendered by run.sh.
+
+StorageClass:
+  FromExistingClassName: __STORAGE_CLASS__
+SnapshotClass:
+  FromExistingClassName: __SNAPSHOT_CLASS__
+
+DriverInfo:
+  Name: csi.truenas.watteel.com
+
+  # A zvol below 1 GiB is not worth provisioning and CreateVolume defaults to
+  # 1 GiB anyway (internal/csi/controller.go).
+  SupportedSizeRange:
+    Min: 1Gi
+
+  # requireFS() in internal/node/node.go accepts exactly ext2, ext3, ext4 and
+  # xfs and refuses everything else by name; fsTypeOf() falls back to ext4, so
+  # the empty string is also serveable. ext2/ext3 are omitted deliberately: they
+  # are accepted but nobody ships them, and each entry multiplies the run.
+  SupportedFsType:
+    "": {}
+    ext4: {}
+    xfs: {}
+
+  SupportedMountOption:
+    noatime: {}
+
+  # See the topology note in testdriver-nfs.yaml — the same judgement call, with
+  # the iSCSI capability label. requiredTopology also demands the filesystem
+  # label (ext4 or xfs) and, when multipath is on, the multipath label.
+  TopologyKeys:
+    - csi.truenas.watteel.com/iscsi
+  NumAllowedTopologies: 1
+
+  Capabilities:
+    persistence: true
+
+    # volumeMode: Block is implemented — internal/node/block.go binds the
+    # resolved /dev/disk/by-id device onto the pod's device file, and
+    # ControllerExpandVolume skips the node grow for a block capability.
+    block: true
+
+    exec: true
+
+    # A zvol carries a local filesystem the node created, kubelet owns the
+    # mount, and the chart sets fsGroupPolicy: File. The recursive chown works.
+    fsGroup: true
+
+    # VOLUME_MOUNT_GROUP is not advertised on the node service.
+    volumeMountGroup: false
+
+    snapshotDataSource: true
+    pvcDataSource: true
+
+    # Two pods on one node share the single staged device by bind mount.
+    multipods: true
+
+    # JUDGEMENT CALL: false, and it is the whole point of the protocol split.
+    # supportsAccessMode() refuses every MULTI_NODE_* mode for iSCSI, because a
+    # zvol behind a LUN is one block device: two nodes with the same ext4
+    # mounted read-write corrupt it. The package comment on internal/backend/
+    # iscsi/iscsi.go records the same decision from the appliance side.
+    RWX: false
+
+    # SINGLE_NODE_SINGLE_WRITER is explicitly accepted by supportsAccessMode().
+    readWriteOncePod: true
+
+    # EXPAND_VOLUME grows the zvol; the node rescans the session and runs
+    # resize2fs/xfs_growfs in place, verified on hardware (internal/node/expand.go).
+    controllerExpansion: true
+    nodeExpansion: true
+    onlineExpansion: true
+    # Only VolumeExpansion ONLINE is advertised (internal/csi/identity.go).
+    offlineExpansion: false
+
+    volumeLimits: true
+    singleNodeVolume: true
+    topology: true
+    capacity: true
+
+    # See testdriver-nfs.yaml: unverified, so not claimed.
+    multiplePVsSameID: false
