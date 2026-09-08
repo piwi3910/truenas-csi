@@ -239,7 +239,7 @@ jobs:
             --set backends.nas1.username=truenas_admin \
             --set backends.nas1.apiKey=not-a-real-key \
             --set backends.nas1.pool=tank \
-            --set backends.nas1.parentDataset=tank/k8s \
+            --set backends.nas1.parentDataset=k8s \
             --set fencing.enabled=true \
             --set podmon.enabled=true \
             --set metrics.enabled=true \
@@ -253,7 +253,7 @@ jobs:
             --set backends.nas1.username=truenas_admin \
             --set backends.nas1.apiKey=not-a-real-key \
             --set backends.nas1.pool=tank \
-            --set backends.nas1.parentDataset=tank/k8s \
+            --set backends.nas1.parentDataset=k8s \
           | kubectl apply --namespace truenas-csi --dry-run=server -f -
 
   # A release builds a multi-arch image; catching a broken Dockerfile here is

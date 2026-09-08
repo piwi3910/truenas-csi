@@ -38,7 +38,7 @@ metadata:
                   "key": "apiKey"
                 },
                 "pool": "tank",
-                "parentDataset": "tank/k8s",
+                "parentDataset": "k8s",
                 "insecureSkipVerify": false
               }
             ],

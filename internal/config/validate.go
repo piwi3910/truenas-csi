@@ -97,6 +97,23 @@ func (b Backend) validate() error {
 	if strings.Contains(b.ParentDataset, "..") {
 		return errors.New(`parentDataset must not contain ".." path segments`)
 	}
+	// parentDataset is a single dataset name UNDER pool, not a path that
+	// repeats it: pool "tank" with parentDataset "k8s" means tank/k8s.
+	//
+	// Refused here rather than left to run time. volume.Confine rejects a
+	// separator-bearing parent when it validates a volume id, so a driver
+	// configured with "tank/k8s" starts, passes every health check, and then
+	// fails the operator's FIRST PersistentVolumeClaim with
+	//   component "tank/tank/k8s" contains a path separator
+	// which names neither the setting that is wrong nor the file it is in.
+	if strings.ContainsAny(b.ParentDataset, `/\`) {
+		return fmt.Errorf(
+			"parentDataset %q must be a single dataset name under pool %q, not a path: "+
+				"use %q, which the driver reads as %q",
+			b.ParentDataset, b.Pool,
+			strings.TrimPrefix(strings.TrimPrefix(b.ParentDataset, b.Pool), "/"),
+			b.Pool+"/"+strings.TrimPrefix(strings.TrimPrefix(b.ParentDataset, b.Pool), "/"))
+	}
 	if b.ReservedBytes < 0 {
 		return fmt.Errorf("reservedBytes must not be negative, got %d", b.ReservedBytes)
 	}

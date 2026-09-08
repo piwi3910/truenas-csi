@@ -24,7 +24,7 @@ spec:
         name: truenas-credentials
         key: apiKey
       pool: tank
-      parentDataset: tank/k8s
+      parentDataset: k8s
       # The stock TrueNAS certificate is self-signed with SAN=DNS:localhost and
       # cannot be verified against a real address. Supply your own CA here, or
       # accept the risk with insecureSkipVerify: true.

@@ -49,7 +49,7 @@ helm install truenas-csi truenas-csi/truenas-csi \
   --set backends.nas1.username=truenas_admin \
   --set backends.nas1.apiKey=... \
   --set backends.nas1.pool=tank \
-  --set backends.nas1.parentDataset=tank/k8s
+  --set backends.nas1.parentDataset=k8s
 ```
 
 !!! danger "Always use `wss://`"

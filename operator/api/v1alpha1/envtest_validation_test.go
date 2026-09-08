@@ -147,7 +147,7 @@ func TestCRDRejectsInlineAPIKeyOnAPIServer(t *testing.T) {
 				"apiKey":          "1-should-never-be-stored",
 				"apiKeySecretRef": map[string]any{"name": "truenas-credentials", "key": "apiKey"},
 				"pool":            "tank",
-				"parentDataset":   "tank/k8s",
+				"parentDataset":   "k8s",
 			}},
 		},
 	}

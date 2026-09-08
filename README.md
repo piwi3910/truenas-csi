@@ -85,7 +85,7 @@ backends:
     username: root
     apiKey: "1-abcdef..."
     pool: tank
-    parentDataset: tank/k8s
+    parentDataset: k8s
 ```
 
 **HTTPS is as mandatory for CORE as `wss://` is for SCALE.** The credential-revocation rule
@@ -180,7 +180,7 @@ backends:
     username: csi
     apiKey: "1-abcdef..."
     pool: tank
-    parentDataset: tank/k8s
+    parentDataset: k8s
     # Pool headroom this driver will never hand out. See "Pool reservation" below.
     reservedBytes: 53687091200 # 50 GiB
     reservedPercent: 10 # 10% of the pool's total size

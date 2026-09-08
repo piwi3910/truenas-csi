@@ -100,7 +100,7 @@ metrics:
 #     username: csi
 #     apiKey: "1-abcdef..."
 #     pool: tank
-#     parentDataset: tank/k8s
+#     parentDataset: k8s
 #     # PEM bundle trusted for this appliance. The stock TrueNAS certificate is
 #     # self-signed with SAN=DNS:localhost and cannot be verified against a real
 #     # address, so either supply your own certificate here or accept the risk
@@ -362,7 +362,7 @@ storageClasses:
       backend: nas1
       protocol: nfs
       pool: tank
-      parentDataset: tank/k8s
+      parentDataset: k8s
       # NFSv4 is preferred: NFSv3 locking is stateless and interacts badly with
       # pod rescheduling.
       nfsVersion: "4"
@@ -385,7 +385,7 @@ storageClasses:
       backend: nas1
       protocol: iscsi
       pool: tank
-      parentDataset: tank/k8s
+      parentDataset: k8s
       fsType: ext4
       sparse: "true"
       # portalID reuses an existing portal instead of letting the driver create
