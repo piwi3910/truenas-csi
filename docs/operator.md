@@ -2,8 +2,8 @@
 
 The operator installs and maintains the driver through a single cluster-scoped
 resource, `TrueNASCSIDriver`. It lives in its own Go module under
-[`operator/`](../operator), and it renders **the same Helm chart** that a Helm
-install uses — [`deploy/helm/truenas-csi`](../deploy/helm/truenas-csi) — through
+[`operator/`](https://github.com/piwi3910/truenas-csi/tree/main/operator), and it renders **the same Helm chart** that a Helm
+install uses — [`deploy/helm/truenas-csi`](https://github.com/piwi3910/truenas-csi/tree/main/deploy/helm/truenas-csi) — through
 the Helm Go SDK, then applies the result server-side.
 
 There is exactly one copy of the driver's manifests in this repository. The
@@ -34,8 +34,8 @@ server enforces it at `kubectl apply` time. The rules that matter:
 
 - **The endpoint must be `wss://`.** This is the single most important
   validation in the whole project. TrueNAS 25.10 _revokes_ an API key the moment
-  it is presented over a plaintext connection — a `ws://` endpoint does not fail
-  to connect, it destroys the credential and someone has to issue a new one by
+  it is presented over a plaintext connection — a plaintext WebSocket endpoint
+  does not fail to connect, it destroys the credential and someone has to issue a new one by
   hand. Three keys were lost this way during development. The CRD's pattern is
   anchored at both ends, because Kubernetes evaluates `pattern` as an unanchored
   match and an unanchored expression would accept
@@ -173,7 +173,7 @@ a two-replica manager Deployment with leader election.
 
 ### With OLM / OperatorHub
 
-The bundle is in [`operator/bundle`](../operator/bundle). With `operator-sdk`:
+The bundle is in [`operator/bundle`](https://github.com/piwi3910/truenas-csi/tree/main/operator/bundle). With `operator-sdk`:
 
 ```console
 operator-sdk run bundle ghcr.io/piwi3910/truenas-csi-operator-bundle:0.1.0
@@ -298,6 +298,6 @@ the endpoint pattern against a real API server — skip with a clear message whe
 the API server binaries are absent; `make envtest` prints the `KUBEBUILDER_ASSETS`
 path that turns them on.
 
-The repository is a Go workspace ([`go.work`](../go.work)) tying the driver and
+The repository is a Go workspace ([`go.work`](https://github.com/piwi3910/truenas-csi/blob/main/go.work)) tying the driver and
 the operator modules together for local development. Both modules also build on
 their own with `GOWORK=off`, which is what CI and the release build do.

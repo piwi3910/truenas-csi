@@ -1,0 +1,53 @@
+name: Bug report
+description: Something the driver does that it should not, or does not do that it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Do not report a security problem here.** Use a
+        [private advisory](https://github.com/piwi3910/truenas-csi/security/advisories/new).
+
+        Please redact API keys from any log you paste. The driver redacts them in
+        its own output, but `kubectl describe` and your shell history do not.
+  - type: input
+    id: version
+    attributes:
+      label: Driver version
+      placeholder: v0.1.0, or the image digest
+    validations: {required: true}
+  - type: input
+    id: truenas
+    attributes:
+      label: TrueNAS version
+      placeholder: SCALE 25.10.6
+    validations: {required: true}
+  - type: input
+    id: kubernetes
+    attributes:
+      label: Kubernetes distribution and version
+      placeholder: k3s 1.34.4, arm64
+    validations: {required: true}
+  - type: dropdown
+    id: protocol
+    attributes:
+      label: Protocol
+      options: [NFS, iSCSI, SMB, NVMe/TCP, several, not protocol specific]
+    validations: {required: true}
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what you expected instead
+    validations: {required: true}
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce
+      description: The StorageClass and PVC matter; please include them.
+      render: yaml
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Controller and node plugin logs around the failure.
+      render: shell

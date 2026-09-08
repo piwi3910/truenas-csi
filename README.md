@@ -1,5 +1,15 @@
 # truenas-csi
 
+[![ci](https://github.com/piwi3910/truenas-csi/actions/workflows/ci.yaml/badge.svg?branch=main)](https://github.com/piwi3910/truenas-csi/actions/workflows/ci.yaml)
+[![release](https://github.com/piwi3910/truenas-csi/actions/workflows/release.yaml/badge.svg)](https://github.com/piwi3910/truenas-csi/actions/workflows/release.yaml)
+[![docs](https://github.com/piwi3910/truenas-csi/actions/workflows/docs.yaml/badge.svg?branch=main)](https://piwi3910.github.io/truenas-csi/)
+[![Go Reference](https://pkg.go.dev/badge/github.com/piwi3910/truenas-csi.svg)](https://pkg.go.dev/github.com/piwi3910/truenas-csi)
+[![Go Report Card](https://goreportcard.com/badge/github.com/piwi3910/truenas-csi)](https://goreportcard.com/report/github.com/piwi3910/truenas-csi)
+[![CSI spec](https://img.shields.io/badge/CSI-v1.13-blue)](https://github.com/container-storage-interface/spec)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+
+**Docs: <https://piwi3910.github.io/truenas-csi/>**
+
 A Container Storage Interface driver for **TrueNAS SCALE 25.10 and newer**. It provisions
 ZFS-backed PersistentVolumes on a TrueNAS appliance and speaks the API TrueNAS actually
 supports today: **JSON-RPC 2.0 over a `wss://` websocket** at `/api/current`. A backend may

@@ -23,7 +23,7 @@ permissions:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: pwatteel/truenas-csi
-  GO_VERSION: "1.25"
+  GO_VERSION: "1.26"
 
 jobs:
   # Gate the release on the same checks CI runs, on the primary architecture.
@@ -278,3 +278,137 @@ jobs:
           # The keyless identity that signed it: this workflow, on this repo.
           COSIGN_CERTIFICATE_IDENTITY_REGEXP: ^https://github\.com/${{ github.repository }}/\.github/workflows/release\.yaml@refs/tags/
           COSIGN_CERTIFICATE_OIDC_ISSUER: https://token.actions.githubusercontent.com
+
+  # The chart is published as an OCI artifact beside the image, so one registry
+  # and one set of credentials covers both. It is also served from the Pages
+  # site as a classic Helm repo by the docs workflow, because `helm repo add`
+  # is still what most instructions assume.
+  chart:
+    name: chart
+    needs: [publish, verify-release]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          persist-credentials: false
+
+      - name: Set up Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v3.16.3
+
+      # The chart's version and the image tag are the same release. A chart that
+      # says 0.1.0 while pulling :v0.2.0 is the kind of drift nobody notices
+      # until a rollback pulls the wrong pair, so it is asserted rather than
+      # assumed.
+      - name: Assert the chart version matches the tag
+        env:
+          VERSION: ${{ needs.publish.outputs.version }}
+        run: |
+          want="${VERSION#v}"
+          chart=$(grep -E '^version:' deploy/helm/truenas-csi/Chart.yaml | awk '{print $2}')
+          app=$(grep -E '^appVersion:' deploy/helm/truenas-csi/Chart.yaml | awk '{print $2}' | tr -d '"')
+          echo "tag=$want chart.version=$chart chart.appVersion=$app"
+          [ "$chart" = "$want" ] || { echo "Chart.yaml version $chart != tag $want" >&2; exit 1; }
+          [ "$app" = "$want" ] || { echo "Chart.yaml appVersion $app != tag $want" >&2; exit 1; }
+
+      - name: Log in to ghcr.io
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" \
+            | helm registry login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Package and push
+        env:
+          VERSION: ${{ needs.publish.outputs.version }}
+        run: |
+          helm package deploy/helm/truenas-csi --destination dist
+          helm push "dist/truenas-csi-${VERSION#v}.tgz" \
+            "oci://ghcr.io/${{ github.repository_owner }}/charts"
+
+      - name: Upload the packaged chart
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: chart
+          path: dist/*.tgz
+          if-no-files-found: error
+
+  # The GitHub Release is created last, so it never advertises artefacts that a
+  # later job might fail to publish.
+  github-release:
+    name: github-release
+    needs: [publish, verify-release, chart]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download the packaged chart
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: chart
+          path: dist
+
+      - name: Compose the release notes
+        env:
+          VERSION: ${{ needs.publish.outputs.version }}
+          DIGEST: ${{ needs.publish.outputs.digest }}
+        run: |
+          {
+            echo "## Install"
+            echo
+            echo '```sh'
+            echo "helm install truenas-csi oci://ghcr.io/${{ github.repository_owner }}/charts/truenas-csi \\"
+            echo "  --version ${VERSION#v} --namespace truenas-csi --create-namespace \\"
+            echo "  --set backends.nas1.endpoint=wss://nas.example.com/api/current \\"
+            echo "  --set backends.nas1.username=truenas_admin \\"
+            echo "  --set backends.nas1.apiKey=... \\"
+            echo "  --set backends.nas1.pool=tank --set backends.nas1.parentDataset=tank/k8s"
+            echo '```'
+            echo
+            echo "## Artefacts"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Image | \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION}\` |"
+            echo "| Digest | \`${DIGEST}\` |"
+            echo "| Chart | \`oci://ghcr.io/${{ github.repository_owner }}/charts/truenas-csi:${VERSION#v}\` |"
+            echo "| Docs | https://piwi3910.github.io/truenas-csi/ |"
+            echo
+            echo "The image is signed with cosign (keyless) and carries an SBOM attestation:"
+            echo
+            echo '```sh'
+            echo "cosign verify ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION} \\"
+            echo "  --certificate-identity-regexp '^https://github.com/${{ github.repository }}/.github/workflows/release.yaml@refs/tags/' \\"
+            echo "  --certificate-oidc-issuer https://token.actions.githubusercontent.com"
+            echo '```'
+            echo
+            if [ -f CHANGELOG.md ]; then
+              echo "## Changes"
+              echo
+              awk '/^## /{ if (seen) exit; seen=1; next } seen' CHANGELOG.md
+            fi
+          } > notes.md
+          cat notes.md
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.publish.outputs.version }}
+        run: |
+          prerelease=""
+          case "$VERSION" in *-*) prerelease="--prerelease" ;; esac
+          gh release create "$VERSION" dist/*.tgz \
+            --title "$VERSION" --notes-file notes.md $prerelease

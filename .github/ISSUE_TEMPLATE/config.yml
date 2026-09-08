@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/piwi3910/truenas-csi/security/advisories/new
+    about: Report privately. Never in a public issue.
+  - name: Documentation
+    url: https://piwi3910.github.io/truenas-csi/
+    about: Security model, troubleshooting, metrics and performance.

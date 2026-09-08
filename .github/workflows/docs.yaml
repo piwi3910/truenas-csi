@@ -1,0 +1,72 @@
+name: docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "mkdocs.yml"
+      - ".github/workflows/docs.yaml"
+      - "deploy/helm/**"
+  workflow_dispatch:
+
+# A superseded docs build is wasted machine time, but a deploy is not cancelled
+# midway: concurrency is scoped to the build and the deploy waits its turn.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install MkDocs
+        run: pip install --no-cache-dir mkdocs-material==9.5.44
+
+      # --strict turns a broken internal link into a failed build. A docs site
+      # that silently 404s is worse than one that refuses to publish.
+      - name: Build
+        run: mkdocs build --strict
+
+      # The chart is published from the same Pages site, so `helm repo add` and
+      # the documentation share one URL. Packaging here rather than in the
+      # release workflow keeps the index in step with what is actually served.
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+
+      - name: Package the chart into the site
+        run: |
+          mkdir -p site/charts
+          helm package deploy/helm/truenas-csi --destination site/charts
+          helm repo index site/charts \
+            --url https://piwi3910.github.io/truenas-csi/charts
+
+      - name: Upload the site
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v4

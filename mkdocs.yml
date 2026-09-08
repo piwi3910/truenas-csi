@@ -1,0 +1,69 @@
+site_name: TrueNAS CSI
+site_description: >-
+  A production-grade CSI driver for TrueNAS SCALE: NFS, iSCSI, SMB and NVMe/TCP
+  from one binary, with snapshots, clones, expansion, group snapshots,
+  replication and appliance-side pod fencing.
+site_url: https://piwi3910.github.io/truenas-csi/
+repo_url: https://github.com/piwi3910/truenas-csi
+repo_name: piwi3910/truenas-csi
+edit_uri: edit/main/docs/
+copyright: Apache-2.0
+
+theme:
+  name: material
+  icon:
+    repo: fontawesome/brands/github
+  features:
+    - navigation.instant
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - content.action.edit
+    - search.suggest
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: teal
+      accent: teal
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: teal
+      accent: teal
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+
+plugins:
+  - search
+
+nav:
+  - Home: index.md
+  - Operating:
+      - Security model: security.md
+      - Troubleshooting: troubleshooting.md
+      - Pool administration: pool-administration.md
+      - Metrics: metrics.md
+      - Performance: performance.md
+  - Features:
+      - Replication: replication.md
+      - Volume migration: migration.md
+      - Per-namespace quotas: namespace-quotas.md
+      - Operator: operator.md
+  - Contributing:
+      - Testing: testing.md

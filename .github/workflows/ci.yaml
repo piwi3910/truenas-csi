@@ -18,7 +18,7 @@ permissions:
 
 env:
   # Keep this in step with the go directive in go.mod.
-  GO_VERSION: "1.25"
+  GO_VERSION: "1.26"
 
 jobs:
   # arm64 is the primary architecture (RK3588 / Armbian, k3s 1.34); amd64 is
@@ -137,6 +137,118 @@ jobs:
 
       - name: Chart tests
         run: go test -count=1 ./test/chart/
+
+  # The operator is a SEPARATE module in the go.work workspace, so the root
+  # `go build ./...` above does not reach it. CI has to enter it explicitly, and
+  # with GOWORK=off, because that is what `go install` and a consumer's build
+  # actually do -- a workspace can hide a missing require from everyone but the
+  # person who has the workspace.
+  operator:
+    name: operator
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+
+      - name: gofmt
+        working-directory: operator
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "these files are not gofmt-clean:" >&2
+            echo "$unformatted" >&2
+            exit 1
+          fi
+
+      - name: Build, vet and test without the workspace
+        working-directory: operator
+        env:
+          GOWORK: "off"
+        run: |
+          go build ./...
+          go vet ./...
+          go test -race -count=1 ./...
+
+  # Chart testing against a REAL API server. `helm lint` checks the template
+  # renders; only a server-side dry run checks that what it rendered is
+  # something Kubernetes will accept -- field names, enum values, and the CRDs'
+  # own schemas. kind is cheap and catches manifest errors that otherwise
+  # surface at install time on a user's cluster.
+  chart-install:
+    name: chart install (kind)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v3.16.3
+
+      - name: Create a kind cluster
+        uses: helm/kind-action@a1b0e391336a6ee6713a0583f8c6240d70863de3 # v1.12.0
+        with:
+          cluster_name: chart-ct
+
+      # The snapshot CRDs are a cluster prerequisite, not something this chart
+      # owns. Installing them here mirrors a real cluster and lets the
+      # VolumeSnapshotClass in the chart validate against a real schema.
+      - name: Install the snapshot CRDs
+        run: |
+          base=https://raw.githubusercontent.com/kubernetes-csi/external-snapshotter/v8.1.0/client/config/crd
+          for crd in snapshot.storage.k8s.io_volumesnapshotclasses.yaml \
+                     snapshot.storage.k8s.io_volumesnapshotcontents.yaml \
+                     snapshot.storage.k8s.io_volumesnapshots.yaml; do
+            kubectl apply -f "$base/$crd"
+          done
+
+      - name: Install the driver CRDs
+        run: kubectl apply -f deploy/crds/
+
+      # A server-side dry run validates every rendered object against the API
+      # server without creating anything. The driver cannot become healthy here
+      # -- there is no appliance -- so readiness is deliberately not asserted.
+      - name: Render and validate against the API server
+        run: |
+          helm template truenas-csi deploy/helm/truenas-csi \
+            --namespace truenas-csi \
+            --set backends.nas1.endpoint=wss://nas.example.com/api/current \
+            --set backends.nas1.username=truenas_admin \
+            --set backends.nas1.apiKey=not-a-real-key \
+            --set backends.nas1.pool=tank \
+            --set backends.nas1.parentDataset=tank/k8s \
+            --set fencing.enabled=true \
+            --set podmon.enabled=true \
+            --set metrics.enabled=true \
+          | kubectl apply --namespace truenas-csi --dry-run=server -f -
+
+      - name: Render the defaults too
+        run: |
+          helm template truenas-csi deploy/helm/truenas-csi \
+            --namespace truenas-csi \
+            --set backends.nas1.endpoint=wss://nas.example.com/api/current \
+            --set backends.nas1.username=truenas_admin \
+            --set backends.nas1.apiKey=not-a-real-key \
+            --set backends.nas1.pool=tank \
+            --set backends.nas1.parentDataset=tank/k8s \
+          | kubectl apply --namespace truenas-csi --dry-run=server -f -
 
   # A release builds a multi-arch image; catching a broken Dockerfile here is
   # cheaper than catching it while cutting a tag. Nothing is pushed.
