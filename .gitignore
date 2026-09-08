@@ -16,3 +16,9 @@ site/
 .procoder/index/
 .procoder/state/
 .lycheecache
+
+# procoder writes this when it has questions for a human. It quotes decisions
+# verbatim, and its `Key:` identity hashes read as generic API keys to a secret
+# scanner. It is a working file handed back with `procoder ask --file`, not
+# something to track.
+.procoder/ask/QA.md

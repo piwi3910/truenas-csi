@@ -87,6 +87,23 @@ const (
 	KeyWriteIOPSLimit = "writeIOPSLimit"
 )
 
+// NodeParameterKeys are the StorageClass parameters the CONTROLLER must copy
+// into a volume's context so the node can see them.
+//
+// It is an allowlist rather than a blanket echo of req.GetParameters(): a
+// StorageClass carries backend selection, share options and credential
+// references, and the node has no business receiving those. Every key here is
+// read by this package and by nothing else.
+//
+// Without the copy these parameters reach the node only on a STATIC
+// PersistentVolume, whose spec.csi.volumeAttributes the operator writes by
+// hand -- a dynamically provisioned volume would accept the parameter, report
+// success, and apply no limit at all.
+var NodeParameterKeys = []string{
+	KeyBandwidthLimit, KeyReadBandwidthLimit, KeyWriteBandwidthLimit,
+	KeyIOPSLimit, KeyReadIOPSLimit, KeyWriteIOPSLimit,
+}
+
 // KeyPodUID is the pod's UID, filled in by the kubelet at NodePublishVolume
 // because the CSIDriver object sets podInfoOnMount: true. It is the only thing
 // that names the cgroup to write the limit into, which is why the limit is

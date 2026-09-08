@@ -341,3 +341,38 @@ func TestTopologyExcludesIncapableNode(t *testing.T) {
 		})
 	}
 }
+
+// TestCreateVolumeEchoesNodeParameters fails if a StorageClass parameter the
+// NODE reads stops reaching the volume context.
+//
+// Nothing else carries these: a backend fills the context with its own protocol
+// keys, and StorageClass parameters never otherwise leave the controller. When
+// the copy is missing the I/O limits still work on a STATIC PersistentVolume,
+// whose volumeAttributes an operator writes by hand, and silently do nothing on
+// a dynamically provisioned one -- the class is accepted, provisioning
+// succeeds, and no limit is ever applied.
+func TestCreateVolumeEchoesNodeParameters(t *testing.T) {
+	for _, key := range node.NodeParameterKeys {
+		t.Run(key, func(t *testing.T) {
+			shared = newCounting()
+			c, _ := ctlWith(t)
+			p := params()
+			p[key] = "42"
+			resp, err := c.CreateVolume(context.Background(), &csipb.CreateVolumeRequest{
+				Name: "pvc-echo", Parameters: p,
+				CapacityRange:      &csipb.CapacityRange{RequiredBytes: 1 << 30},
+				VolumeCapabilities: testCaps(),
+			})
+			if err != nil {
+				t.Fatalf("CreateVolume: %v", err)
+			}
+			got := resp.GetVolume().GetVolumeContext()[key]
+			if got != "42" {
+				t.Errorf("volume context is missing %q (got %q).\n"+
+					"The node reads this parameter and nothing else carries it, so the "+
+					"limit would be accepted and never applied on a dynamically "+
+					"provisioned volume. Context: %v", key, got, resp.GetVolume().GetVolumeContext())
+			}
+		})
+	}
+}

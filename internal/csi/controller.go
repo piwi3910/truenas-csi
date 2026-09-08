@@ -267,6 +267,21 @@ func (c *controller) CreateVolume(ctx context.Context, req *csipb.CreateVolumeRe
 			vctx[k] = v
 		}
 	}
+	// A few StorageClass parameters are read by the NODE rather than by a
+	// backend, so nothing else would carry them: a backend populates the
+	// context with its own protocol keys, and the parameters themselves never
+	// leave the controller. Copied by an explicit allowlist, never wholesale --
+	// a StorageClass also carries backend selection, share options and
+	// credential references, none of which the node should receive.
+	//
+	// Without this the I/O limits work on a static PersistentVolume and silently
+	// do nothing on a dynamically provisioned one, which is the shape of bug
+	// that gets discovered during an incident.
+	for _, k := range node.NodeParameterKeys {
+		if v, ok := req.GetParameters()[k]; ok && v != "" {
+			vctx[k] = v
+		}
+	}
 	out := &csipb.Volume{
 		VolumeId:           vol.ID.String(),
 		CapacityBytes:      vol.CapacityBytes,
