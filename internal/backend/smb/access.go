@@ -42,9 +42,14 @@ const (
 // replaces it wholesale, so writing a freshly built object containing only the
 // host lists would silently reset every sibling setting the operator chose.
 type smbShare struct {
-	ID      int            `json:"id"`
-	Path    string         `json:"path"`
-	Name    string         `json:"name"`
+	ID   int    `json:"id"`
+	Path string `json:"path"`
+	Name string `json:"name"`
+	// Purpose is the share's preset. It must be echoed back on any update that
+	// carries options, and it must be the share's OWN value: forcing
+	// DEFAULT_SHARE onto a LEGACY_SHARE would silently drop the dozen extra
+	// options that preset implies.
+	Purpose string         `json:"purpose"`
 	Options map[string]any `json:"options"`
 }
 
@@ -127,12 +132,25 @@ func (b *Backend) shareByPath(ctx context.Context, path string) (*smbShare, erro
 
 // setHostsAllow rewrites a share's access lists, preserving every other option.
 //
+// purpose is sent alongside options because 25.10 refuses the pair otherwise:
+//
+//	[EINVAL] data: Value error, You must set `purpose` if you set `options`.
+//
+// It is the share's own purpose, read back by the query, not a constant. A
+// share this driver did not create may be a LEGACY_SHARE, and echoing
+// DEFAULT_SHARE at it would discard the options that preset carries. A share
+// with no purpose recorded falls back to the preset this driver creates.
+//
 // UNVERIFIED: that sharing.smb.update accepts the `options` object read back
-// from sharing.smb.query unchanged for every `purpose`. Settling it needs one
-// update against a LEGACY_SHARE on real hardware; DEFAULT_SHARE is what this
-// driver creates and is the only shape covered by the integration suite.
+// from sharing.smb.query unchanged for a LEGACY_SHARE. DEFAULT_SHARE is what
+// this driver creates and is what the integration suite covers.
 func (b *Backend) setHostsAllow(ctx context.Context, share *smbShare, allow []string) error {
+	purpose := share.Purpose
+	if purpose == "" {
+		purpose = purposeDefaultShare
+	}
 	return b.c.CallJSON(ctx, nil, "sharing.smb.update", share.ID, map[string]any{
+		"purpose": purpose,
 		"options": accessOptions(share.Options, allow),
 	})
 }

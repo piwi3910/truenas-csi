@@ -58,7 +58,18 @@ func (r *NodeRunner) podManifest(name, script string) string {
 				"command":         []string{"chroot", "/host", "sh", "-c", script},
 				"securityContext": map[string]any{"privileged": true},
 				"volumeMounts": []any{map[string]any{
-					"name": "host", "mountPath": "/host"}},
+					"name": "host", "mountPath": "/host",
+					// Bidirectional, not the default None: this pod chroots into
+					// /host and runs the host's mount binaries, so a mount it
+					// makes must land in the HOST's namespace. With the default
+					// the mount is private to this pod and disappears when the
+					// pod exits -- so a later runner, and the host itself, see
+					// nothing. A test that mounts and verifies inside one script
+					// never notices; one that stages in one call and asserts in
+					// the next sees the driver "succeed" against an empty mount
+					// table. That is the same failure that once made every
+					// volume look remote while it was silently node-local.
+					"mountPropagation": "Bidirectional"}},
 			}},
 		},
 	}

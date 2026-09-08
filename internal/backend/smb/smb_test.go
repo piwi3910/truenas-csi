@@ -39,9 +39,10 @@ type nas struct {
 }
 
 type fakeShare struct {
-	id   int
-	name string
-	path string
+	id      int
+	name    string
+	path    string
+	purpose string
 	// options is the nested object the appliance really returns. It is kept
 	// whole, and not reduced to the two host lists, because a share's other
 	// options must survive an access-list update — a LEGACY_SHARE carries a
@@ -50,7 +51,8 @@ type fakeShare struct {
 }
 
 func (s *fakeShare) json() map[string]any {
-	return map[string]any{"id": s.id, "path": s.path, "name": s.name, "options": s.options}
+	return map[string]any{"id": s.id, "path": s.path, "name": s.name,
+		"purpose": s.purpose, "options": s.options}
 }
 
 // hostList reads one of the share's access lists back out.
@@ -242,7 +244,8 @@ func newNAS(t *testing.T) *nas {
 		if opts == nil {
 			opts = map[string]any{}
 		}
-		sh := &fakeShare{id: n.nextID, name: name, path: path, options: opts}
+		purpose, _ := payload["purpose"].(string)
+		sh := &fakeShare{id: n.nextID, name: name, path: path, purpose: purpose, options: opts}
 		n.shares[path] = sh
 		return sh.json(), nil
 	})
@@ -270,8 +273,15 @@ func newNAS(t *testing.T) *nas {
 				continue
 			}
 			// The appliance replaces `options` wholesale, which is exactly why
-			// the driver has to read-modify-write it.
+			// the driver has to read-modify-write it -- and it refuses options
+			// that arrive without a purpose, on update as well as on create.
 			if opts, ok := patch["options"].(map[string]any); ok {
+				purpose, _ := patch["purpose"].(string)
+				if purpose == "" {
+					return nil, &fake.RPCError{Code: -32602, ErrName: "EINVAL",
+						Reason: "[EINVAL] data: Value error, You must set `purpose` if you set `options`"}
+				}
+				sh.purpose = purpose
 				sh.options = opts
 			}
 			return sh.json(), nil
