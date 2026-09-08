@@ -260,12 +260,33 @@ spec:
                       type: string
                     tag:
                       description: |-
-                        Tag is the driver version. Empty means the chart's appVersion. The
-                        operator refuses to apply a tag whose version is incompatible with the
-                        CSI sidecars the chart pins; see the VersionSkew condition reason.
+                        Tag is the driver version. Empty means the chart's appVersion.
+
+                        Two rules apply, and both are enforced here rather than in the
+                        controller, because a value the API server accepts is a value someone has
+                        to discover is wrong from a condition on a resource that did nothing.
+
+                        The pattern is the tag grammar a registry accepts at all. The CEL rule
+                        below is the one that catches the real mistake: a tag that *looks* like a
+                        version must actually be one. "v0.5" and "0.1.0.2" are typos a human
+                        makes and a registry happily 404s on hours later; a floating tag such as
+                        "main" or "pr-412" is a deliberate development build and stays legal,
+                        which is the same line internal/skew and internal/upgrade draw when they
+                        decline to gate an unparseable version.
+
+                        The operator additionally refuses to apply a version incompatible with
+                        the CSI sidecars the chart pins (the VersionSkew reason), or one that
+                        cannot be reached from the release already installed (the
+                        UpgradeNotSupported reason). Neither is expressible in a schema: both
+                        depend on state outside this resource.
                       maxLength: 128
                       pattern: ^[A-Za-z0-9_][-A-Za-z0-9_.]*$
                       type: string
+                      x-kubernetes-validations:
+                        - message:
+                            a tag that starts with a digit or v<digit> must be
+                            a semantic version such as 0.1.0, v0.1.0 or 0.2.0-rc.1
+                          rule: '!self.matches("^v?[0-9]") || self.matches("^v?(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?([+][0-9A-Za-z.-]+)?$")'
                   type: object
                 logLevel:
                   default: info

@@ -20,6 +20,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -32,6 +33,7 @@ import (
 	"github.com/piwi3910/truenas-csi/operator/internal/health"
 	"github.com/piwi3910/truenas-csi/operator/internal/rollout"
 	"github.com/piwi3910/truenas-csi/operator/internal/skew"
+	"github.com/piwi3910/truenas-csi/operator/internal/upgrade"
 )
 
 const (
@@ -49,6 +51,19 @@ const (
 
 	// ManagedByLabel marks every object the operator applies.
 	ManagedByLabel = "truenas-csi.watteel.com/managed-by"
+
+	// PreviousVersionAnnotation records the driver version the operator last
+	// applied and rolled out. It is the input to the upgrade-path check, and it
+	// lives in an annotation rather than in status because it must survive the
+	// status subresource being cleared: the whole point of the value is to
+	// remember which driver code actually ran on this cluster.
+	//
+	// It is written only once a reconcile has applied the release and has no
+	// rollout or credential rotation left in flight. A refused or failed upgrade
+	// leaves the previous value in place, so the next attempt is judged against
+	// the version that really ran rather than one that never came up. An absent
+	// annotation means a fresh install, which is never gated.
+	PreviousVersionAnnotation = "truenas-csi.watteel.com/previous-version"
 
 	// driverName is immutable and must match the chart's. It is written into
 	// every PersistentVolume; changing it orphans them all.
@@ -94,6 +109,14 @@ type TrueNASCSIDriverReconciler struct {
 	Applier Applier
 	// Probe reads the driver's metrics; nil means no backend health reporting.
 	Probe BackendProbe
+	// Recorder publishes events on the TrueNASCSIDriver. A refusal that exists
+	// only as a status condition is easy to miss; `kubectl describe` and every
+	// event-scraping alert pipeline see an event. Nil disables events.
+	Recorder record.EventRecorder
+	// UpgradeTable declares which driver versions may be reached from which.
+	// Nil means the table this operator ships; the field exists so the refusal
+	// branches can be tested against a table with more than one release in it.
+	UpgradeTable upgrade.Table
 	// Now is the clock, injectable for tests.
 	Now func() time.Time
 }
@@ -171,6 +194,23 @@ func (r *TrueNASCSIDriverReconciler) reconcile(
 	sidecars := skew.SidecarsFromValues(r.chartValues())
 	if err := skew.Check(driverVersion, sidecars); err != nil {
 		r.degrade(status, cr.Generation, truenasv1alpha1.ReasonVersionSkew, err.Error())
+		r.event(cr, corev1.EventTypeWarning, truenasv1alpha1.ReasonVersionSkew, err.Error())
+		return ctrl.Result{RequeueAfter: requeueSettled}, nil
+	}
+
+	// The upgrade path is a separate question from skew. A driver can be
+	// perfectly compatible with the sidecars the chart pins and still be
+	// unreachable from the release already installed, because the step between
+	// them needs a migration only an intermediate release performs. It is
+	// refused here, before anything is applied, for the same reason skew is: a
+	// half-applied release is worse than an unchanged one.
+	previousVersion := cr.Annotations[PreviousVersionAnnotation]
+	if err := r.upgradeTable().Check(previousVersion, driverVersion); err != nil {
+		r.degrade(status, cr.Generation, truenasv1alpha1.ReasonUpgradeNotSupported, err.Error())
+		r.event(cr, corev1.EventTypeWarning, truenasv1alpha1.ReasonUpgradeNotSupported, err.Error())
+		// status.AppliedVersion deliberately keeps whatever it already said:
+		// nothing was applied, and naming the requested version there would
+		// claim the cluster is running something it is not.
 		return ctrl.Result{RequeueAfter: requeueSettled}, nil
 	}
 
@@ -246,6 +286,16 @@ func (r *TrueNASCSIDriverReconciler) reconcile(
 	backendStatus, unreachable := r.backendHealth(ctx, cr, ns)
 	status.Backends = backendStatus
 
+	if progressing == "" {
+		// The release is applied and no rollout is still in flight. That, and
+		// not backend reachability, is what makes this the version a future
+		// upgrade must be judged from: an appliance that is unreachable says
+		// nothing about which driver code is running on the cluster.
+		if err := r.recordAppliedVersion(ctx, cr, previousVersion, driverVersion); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
 	switch {
 	case progressing != "":
 		reason := truenasv1alpha1.ReasonRollingOut
@@ -269,6 +319,54 @@ func (r *TrueNASCSIDriverReconciler) reconcile(
 		setCondition(status, cr.Generation, truenasv1alpha1.ConditionReady, metav1.ConditionTrue, truenasv1alpha1.ReasonReconciled, msg)
 		return ctrl.Result{RequeueAfter: requeueSettled}, nil
 	}
+}
+
+// recordAppliedVersion stamps the version that has just finished rolling out
+// onto the CR, so a later reconcile knows where an upgrade would start from.
+//
+// It is a no-op when the value has not changed: a metadata write wakes the
+// resource's own watch, and rewriting the same annotation every reconcile would
+// be a self-sustaining loop.
+func (r *TrueNASCSIDriverReconciler) recordAppliedVersion(
+	ctx context.Context,
+	cr *truenasv1alpha1.TrueNASCSIDriver,
+	previous, applied string,
+) error {
+	if applied == "" || previous == applied {
+		return nil
+	}
+	patch := client.MergeFrom(cr.DeepCopy())
+	annotations := cr.GetAnnotations()
+	if annotations == nil {
+		annotations = map[string]string{}
+	}
+	annotations[PreviousVersionAnnotation] = applied
+	cr.SetAnnotations(annotations)
+	if err := r.Patch(ctx, cr, patch); err != nil {
+		return fmt.Errorf("record applied version %s: %w", applied, err)
+	}
+	if previous != "" {
+		r.event(cr, corev1.EventTypeNormal, truenasv1alpha1.ReasonUpgraded,
+			fmt.Sprintf("driver upgraded from %s to %s", previous, applied))
+	}
+	return nil
+}
+
+// upgradeTable returns the declared upgrade paths, defaulting to the shipped
+// table.
+func (r *TrueNASCSIDriverReconciler) upgradeTable() upgrade.Table {
+	if r.UpgradeTable != nil {
+		return r.UpgradeTable
+	}
+	return upgrade.Shipped
+}
+
+// event publishes one event on the resource, when a recorder is configured.
+func (r *TrueNASCSIDriverReconciler) event(cr *truenasv1alpha1.TrueNASCSIDriver, eventType, reason, message string) {
+	if r.Recorder == nil {
+		return
+	}
+	r.Recorder.Event(cr, eventType, reason, message)
 }
 
 // chartValues returns the chart's own default values, which is where the CSI

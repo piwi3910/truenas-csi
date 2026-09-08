@@ -74,6 +74,37 @@ func sampleDriver(name, endpoint string) *truenasv1alpha1.TrueNASCSIDriver {
 	}
 }
 
+// TestCRDRejectsMalformedDriverVersionOnAPIServer is the same rule as
+// TestCRDRejectsMalformedDriverVersion, enforced by a real API server — which
+// is the only place the CEL rule is actually compiled and run, rather than
+// re-derived from the generated schema.
+func TestCRDRejectsMalformedDriverVersionOnAPIServer(t *testing.T) {
+	c := startEnvtest(t)
+	ctx := context.Background()
+
+	withTag := func(name, tag string) *truenasv1alpha1.TrueNASCSIDriver {
+		cr := sampleDriver(name, "wss://nas1.example.com/api/current")
+		cr.Spec.Image = truenasv1alpha1.ImageSpec{Tag: tag}
+		return cr
+	}
+
+	bad := withTag("bad-version", "v0.5")
+	if err := c.Create(ctx, bad); err == nil {
+		_ = c.Delete(ctx, bad)
+		t.Error(`the API server accepted the tag "v0.5"; a mistyped version should fail here, not as an image pull error later`)
+	}
+
+	// A floating development tag is not a version and must keep working: the
+	// operator declines to gate what it cannot parse, and refusing it in the
+	// schema would make the operator unusable for driver development.
+	good := withTag("floating-tag", "main")
+	if err := c.Create(ctx, good); err != nil {
+		t.Errorf(`the API server rejected the tag "main": %v`, err)
+	} else {
+		t.Cleanup(func() { _ = c.Delete(ctx, good) })
+	}
+}
+
 // TestCRDRejectsPlaintextEndpointOnAPIServer is the same rule as
 // TestCRDRejectsPlaintextEndpoint, enforced by a real API server.
 func TestCRDRejectsPlaintextEndpointOnAPIServer(t *testing.T) {
