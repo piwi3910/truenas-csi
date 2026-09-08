@@ -610,12 +610,12 @@ unverified** and needs a run with a LUN actually attached.
 
 Of the 913 documented methods, these are the only per-client session sources:
 
-| Protocol | Method | Notes |
-|---|---|---|
-| iSCSI | `iscsi.global.sessions` | fields `initiator`, `initiator_addr`, `initiator_alias`, `target`, `target_alias`. Returns `[]` with nothing attached; **populated element shape still unverified** |
-| NFS | `nfs.get_nfs4_clients` | the real one for v4 exports; carries `seconds from last renew` |
-| NVMe-oF | `nvmet.global.sessions` | exists on the appliance, **not yet wrapped** in `internal/truenas`, so NVMe-oF cannot be fenced until it is |
-| SMB | **none** | the entire SMB surface is `smb.config/update/bindip_choices/unixcharset_choices` plus `sharing.smb.*`. The older `smb.status` is gone from 25.10. SMB connectivity is therefore *unobservable*, not merely unknown |
+| Protocol | Method                  | Notes                                                                                                                                                                                                                                                                                                                           |
+| -------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| iSCSI    | `iscsi.global.sessions` | fields `initiator`, `initiator_addr`, `initiator_alias`, `target`, `target_alias`. Returns `[]` with nothing attached; **populated element shape still unverified**                                                                                                                                                             |
+| NFS      | `nfs.get_nfs4_clients`  | the real one for v4 exports; carries `seconds from last renew`                                                                                                                                                                                                                                                                  |
+| NVMe-oF  | `nvmet.global.sessions` | fields `host_traddr`, `hostnqn`, `subsys_id`, `port_id`, `ctrl` (schema read from the live docs 2026-09-08; role `SHARING_NVME_TARGET_READ`). Wrapped as `truenas.NVMeSessions` and consumed by the connectivity service, so NVMe-oF **is** fenceable. **Populated element shape still unverified** — no initiator was attached |
+| SMB      | **none**                | the entire SMB surface is `smb.config/update/bindip_choices/unixcharset_choices` plus `sharing.smb.*`. The older `smb.status` is gone from 25.10. SMB connectivity is therefore _unobservable_, not merely unknown                                                                                                              |
 
 Consequence for fencing: an SMB volume can never satisfy the fence precondition,
 so an SMB-only pod is never force-deleted. That is the safe direction, but it

@@ -169,6 +169,29 @@ func newReconciler(t *testing.T, applier Applier, probe BackendProbe, objs ...cl
 	}
 }
 
+// nodeDaemonSet is the node plugin DaemonSet as the API server would report it,
+// targeting `desired` nodes and having observed the current generation.
+//
+// Tests that want a settled cluster seed it with desired = 0, which is the
+// truth in an envtest-less fake client: there are no Node objects, so a
+// DaemonSet belongs on no node and its rollout really is finished. Without it
+// the reconciler sees no DaemonSet at all and correctly refuses to call the
+// rollout done — see TestStatusReportsBackendHealth.
+func nodeDaemonSet(desired int32) *appsv1.DaemonSet {
+	return &appsv1.DaemonSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace:  "truenas-csi",
+			Name:       "truenas-csi-node",
+			Generation: 1,
+			Labels:     map[string]string{"app.kubernetes.io/component": "node"},
+		},
+		Status: appsv1.DaemonSetStatus{
+			ObservedGeneration:     1,
+			DesiredNumberScheduled: desired,
+		},
+	}
+}
+
 func reconcileOnce(t *testing.T, r *TrueNASCSIDriverReconciler) *truenasv1alpha1.TrueNASCSIDriver {
 	t.Helper()
 	_, err := r.Reconcile(context.Background(), ctrl.Request{
@@ -416,8 +439,34 @@ func TestStatusReportsBackendHealth(t *testing.T) {
 		"nas2": {Up: false, Orphans: 0},
 	}}
 
+	// First, the state a fresh install is actually in: the DaemonSet has been
+	// applied and wants a node, and no plugin pod exists yet. That must NOT
+	// read as a finished rollout — it used to, because rollout.Next called
+	// 0 updated of 0 total "done", so the same status said Ready=True and
+	// "waiting for the node DaemonSet to create its pods" at once.
+	pending := newReconciler(t, &recordingApplier{}, probe, driver.DeepCopy(),
+		credentialSecret("1", "1-secret-key"), controllerPod.DeepCopy(), nodeDaemonSet(1))
+	installing := reconcileOnce(t, pending)
+
+	if ready := meta.FindStatusCondition(installing.Status.Conditions, truenasv1alpha1.ConditionReady); ready == nil ||
+		ready.Status != metav1.ConditionFalse {
+		t.Errorf("Ready = %+v while the node DaemonSet has created no pods, want False", ready)
+	}
+	if installing.Status.Rollout == nil || installing.Status.Rollout.WaitingFor == "" {
+		t.Error("no rollout.waitingFor while the node plugin has not started anywhere")
+	}
+	if installing.Annotations[PreviousVersionAnnotation] != "" {
+		t.Errorf("the install recorded version %q before any node plugin ran",
+			installing.Annotations[PreviousVersionAnnotation])
+	}
+
+	// Then the settled cluster this test is really about. There are no Node
+	// objects in a fake client, so a DaemonSet that has been observed and
+	// targets zero nodes has genuinely finished rolling out — the case that
+	// must not be confused with the one above.
 	applier := &recordingApplier{}
-	r := newReconciler(t, applier, probe, driver, credentialSecret("1", "1-secret-key"), controllerPod)
+	r := newReconciler(t, applier, probe, driver, credentialSecret("1", "1-secret-key"),
+		controllerPod, nodeDaemonSet(0))
 	got := reconcileOnce(t, r)
 
 	if probe.url != "http://10.42.0.7:9090/metrics" {
@@ -564,7 +613,8 @@ func TestUpgradePathGating(t *testing.T) {
 
 			applier := &recordingApplier{}
 			recorder := record.NewFakeRecorder(16)
-			r := newReconciler(t, applier, nil, driver, credentialSecret("1", "1-secret-key"))
+			r := newReconciler(t, applier, nil, driver, credentialSecret("1", "1-secret-key"),
+				nodeDaemonSet(0))
 			r.Recorder = recorder
 			r.UpgradeTable = upgradeTable
 			got := reconcileOnce(t, r)
@@ -645,7 +695,8 @@ func TestSuccessfulUpgradeEmitsAnEvent(t *testing.T) {
 	driver.Annotations = map[string]string{PreviousVersionAnnotation: "0.5.0"}
 
 	recorder := record.NewFakeRecorder(16)
-	r := newReconciler(t, &recordingApplier{}, nil, driver, credentialSecret("1", "1-secret-key"))
+	r := newReconciler(t, &recordingApplier{}, nil, driver, credentialSecret("1", "1-secret-key"),
+		nodeDaemonSet(0))
 	r.Recorder = recorder
 	r.UpgradeTable = upgradeTable
 	reconcileOnce(t, r)
@@ -661,7 +712,8 @@ func TestFreshInstallEmitsNoUpgradeEvent(t *testing.T) {
 	driver.Spec.Image.Tag = "0.9.0"
 
 	recorder := record.NewFakeRecorder(16)
-	r := newReconciler(t, &recordingApplier{}, nil, driver, credentialSecret("1", "1-secret-key"))
+	r := newReconciler(t, &recordingApplier{}, nil, driver, credentialSecret("1", "1-secret-key"),
+		nodeDaemonSet(0))
 	r.Recorder = recorder
 	r.UpgradeTable = upgradeTable
 	reconcileOnce(t, r)

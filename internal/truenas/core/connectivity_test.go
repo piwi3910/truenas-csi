@@ -29,6 +29,10 @@ func TestConnectivityQueriesRefuseOnCORE(t *testing.T) {
 			_, err := c.ISCSISessions(ctx)
 			return err
 		}},
+		{"nvmet.global.sessions", func(ctx context.Context, c *Client) error {
+			_, err := c.NVMeSessions(ctx)
+			return err
+		}},
 		{"nfs clients", func(ctx context.Context, c *Client) error {
 			_, err := c.NFSClients(ctx)
 			return err

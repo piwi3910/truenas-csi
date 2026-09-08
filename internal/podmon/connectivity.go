@@ -32,12 +32,16 @@ const DefaultConnectivityTimeout = 10 * time.Second
 // state would be expiring. Below that threshold "renewed N seconds ago" is a
 // live, active client and a hard veto on fencing.
 //
-// UNVERIFIED: that this appliance runs the 90s default. nfs.config exposes no
-// lease-time field (checked against
-// https://192.168.10.253/api/docs/current/api_methods_nfs.config.html), so the
+// UNVERIFIED: that this appliance runs the 90s default. NO published method
+// exposes the NFSv4 lease or grace period at all — nfs.config's return schema
+// has no lease field
+// (https://192.168.10.253/api/docs/current/api_methods_nfs.config.html) and no
+// method in the 25.10.5 index names a lease or a grace period — so this cannot
+// be resolved from the API and is not a matter of calling the right one. The
 // hardware check that would settle it is reading /proc/fs/nfsd/nfsv4leasetime
-// on the appliance. If it is longer, this threshold must grow with it: too
-// short a threshold calls a live client dead, which is the dangerous direction.
+// on the appliance. If the real lease is longer, this threshold must grow with
+// it: too short a threshold calls a live client dead, and a client called dead
+// is a client that may be fenced while it is still writing.
 const DefaultStaleLeaseAfter = 180 * time.Second
 
 // State is what the appliance was able to say about one signal.
@@ -96,7 +100,7 @@ const (
 	// Always StateUnknown; see checkSMB.
 	SignalSMBSession SignalKind = "smb-session"
 	// SignalNVMeSession: does the appliance list an NVMe-oF session from this
-	// node? Always StateUnknown; see checkNVMe.
+	// node? See checkNVMe.
 	SignalNVMeSession SignalKind = "nvme-session"
 	// SignalVolumeIO: is I/O in progress on this volume? Always
 	// StateUnobservable; see checkVolumeIO.
@@ -231,6 +235,7 @@ func SafeToFence(reports []Report) (bool, string) {
 // implement the whole provisioning API to stand in for an appliance.
 type Sessions interface {
 	ISCSISessions(ctx context.Context) ([]truenas.ISCSISession, error)
+	NVMeSessions(ctx context.Context) ([]truenas.NVMeSession, error)
 	NFSClients(ctx context.Context) ([]truenas.NFSClient, error)
 }
 
@@ -264,15 +269,14 @@ func (a RegistryAppliances) Sessions(ctx context.Context, backendName string) (S
 // What it can observe:
 //
 //   - iSCSI: iscsi.global.sessions, a live session per initiator.
+//   - NVMe-oF: nvmet.global.sessions, a live controller per connected host NQN.
 //   - NFS: nfs.get_nfs4_clients, each client's address and the age of its lease.
 //
 // What it CANNOT observe, and says so rather than guessing:
 //
 //   - per-volume I/O — the appliance has no per-dataset or per-zvol counter;
 //   - SMB sessions — this appliance's API publishes no session or status call
-//     for SMB at all;
-//   - NVMe-oF sessions — nvmet.global.sessions exists on the appliance but is
-//     not yet on this driver's truenas.API surface.
+//     for SMB at all.
 //
 // Every one of those is reported as an explicit state, never as a false.
 type Connectivity struct {
@@ -362,7 +366,7 @@ func (c *Connectivity) protocolSignal(ctx context.Context, id volume.ID, node ba
 	case "smb":
 		return checkSMB()
 	case "nvme":
-		return checkNVMe()
+		return c.checkNVMe(ctx, node, sess, r)
 	default:
 		return Signal{
 			Kind:            SignalKind(id.Protocol + "-session"),
@@ -429,6 +433,17 @@ func (c *Connectivity) checkISCSI(ctx context.Context, node backend.NodeRef, ses
 //   - the node's address is not listed, or is listed with a lease older than
 //     StaleLeaseAfter: DISCONNECTED.
 //
+// That last branch is the one place in this package where an ASSUMPTION, rather
+// than an observation, authorises a fence. StaleLeaseAfter is derived from the
+// NFSv4 lease period, and the appliance publishes no method that reports it —
+// see DefaultStaleLeaseAfter. If the real lease is longer than assumed, a
+// client that is merely slow to renew reads as disconnected here and may then
+// be cut while it is still writing. The hardware check is
+// /proc/fs/nfsd/nfsv4leasetime on the appliance; until somebody runs it, this
+// threshold is the weakest evidence the service acts on, and an operator
+// tightening or widening it should change StaleLeaseAfter rather than this
+// code.
+//
 // RWX: the match is against THIS node's addresses only, never against the
 // presence of clients in general. Another healthy node mounting the same
 // ReadWriteMany export appears in this list and must not veto anything — it is
@@ -494,21 +509,67 @@ func checkSMB() Signal {
 	}
 }
 
-// checkNVMe reports NVMe-oF connectivity as unknown.
+// checkNVMe attributes live NVMe-oF controllers to the node.
 //
-// nvmet.global.sessions DOES exist on the appliance (listed at
-// https://192.168.10.253/api/docs/current/api_methods_nvmet.global.sessions.html),
-// so unlike SMB this gap is closeable — but the method is not on this driver's
-// truenas.API surface yet, and inventing a call here would put a second,
-// divergent copy of the appliance client in the fencing path. Until it is
-// added, an NVMe-oF volume is never fenced automatically.
-func checkNVMe() Signal {
-	return Signal{
-		Kind:            SignalNVMeSession,
-		State:           StateUnknown,
-		Reason:          "nvmet.global.sessions is not yet on this driver's appliance API, so NVMe-oF connectivity cannot be observed",
-		LeaseAgeSeconds: truenas.RenewAgeUnknown,
+// The match mirrors checkISCSI — host NQN first, host address as the fallback —
+// but the ABSENCE rule is deliberately stricter, and that is the whole subtlety
+// of this function.
+//
+// The appliance names every connected host by its NQN. So:
+//
+//   - the node's NQN or one of its addresses is in the list: CONNECTED.
+//   - the node advertises an NQN and it is not in the list: DISCONNECTED. The
+//     appliance would have named it, and did not; that is real evidence.
+//   - the node advertises NO NQN and no session matches one of its addresses:
+//     UNKNOWN, never disconnected. Failing to identify the host is not the same
+//     observation as the host being gone, and letting the two collapse would
+//     fence every node whose NQN annotation is missing — precisely the nodes
+//     whose node plugin never got far enough to publish one, which is the state
+//     a half-crashed node is in. host_traddr may also be a storage-network
+//     address this controller never learns from the Kubernetes Node object, so
+//     an address miss alone proves nothing either.
+//
+// Like iSCSI this is node-level rather than volume-level. A session does name
+// its subsystem, and this driver creates one subsystem per volume, so a
+// volume-level answer is possible in principle — but it needs a volume handle
+// to subsys_id mapping this service does not have, and the node-level answer is
+// the stricter of the two: it vetoes fences it need not veto and never permits
+// one it should not.
+func (c *Connectivity) checkNVMe(ctx context.Context, node backend.NodeRef, sess Sessions, r *Report) Signal {
+	sig := Signal{Kind: SignalNVMeSession, LeaseAgeSeconds: truenas.RenewAgeUnknown}
+	sessions, err := sess.NVMeSessions(ctx)
+	if err != nil {
+		r.Errors = append(r.Errors, fmt.Sprintf("listing NVMe-oF sessions: %v", err))
+		sig.State = StateUnknown
+		sig.Reason = "the appliance did not answer nvmet.global.sessions"
+		return sig
 	}
+	for _, s := range sessions {
+		switch {
+		case node.NQN != "" && s.HostNQN == node.NQN:
+			sig.State = StateConnected
+			sig.Reason = fmt.Sprintf("host %s still holds NVMe controller %d on subsystem %d",
+				s.HostNQN, s.Controller, s.SubsysID)
+			return sig
+		case s.HostAddr != "" && slices.Contains(node.Addrs, s.HostAddr):
+			sig.State = StateConnected
+			sig.Reason = fmt.Sprintf("address %s still holds NVMe controller %d on subsystem %d",
+				s.HostAddr, s.Controller, s.SubsysID)
+			return sig
+		}
+	}
+	if node.NQN == "" {
+		sig.State = StateUnknown
+		sig.Reason = fmt.Sprintf(
+			"node %s advertises no NVMe host NQN, so none of the %d NVMe sessions the appliance lists "+
+				"can be attributed to it or ruled out for it",
+			node.ID, len(sessions))
+		return sig
+	}
+	sig.State = StateDisconnected
+	sig.Reason = fmt.Sprintf("the appliance lists %d NVMe-oF sessions and none is from host %s",
+		len(sessions), node.NQN)
+	return sig
 }
 
 // checkVolumeIO states, every time, that per-volume I/O is not observable.

@@ -84,6 +84,101 @@ func TestISCSISessionsPropagatesFailure(t *testing.T) {
 	}
 }
 
+// TestNVMeSessionsKeepsHostIdentity is the NVMe half of the same requirement:
+// the fence needs to know WHICH host is connected. The host NQN is the primary
+// identity and the address is the fallback, so both must survive decoding —
+// and the address must survive it stripped of any port, because a node is
+// matched against the bare addresses on its Node object.
+//
+// Each want entry is "hostnqn@hostaddr -> subsys/port/ctrl".
+func TestNVMeSessionsKeepsHostIdentity(t *testing.T) {
+	tests := []struct {
+		name     string
+		sessions []fake.NVMeSession
+		want     []string
+	}{
+		{
+			name: "no sessions",
+			want: []string{},
+		},
+		{
+			name: "one connected host",
+			sessions: []fake.NVMeSession{{
+				HostNQN:    "nqn.2014-08.org.nvmexpress:uuid:worker-21",
+				HostTRAddr: "192.168.10.21",
+				SubsysID:   3, PortID: 1, Ctrl: 7,
+			}},
+			want: []string{"nqn.2014-08.org.nvmexpress:uuid:worker-21@192.168.10.21 -> 3/1/7"},
+		},
+		{
+			// Two nodes on their own per-volume subsystems, which is how this
+			// driver exports NVMe-oF.
+			name: "two hosts on two subsystems",
+			sessions: []fake.NVMeSession{
+				{HostNQN: "nqn.a", HostTRAddr: "192.168.10.21", SubsysID: 3, PortID: 1, Ctrl: 7},
+				{HostNQN: "nqn.b", HostTRAddr: "192.168.10.22", SubsysID: 4, PortID: 1, Ctrl: 8},
+			},
+			want: []string{
+				"nqn.a@192.168.10.21 -> 3/1/7",
+				"nqn.b@192.168.10.22 -> 4/1/8",
+			},
+		},
+		{
+			// UNVERIFIED whether the appliance ever renders host_traddr with a
+			// port; it is stripped either way so that a node whose Node object
+			// carries the bare address still matches.
+			name: "an address rendered with a port keeps only the host",
+			sessions: []fake.NVMeSession{
+				{HostNQN: "nqn.a", HostTRAddr: "192.168.10.21:4420", SubsysID: 3, PortID: 1, Ctrl: 7},
+			},
+			want: []string{"nqn.a@192.168.10.21 -> 3/1/7"},
+		},
+		{
+			name: "an IPv6 host keeps its address, not its port",
+			sessions: []fake.NVMeSession{
+				{HostNQN: "nqn.a", HostTRAddr: "[fd00::21]:4420", SubsysID: 3, PortID: 1, Ctrl: 7},
+			},
+			want: []string{"nqn.a@fd00::21 -> 3/1/7"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s := fake.Start(t, fake.Options{})
+			s.SeedNVMeSessions(tc.sessions...)
+			c := dialFake(t, s)
+
+			got, err := c.NVMeSessions(context.Background())
+			if err != nil {
+				t.Fatalf("NVMeSessions: %v", err)
+			}
+			rendered := make([]string, 0, len(got))
+			for _, sess := range got {
+				rendered = append(rendered, sess.HostNQN+"@"+sess.HostAddr+" -> "+
+					strconv.Itoa(sess.SubsysID)+"/"+strconv.Itoa(sess.PortID)+"/"+
+					strconv.Itoa(sess.Controller))
+			}
+			if strings.Join(rendered, "\n") != strings.Join(tc.want, "\n") {
+				t.Fatalf("want\n%s\ngot\n%s", strings.Join(tc.want, "\n"), strings.Join(rendered, "\n"))
+			}
+		})
+	}
+}
+
+// TestNVMeSessionsPropagatesFailure. As for iSCSI: an unreadable answer must not
+// look like an empty one, because "no sessions" is what permits a fence.
+func TestNVMeSessionsPropagatesFailure(t *testing.T) {
+	s := fake.Start(t, fake.Options{})
+	s.Handle("nvmet.global.sessions", func([]json.RawMessage) (any, error) {
+		return nil, &fake.RPCError{Code: -32001, ErrName: "EACCES", Reason: "not authorised"}
+	})
+	c := dialFake(t, s)
+
+	if _, err := c.NVMeSessions(context.Background()); err == nil {
+		t.Fatal("want an error, got nil")
+	}
+}
+
 // TestNFSClientsMergesBothProtocols pins the merge, the port stripping, the
 // de-duplication and the lease age. A node that mounts over both v3 and v4, or
 // that appears twice in rmtab, is still one node — and its liveness is what a

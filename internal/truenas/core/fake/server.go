@@ -86,6 +86,15 @@ func Start(t *testing.T, opts Options) *Server {
 // URL is the https:// base URL to configure as the endpoint.
 func (s *Server) URL() string { return s.ts.URL }
 
+// SetAPIKey changes the bearer token the fake accepts from now on, which is
+// what an API key rotated on the appliance looks like from the driver's side:
+// the key the client is holding stops working, and only the new one is taken.
+func (s *Server) SetAPIKey(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.opts.APIKey = key
+}
+
 // Requests counts every HTTP request that reached the fake.
 func (s *Server) Requests() int {
 	s.mu.Lock()

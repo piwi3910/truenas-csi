@@ -113,6 +113,35 @@ func (s *Server) SeedISCSISessions(sessions ...ISCSISession) {
 	s.HandleValue("iscsi.global.sessions", out)
 }
 
+// NVMeSession is one entry of an nvmet.global.sessions answer.
+type NVMeSession struct {
+	HostNQN    string
+	HostTRAddr string
+	SubsysID   int
+	PortID     int
+	Ctrl       int
+}
+
+// SeedNVMeSessions makes nvmet.global.sessions answer with these sessions.
+//
+// As with SeedISCSISessions the payload is built once, here: the wire keys
+// (host_traddr, hostnqn) are the part a test cannot get wrong without silently
+// proving nothing — a mistyped key decodes as the zero value, and a session
+// with an empty host NQN is exactly what "nobody is attached" looks like.
+func (s *Server) SeedNVMeSessions(sessions ...NVMeSession) {
+	out := make([]any, 0, len(sessions))
+	for _, sess := range sessions {
+		out = append(out, map[string]any{
+			"host_traddr": sess.HostTRAddr,
+			"hostnqn":     sess.HostNQN,
+			"subsys_id":   sess.SubsysID,
+			"port_id":     sess.PortID,
+			"ctrl":        sess.Ctrl,
+		})
+	}
+	s.HandleValue("nvmet.global.sessions", out)
+}
+
 // NFSv4Client is one entry of an nfs.get_nfs4_clients answer.
 type NFSv4Client struct {
 	// Address is "ip:port", exactly as /proc/fs/nfsd/clients writes it.
