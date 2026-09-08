@@ -3,8 +3,8 @@ name: truenas-csi
 description: CSI driver provisioning NFS, iSCSI, SMB and NVMe/TCP volumes on TrueNAS SCALE appliances
 type: application
 # version is the chart version; appVersion tracks the default driver image tag.
-version: 0.1.1
-appVersion: "0.1.1"
+version: 0.1.2
+appVersion: "0.1.2"
 kubeVersion: ">=1.31.0-0"
 home: https://github.com/piwi3910/truenas-csi
 sources:

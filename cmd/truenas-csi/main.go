@@ -233,6 +233,28 @@ func run(o options) error {
 		}
 		nn := node.NewNode(cfg.NodeID, pf, node.HostExec(hostRoot))
 		nn.Root = hostRoot
+
+		// Which appliances this node can actually reach, probed BEFORE the
+		// plugin registers.
+		//
+		// The controller requires a backend's reachability segment for every
+		// volume on it, so a node that does not publish one is excluded from
+		// scheduling -- and the label is immutable once the node registers, so
+		// probing after registration would pin whatever was true at that
+		// instant. A node with tooling for a protocol but no route to the
+		// appliance is exactly the case this exists to keep pods off.
+		reach := node.ProbeReachability(ctx, node.BackendDataAddresses(cfg), node.ProbeTimeout)
+		nn.SetReachability(reach)
+		for name, ok := range reach.Reachable {
+			if ok {
+				slog.Info("appliance reachable from this node", "backend", name)
+				continue
+			}
+			slog.Warn("appliance NOT reachable from this node: it will be excluded "+
+				"from scheduling for that backend, and the label is immutable until "+
+				"the node's driver labels are cleared by hand",
+				"backend", name)
+		}
 		// The connectivity monitor polls the data path of every volume this
 		// node has staged, so a NAS the node can no longer reach shows up as an
 		// abnormal volume condition and a metric instead of as pods hanging on

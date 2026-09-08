@@ -3,6 +3,30 @@
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project uses [semantic versioning](https://semver.org/).
 
+## [0.1.2] - 2026-09-08
+
+### Fixed
+
+- **The node reachability probe was never wired, so every dynamically
+  provisioned volume was unschedulable.** The controller requires a
+  `csi.truenas.watteel.com/backend-<name>` segment for each volume, and the node
+  code that publishes it — `ProbeReachability` / `SetReachability` — had no
+  caller. Volumes were created on the appliance, PVs bound, and then every pod
+  failed with `node(s) didn't match PersistentVolume's node affinity`. Found by
+  installing on a real cluster; no unit test could see it, because both halves
+  were correct and only the call site was missing.
+- **A pool-prefixed `parentDataset` is now refused at startup.** Every install
+  example said `tank/k8s`, which the driver reads as `tank/tank/k8s`; it started
+  healthy and failed the first PVC with a message naming a dataset component
+  rather than the setting. The examples are corrected.
+
+### Known
+
+Three subsystems remain implemented but unreachable from any binary, now
+tracked rather than implied to work: replication (#10), pool administration and
+volume migration (#11). See #12 for the CI check that would have caught all of
+them, and #9 for the reachability bug above.
+
 ## [0.1.1] - 2026-09-08
 
 ### Changed
@@ -99,5 +123,6 @@ Not applicable — this is the first release. Note for later: `attachRequired` o
 the CSIDriver object is immutable, so any future change to it requires the
 object to be recreated.
 
+[0.1.2]: https://github.com/piwi3910/truenas-csi/releases/tag/v0.1.2
 [0.1.1]: https://github.com/piwi3910/truenas-csi/releases/tag/v0.1.1
 [0.1.0]: https://github.com/piwi3910/truenas-csi/releases/tag/v0.1.0
