@@ -286,7 +286,14 @@ func TestCSISanity(t *testing.T) {
 		TestVolumeParameters: map[string]string{
 			"backend": "nas1", "protocol": "nfs", "server": "192.168.10.253",
 		},
-		IDGen: &sanity.DefaultIDGenerator{},
+		// The suite exercises MODIFY_VOLUME only when the driver advertises it,
+		// and only with the parameters given here. sync=standard is chosen
+		// because it is the default the appliance already applies, so the
+		// suite's volumes are provisioned with exactly the durability they
+		// would have had — while still driving the whole allowlist,
+		// normalisation and pool.dataset.update path.
+		TestVolumeMutableParameters: map[string]string{"sync": "standard"},
+		IDGen:                       &sanity.DefaultIDGenerator{},
 		// Without this the suite sends an EMPTY starting token, which is not
 		// invalid at all — the driver correctly treats it as "no token" and the
 		// spec then fails for the wrong reason.

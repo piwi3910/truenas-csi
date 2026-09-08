@@ -1,0 +1,47 @@
+{{- /*
+Example VolumeAttributesClasses, every one disabled by default — the same
+discipline as the StorageClasses next door, and for a stronger reason: one of
+these classes trades durability away, and a class that exists by default is a
+class somebody attaches to a claim without reading what it costs.
+
+A class applies to a live volume through the claim, not through the
+StorageClass:
+
+  spec:
+    volumeAttributesClassName: truenas-fast-writes
+
+Changing that name re-applies; the driver's ControllerModifyVolume is
+idempotent, so re-applying the same class is a no-op rather than a rewrite.
+
+Every parameter the driver will change, with where it applies:
+
+  sync         STANDARD | ALWAYS | DISABLED | INHERIT   filesystem and zvol
+  compression  OFF | LZ4 | GZIP-n | ZSTD-n | ... |      filesystem and zvol
+               INHERIT
+  atime        ON | OFF | INHERIT                       filesystem only
+  recordsize   512 | 1K ... 1M | INHERIT                filesystem only
+
+Values may be written in ZFS's own lowercase spelling; the driver normalises
+them. Any other key is refused with InvalidArgument naming it — notably
+anything that changes capacity (quota, refquota, volsize), which belongs to
+volume expansion alone, and volblocksize, which cannot change after a zvol is
+created. See docs/volume-attributes.md.
+*/ -}}
+{{- if .Values.volumeAttributesClass.enabled }}
+{{- range $name, $class := .Values.volumeAttributesClass.classes }}
+{{- if $class.enabled }}
+---
+apiVersion: {{ $.Values.volumeAttributesClass.apiVersion }}
+kind: VolumeAttributesClass
+metadata:
+  name: {{ $class.name }}
+  labels:
+    {{- include "truenas-csi.labels" $ | nindent 4 }}
+driverName: {{ include "truenas-csi.driverName" $ }}
+parameters:
+  {{- range $key, $value := $class.parameters }}
+  {{ $key }}: {{ $value | quote }}
+  {{- end }}
+{{- end }}
+{{- end }}
+{{- end }}

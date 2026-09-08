@@ -89,6 +89,13 @@ func (c *controller) ControllerGetCapabilities(context.Context, *csipb.Controlle
 		// owned dataset's user properties, so the node ids come out of the
 		// listing it has in hand rather than from a per-volume round trip.
 		rpc(csipb.ControllerServiceCapability_RPC_LIST_VOLUMES_PUBLISHED_NODES),
+		// MODIFY_VOLUME is what makes a VolumeAttributesClass reach this driver
+		// at all: without it the resizer never calls ControllerModifyVolume and
+		// a class attached to a claim is inert. It is honest here because ZFS
+		// really does let a mounted volume's `sync`, `compression`, `atime` and
+		// `recordsize` change in place — see modifyvolume.go for the closed set
+		// and why everything else is refused.
+		rpc(csipb.ControllerServiceCapability_RPC_MODIFY_VOLUME),
 	}}, nil
 }
 
@@ -179,6 +186,15 @@ func (c *controller) CreateVolume(ctx context.Context, req *csipb.CreateVolumeRe
 	if err != nil {
 		return nil, err
 	}
+	// A claim may name a VolumeAttributesClass at creation as well as later, so
+	// the same allowlist governs both paths. Validated here, before anything is
+	// provisioned, so a class naming a property this driver refuses costs no
+	// dataset — and so the InvalidArgument the spec requires for an unusable
+	// class is what the caller gets.
+	mod, err := parseModification(req.GetMutableParameters())
+	if err != nil {
+		return nil, err
+	}
 	ctx = obs.WithVolume(ctx, id.String())
 
 	release, ok := c.locks.TryAcquire(id.String())
@@ -251,6 +267,22 @@ func (c *controller) CreateVolume(ctx context.Context, req *csipb.CreateVolumeRe
 		return nil, toStatus(err)
 	}
 	obs.Logger(ctx).Info("volume created", "capacity", vol.CapacityBytes, "protocol", id.Protocol)
+
+	// Applied after the volume exists, because the properties are set on the
+	// dataset and some of them depend on whether it turned out to be a
+	// filesystem or a zvol. A failure here fails CreateVolume: a claim that
+	// asked for sync=disabled and silently got the default would be a worse
+	// outcome than a claim that stays Pending with the reason on it. Create is
+	// idempotent, so the CO's retry finds the same dataset and tries again.
+	if !mod.empty() {
+		ds, mErr := c.volumeDataset(ctx, vol.ID)
+		if mErr != nil {
+			return nil, mErr
+		}
+		if mErr := c.applyModification(ctx, vol.ID, ds, mod); mErr != nil {
+			return nil, mErr
+		}
+	}
 
 	// Everything the node can be told before an attach travels in the volume
 	// context, so a PersistentVolume carries the server, share and identity of

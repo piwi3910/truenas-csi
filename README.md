@@ -660,6 +660,9 @@ design more than any other requirement:
 - [docs/io-limits.md](docs/io-limits.md) — optional per-volume IOPS and bandwidth caps,
   applied node-side with cgroup v2 `io.max` for the block protocols: what they throttle,
   what they deliberately refuse, and why this is not appliance-side QoS.
+- [docs/volume-attributes.md](docs/volume-attributes.md) — VolumeAttributesClass: changing
+  a live volume's ZFS properties in place, the closed set the driver will change, and what
+  `sync: disabled` costs.
 
 ## Observability
 

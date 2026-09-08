@@ -90,6 +90,13 @@ func TestEveryAdvertisedControllerCapabilityIsImplemented(t *testing.T) {
 		case csipb.ControllerServiceCapability_RPC_GET_VOLUME:
 			_, err := c.ControllerGetVolume(ctx, &csipb.ControllerGetVolumeRequest{VolumeId: getVol})
 			probe(typ.String(), err)
+		case csipb.ControllerServiceCapability_RPC_MODIFY_VOLUME:
+			// Reached with no mutable parameters on purpose: the probe is
+			// about the method existing, and an empty class is the one request
+			// that must succeed against every volume.
+			_, err := c.ControllerModifyVolume(ctx,
+				&csipb.ControllerModifyVolumeRequest{VolumeId: getVol})
+			probe(typ.String(), err)
 		case csipb.ControllerServiceCapability_RPC_GET_VOLUME_HEALTH:
 			_, err := c.ControllerGetVolumeHealth(ctx,
 				&csipb.ControllerGetVolumeHealthRequest{VolumeId: getVol})
@@ -121,6 +128,9 @@ func TestEveryAdvertisedControllerCapabilityIsImplemented(t *testing.T) {
 		csipb.ControllerServiceCapability_RPC_GET_VOLUME,
 		csipb.ControllerServiceCapability_RPC_GET_VOLUME_HEALTH,
 		csipb.ControllerServiceCapability_RPC_LIST_VOLUMES_PUBLISHED_NODES,
+		// MODIFY_VOLUME: dropping it makes every VolumeAttributesClass inert
+		// without any error anywhere — the resizer simply stops calling.
+		csipb.ControllerServiceCapability_RPC_MODIFY_VOLUME,
 	} {
 		if !seen[want] {
 			t.Errorf("%s must be advertised", want)

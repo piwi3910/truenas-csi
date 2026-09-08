@@ -436,6 +436,83 @@ storageClasses:
       # readIOPSLimit: ""
       # writeIOPSLimit: "500"
 
+# VolumeAttributesClass — changing a live volume's ZFS properties in place.
+#
+# This is the CSI MODIFY_VOLUME capability. A VolumeAttributesClass names ZFS
+# properties; putting its name in a PersistentVolumeClaim's
+# volumeAttributesClassName applies them to that ONE volume, without recreating
+# it and without unmounting it. Changing the name later re-applies; removing it
+# leaves the last values in place.
+#
+# Why it is worth having, in this driver's own measured numbers: 4 KiB random
+# writes on the reference pool run at 337 IOPS / 94.6 ms over NFS and 45,155
+# IOPS / 0.71 ms over iSCSI (docs/performance.md). Nearly all of that gap is
+# ZFS honouring synchronous writes on a RAIDZ2 pool with no SLOG. `sync` is a
+# per-dataset property, so an operator can make that trade on one claim and
+# reverse it afterwards.
+#
+# Requirements, all three, or a class is inert rather than broken:
+#   * Kubernetes >= 1.31 with the VolumeAttributesClass feature gate on and
+#     storage.k8s.io/v1beta1 served (kube-apiserver --runtime-config). The API
+#     graduates to storage.k8s.io/v1 in 1.34; set apiVersion accordingly.
+#   * csi-provisioner >= v5.0 and csi-resizer >= v1.11. Both are pinned above.
+#   * enabled: true here, which turns on those sidecars' feature gate and adds
+#     a read-only RBAC grant on volumeattributesclasses.
+#
+# The driver accepts a CLOSED SET of properties and refuses everything else by
+# name: sync, compression, atime and recordsize. Anything touching capacity
+# (quota, refquota, volsize) is deliberately absent — that is
+# ControllerExpandVolume's job — as is anything immutable on a zvol
+# (volblocksize). atime and recordsize apply to filesystem volumes (nfs, smb)
+# only; asking for them on an iSCSI or NVMe-oF volume is refused, because a
+# zvol has no filenames. See docs/volume-attributes.md.
+volumeAttributesClass:
+  enabled: false
+  # The API version this cluster serves. v1beta1 for Kubernetes 1.31-1.33,
+  # storage.k8s.io/v1 from 1.34.
+  apiVersion: storage.k8s.io/v1beta1
+  # Example classes, disabled by default exactly as the StorageClasses above
+  # are: what an operator wants here is site-specific, and one of them trades
+  # away durability.
+  classes:
+    fastWrites:
+      enabled: false
+      name: truenas-fast-writes
+      parameters:
+        # sync=disabled tells ZFS to acknowledge a write before it reaches
+        # stable storage. On the reference pool this is the difference between
+        # 337 and tens of thousands of write IOPS.
+        #
+        # WHAT IT COSTS: a power failure, kernel panic or appliance crash can
+        # lose writes the application was already told had succeeded — up to
+        # roughly five seconds of them. The filesystem itself stays consistent;
+        # the acknowledged data does not. Use it for volumes whose contents can
+        # be rebuilt — build caches, scratch space, a replica that resyncs from
+        # a leader — and never for the only copy of anything. The driver logs a
+        # WARNING naming the volume every time this is applied.
+        sync: disabled
+        # lz4 is close to free on CPU and reduces the bytes actually written,
+        # which helps the same workload a second time.
+        compression: lz4
+    durable:
+      enabled: false
+      name: truenas-durable
+      parameters:
+        # The way back. Applying this class to the same claim restores
+        # synchronous semantics on the next write; nothing is recreated and
+        # nothing is unmounted.
+        sync: always
+    archive:
+      enabled: false
+      name: truenas-archive
+      parameters:
+        # Filesystem volumes only (nfs, smb): a zvol has no filenames, so atime
+        # and recordsize do not exist on one and the driver refuses them there.
+        compression: zstd-9
+        atime: "off"
+        # Large records suit big sequential files and hurt small random writes.
+        recordsize: 1M
+
 # podmon exposes the driver's connectivity answers on a listener of its own,
 # alongside the CSI socket. It is a DRIVER EXTENSION, NOT CSI: the CSI
 # specification defines no such call.
