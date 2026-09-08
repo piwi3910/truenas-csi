@@ -103,11 +103,36 @@ healthy, dataset used/quota, iSCSI session count. Capacity and liveness, not
 performance. A user cannot answer "which PVC is causing the latency" from our
 metrics.
 
-**This translates directly.** TrueNAS exposes exactly the right data:
-`reporting.get_data` carries per-dataset and per-zvol read/write ops and bytes,
-and `pool.dataset.query` gives space. A `truenas_csi_volume_read_iops` family
-labelled with PVC/namespace is a bounded piece of work against APIs we already
-speak. This is the single highest-value gap in the list.
+**Correction, verified against the appliance on 2026-09-08.** An earlier draft of
+this document claimed TrueNAS exposes per-dataset and per-zvol read/write ops via
+`reporting.get_data`. **That is wrong.** `reporting.netdata_graphs` on 25.10.6
+returns exactly 40 graphs: `cpu`, `cputemp`, `memory`, `disk` (17 identifiers, all
+_physical devices_), `interface`, `load`, `uptime`, `arcsize` and ~24 other
+ARC/L2ARC counters, `disktemp`, and 6 `ups*`. There is **no** dataset, zvol or
+per-pool I/O graph, and `reporting.realtime` does not exist. The appliance cannot
+answer "how much I/O is this volume doing".
+
+The gap is therefore real but the fix is a different one, and arguably a better
+one: **measure per-volume I/O on the node, from kernel counters.** For iSCSI and
+NVMe the node has the block device and `/proc/diskstats` gives reads, writes,
+sectors and `io_ticks` — IOPS, bandwidth and service time. For NFS and SMB,
+`/proc/self/mountstats` gives per-mount byte and operation counts, and for NFS it
+gives per-operation RTT, i.e. real latency. The volume is already keyed by its
+mount path, so the PVC and namespace labels come for free.
+
+We already have this machinery: `internal/podmon/iocounters.go` reads exactly
+these two files. Extending it from a boolean "has there been I/O" to counters
+exported as Prometheus metrics is a smaller job than the appliance-polling design
+would have been.
+
+Two things this changes relative to Dell. In our favour: it costs the appliance
+nothing, where Dell's polls the array every 10-20s and needed a
+`MAX_CONCURRENT_QUERIES` cap after `dell/csm#1587` ("Observability for PowerFlex
+Creates Too Many Sessions"). Against us: we can only see volumes that are mounted
+somewhere, so an attached-but-idle or unmounted volume reports nothing, and a
+volume's series moves between node exporters when its pod reschedules. Dell's
+array-side view has neither problem. Both limitations must be documented rather
+than discovered.
 
 Worth stealing alongside it: their array-API **rate limiter and circuit breaker**
 (`X_CSI_METRICS_ARRAY_RATE_LIMIT`, `..._CB_THRESHOLD`) and metrics **leader

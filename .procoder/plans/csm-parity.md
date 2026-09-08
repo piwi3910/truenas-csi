@@ -106,9 +106,15 @@ implement `Publisher`.
 - **Task 5: the fence primitive.** The `Publisher` interface, all four backends,
   `ControllerPublishVolume`/`ControllerUnpublishVolume`, `PUBLISH_UNPUBLISH_VOLUME`,
   `attachRequired: true`, and the documented CSIDriver-recreation upgrade note.
-- **Task 6: per-volume performance metrics.** Read/write IOPS, bandwidth and
-  latency per volume from `reporting.get_data`, labelled with PVC and namespace,
-  plus a Grafana dashboard.
+- **Task 6: per-volume performance metrics — from NODE kernel counters, not the
+  appliance.** Verified on hardware 2026-09-08: `reporting.get_data` exposes 40
+  graphs and **none** is per-dataset or per-zvol, so the appliance cannot answer
+  this. Source the data from `/proc/diskstats` (iSCSI, NVMe) and
+  `/proc/self/mountstats` (NFS, SMB) in the node plugin, extending
+  `internal/podmon/iocounters.go`, labelled with PVC and namespace, plus a
+  Grafana dashboard. Document the two honest limitations: only mounted volumes
+  are visible, and a volume's series moves between node exporters when its pod
+  reschedules.
 
 ### Wave C — after Task 5
 

@@ -4,6 +4,7 @@ Box: 192.168.10.253, HTTP only (no TLS configured).
 Docs: http://192.168.10.253/api/docs/current/ — Sphinx, one page per method.
 
 ## API surface (881 documented JSON-RPC methods)
+
 Everything the driver needs exists:
 
 - Datasets/zvols: `pool.dataset.create|update|delete|query|get_instance`,
@@ -17,6 +18,7 @@ Everything the driver needs exists:
 - Jobs: `core.get_jobs`, `core.job_wait`, `core.job_abort`, `core.subscribe`
 
 ## Protocol constraints that shape the client
+
 - Error `-32000` = "too many concurrent calls" -> client needs a bounded in-flight semaphore.
 - Error `-32001` = "method call error"; the real cause is in `data.errname` / `data.error`
   (e.g. errno 207 = ENOTAUTHENTICATED). This is the mapping source for gRPC status codes.
@@ -24,26 +26,31 @@ Everything the driver needs exists:
   `state`, `progress`, `result` -> subscribe, do not poll.
 
 ## Schema constraints found so far
+
 - `iscsi.extent.create`: `name` max 64 chars; `type` DISK|FILE; for DISK the `disk` field
   takes the zvol; `blocksize` one of 512/1024/2048/4096. Constrains the volume naming scheme.
 
 ## RESOLVED: why API keys were being revoked
+
 TrueNAS error: **"API key revoked due to insecure transport."**
 
 25.10 revokes an API key the moment it is presented over a plaintext connection.
 The docs warn that `_PLAIN` auth mechanisms "should not be used on untrusted / insecure
 transport" — middleware enforces this by REVOKING the key, not by refusing the login.
-Three keys (5, 6, 7) were burned this way by connecting to `ws://` instead of `wss://`.
+Three keys (5, 6, 7) were burned this way by connecting over the plaintext
+WebSocket scheme instead of `wss://`.
 
 ### Hard requirements this creates for the driver
+
 1. **TLS is mandatory.** The client MUST use `wss://` and MUST refuse to start if
    configured with a plaintext URL. A plaintext connection does not merely fail — it
    destroys the credential, taking down every volume operation until an operator
    issues a new key by hand. Guard this at config-validation time, with a test.
 2. **Authentication failure is terminal.** Never retry a failed login; log and fail
-   fatally. Only *connection* failures may be retried with backoff.
+   fatally. Only _connection_ failures may be retried with backoff.
 
 ## TLS trust: the stock certificate is unusable for verification
+
 Default cert on this box (and on any fresh TrueNAS install):
 
     subject/issuer: C=US, O=iXsystems, CN=localhost   (self-signed)
@@ -105,6 +112,7 @@ returns only `0.0.0.0`, `::` and that one IP.
 All of it works. Pool0 returned to its original state; 0 leftover objects.
 
 ### Ownership marker — CONFIRMED, with a correction
+
 `pool.dataset.create` accepts `user_properties: [{"key": "io.truenas.csi:managed", "value": ...}]`
 and `pool.dataset.query` returns it with a `source` field. An unmarked dataset is cleanly
 distinguishable.
@@ -115,6 +123,7 @@ beneath it would inherit it and appear driver-owned. The delete guard must there
 require `source == "LOCAL"`, not merely that the property is present.
 
 ### Block path
+
 - `pool.dataset.recommended_zvol_blocksize("Pool0")` -> `128K`. Use it, don't hardcode.
 - Create zvol: `pool.dataset.create {type: VOLUME, volsize, sparse: true, volblocksize}`
 - Expand: `pool.dataset.update <id> {volsize: N}` — worked 1 GiB -> 2 GiB, no job needed.
@@ -128,6 +137,7 @@ require `source == "LOCAL"`, not merely that the property is present.
   `iscsi.extent.delete(id, true, true)`, `iscsi.portal.delete(id)`.
 
 ### Snapshots and clones — DESIGN CORRECTION
+
 - `pool.snapshot.create {dataset, name}` -> id `<dataset>@<name>`.
 - `pool.snapshot.clone {snapshot, dataset_dst}` -> clone with `origin` = the snapshot.
 - **`pool.dataset.promote` does NOT free the source. It INVERTS the dependency.**
@@ -143,6 +153,7 @@ require `source == "LOCAL"`, not merely that the property is present.
   order returns `EBUSY` with "dataset is busy" / "snapshot is cloned".
 
 ### Volume-from-volume cloning (not yet probed)
+
 CSI also allows cloning an existing volume, not just a snapshot. That requires an internal
 hidden snapshot, which then has to be garbage-collected when either volume goes away —
 a known source of leaks in other drivers. Needs an explicit design in the spec.
@@ -173,12 +184,14 @@ to log the version at startup; it would cost more privilege than everything else
 ## Node prerequisites (verified on worker-21, k3s 1.34, Armbian rockchip64 6.12.58)
 
 READY:
+
 - `iscsiadm` and `iscsid` at /host/sbin (open-iscsi installed)
 - Modules `iscsi_tcp`, `libiscsi`, `scsi_transport_iscsi` already LOADED
 - InitiatorName configured: `iqn.2004-10.com.ubuntu:01:4f9d1b17f9aa`
 - `mount.nfs`, `mkfs.ext4`, `blkid` present
 
 MISSING:
+
 - `multipath` / `multipathd` binaries absent; `dm_multipath` not loaded
   (module .ko IS on disk). Multipath cannot work without host packages -> reinforces
   "implemented but unvalidated", and becomes a documented prerequisite.
@@ -188,6 +201,7 @@ MISSING:
   but hosts will need nvme-cli.
 
 ### Design consequence: which tools come from the image vs the host
+
 - **Bundle in the node plugin image:** mkfs.ext4/mkfs.xfs, fsck, resize2fs/xfs_growfs.
   Filesystem tooling has no reason to be a host dependency, and bundling fixes the
   missing-mkfs.xfs problem outright.
@@ -229,20 +243,21 @@ signal, never as the primary decision input.
 
 Observed cases:
 
-| operation                    | code   | errname | real meaning |
-|------------------------------|--------|---------|--------------|
-| dataset already exists       | -32602 | EINVAL  | already exists ("Path ... already exists") |
-| delete nonexistent dataset   | -32602 | EINVAL  | ENOENT |
-| get_instance nonexistent     | -32602 | EINVAL  | ENOENT |
-| create in nonexistent pool   | -32602 | EINVAL  | bad config |
-| zvol > 80% of pool (thick)   | -32602 | EINVAL  | capacity refusal |
-| extent name > 64 chars       | -32602 | EINVAL  | validation |
-| snapshot of missing dataset  | -32001 | EFAULT  | ENOENT |
-| shrink zvol                  | -32602 | EINVAL  | refused outright |
-| extent for missing zvol      | -32602 | EINVAL  | ENOENT |
-| unknown method               | -32601 | (none)  | JSON-RPC standard |
+| operation                   | code   | errname | real meaning                               |
+| --------------------------- | ------ | ------- | ------------------------------------------ |
+| dataset already exists      | -32602 | EINVAL  | already exists ("Path ... already exists") |
+| delete nonexistent dataset  | -32602 | EINVAL  | ENOENT                                     |
+| get_instance nonexistent    | -32602 | EINVAL  | ENOENT                                     |
+| create in nonexistent pool  | -32602 | EINVAL  | bad config                                 |
+| zvol > 80% of pool (thick)  | -32602 | EINVAL  | capacity refusal                           |
+| extent name > 64 chars      | -32602 | EINVAL  | validation                                 |
+| snapshot of missing dataset | -32001 | EFAULT  | ENOENT                                     |
+| shrink zvol                 | -32602 | EINVAL  | refused outright                           |
+| extent for missing zvol     | -32602 | EINVAL  | ENOENT                                     |
+| unknown method              | -32601 | (none)  | JSON-RPC standard                          |
 
 Notes:
+
 - **Shrink is refused by middleware** ("You cannot shrink a zvol"). Matches CSI, where
   expansion is grow-only — ControllerExpandVolume must reject shrink before calling out.
 - **Thick zvols above 80% of free pool space are rejected.** Sparse provisioning avoids
@@ -255,6 +270,7 @@ Full path proven on real hardware, then fully torn down (Pool0 back to 19 datase
 0 iSCSI objects, node logged out, debug pods deleted).
 
 ### Device discovery is deterministic — no scanning needed
+
 The NAA returned by `iscsi.extent.create` maps directly to stable by-id symlinks:
 
     naa from API: 0x6589cfc000000a960e31390c2657efa7
@@ -266,6 +282,7 @@ other form. NodeStageVolume should resolve `/dev/disk/by-id/scsi-3<naa without 0
 must NOT scan /dev for new devices — scanning races with other drivers on the same node.
 
 ### Verified node sequence
+
     iscsiadm -m discovery -t sendtargets -p <portal>
     iscsiadm -m node -T <iqn> -p <portal>:3260 --login
     resolve /dev/disk/by-id/scsi-3<naa>  -> mkfs.ext4 -> mount -> read/write OK
@@ -273,6 +290,7 @@ must NOT scan /dev for new devices — scanning races with other drivers on the 
     iscsiadm -m node -o delete -T <iqn> -p <portal>:3260
 
 ### Online expansion VERIFIED (no unmount, data intact)
+
     pool.dataset.update <zvol> {volsize: 2GiB}      # controller side
     iscsiadm -m node -T <iqn> -R                    # node rescan
     blockdev --getsize64: 1073741824 -> 2147483648  # device grew live
@@ -288,6 +306,7 @@ worker-21 carries live Longhorn sessions (`iqn.2019-10.io.longhorn:pvc-...`) and
 records. Our driver shares `iscsid`, `/etc/iscsi` and `/var/lib/iscsi` with Longhorn.
 
 Rules this imposes:
+
 - NEVER use blanket operations: no `--logoutall=all`, no `-m node -o delete` without an
   explicit `-T <iqn> -p <portal>`, no global `iscsiadm -m session --rescan`.
 - Always scope every iscsiadm call to our specific target and portal.
@@ -302,6 +321,7 @@ Mounted from worker-21 as **nfs4 (vers=4.2)**; teardown left the box exactly as 
 (19 datasets, only the 3 pre-existing shares).
 
 ### FINDING 1 — a fresh dataset is root:root 0755; non-root pods CANNOT write
+
 Verified on the node: uid 1000 got "Permission denied" on the default dataset.
 This is the single most common NFS-CSI failure mode.
 
@@ -309,14 +329,15 @@ Fix verified: `filesystem.setperm {path, mode, uid, gid, options:{recursive}}`
 -> uid 1000 write then succeeded. **This is the ONE job-based method the driver needs.**
 
 Job semantics confirmed:
-    filesystem.setperm(...) -> returns an INT job id (e.g. 9615)
-    poll core.get_jobs [["id","=",<jobid>]] until state in SUCCESS|FAILED|ABORTED
+filesystem.setperm(...) -> returns an INT job id (e.g. 9615)
+poll core.get_jobs [["id","=",<jobid>]] until state in SUCCESS|FAILED|ABORTED
 
 Note `fsGroup` does NOT solve this — kubelet skips fsGroup ownership changes for NFS.
 Permissions must be set on the TrueNAS side at provisioning time, driven by StorageClass
 parameters (mode/uid/gid), not left to Kubernetes.
 
 ### FINDING 2 — without refquota, an NFS volume reports the WHOLE POOL
+
     no quota:        df -> 31T  (pool free space, for a "10Gi" PVC)
     refquota=10GiB:  df -> 10G  (correct)
 
@@ -326,6 +347,7 @@ entire pool. **Every NFS volume MUST get `refquota` set to the requested capacit
 Expansion for NFS = `pool.dataset.update {refquota: N}`, verified 5 GiB -> 10 GiB.
 
 ### FINDING 3 — shrink guards are ASYMMETRIC between backends
+
     zvol volsize 2GiB -> 1GiB : REFUSED by middleware
     refquota 10GiB -> 5GiB    : SILENTLY ALLOWED
 
@@ -333,11 +355,13 @@ So ControllerExpandVolume must reject shrink **in the driver** for the NFS path;
 will happily shrink a refquota below current usage. Do not rely on middleware to guard it.
 
 ### FINDING 4 — prefer NFSv4
+
 Mounting with `vers=3` caused systemd on the node to enable rpc-statd
 ("Created symlink .../rpc-statd.service") because v3 needs the separate lock manager.
 NFSv4 mounted with no such dependency. Default to `vers=4`, make it a StorageClass option.
 
 ### Verified node sequence (NFS)
+
     mount -t nfs -o vers=4 <nas>:/mnt/<pool>/<parent>/<vol> <target>
     ... read/write as non-root once setperm has run ...
     umount <target>
@@ -370,11 +394,12 @@ origin dataset. Consequences if unhandled:
    as FINDING 2 in the NFS section.
 
 **CreateVolume-from-snapshot must therefore explicitly, after cloning:**
-  - set the ownership marker via
-    `pool.dataset.update <id> {"user_properties_update":[{"key":..., "value":...}]}`  (verified)
-  - set `refquota` (filesystem) or confirm `volsize` (zvol) to the requested capacity
-  - run `filesystem.setperm` for NFS volumes (a clone's permissions come from the snapshot,
-    which may not match the new volume's StorageClass parameters)
+
+- set the ownership marker via
+  `pool.dataset.update <id> {"user_properties_update":[{"key":..., "value":...}]}` (verified)
+- set `refquota` (filesystem) or confirm `volsize` (zvol) to the requested capacity
+- run `filesystem.setperm` for NFS volumes (a clone's permissions come from the snapshot,
+  which may not match the new volume's StorageClass parameters)
 
 ## Node capability preflight (single uniform mechanism for ALL protocols)
 
@@ -386,20 +411,21 @@ mount error, and the node reports the gap in its readiness/status.
 
 Measured on worker-21 (Armbian rockchip64 6.12.58) — the current state of your nodes:
 
-| capability   | needs                              | present? | to install    |
-|--------------|------------------------------------|----------|---------------|
-| NFS          | `mount.nfs`                        | YES      | —             |
-| iSCSI        | `iscsiadm`, `iscsid`, `iscsi_tcp`  | YES (modules already loaded) | — |
-| ext4         | `mkfs.ext4`, `resize2fs`           | YES      | —             |
-| XFS          | `mkfs.xfs`, `xfs_growfs`           | **NO**   | `xfsprogs`    |
-| SMB          | `mount.cifs`, `cifs` module        | **NO** (cifs.ko on disk) | `cifs-utils` |
-| NVMe-oF      | `nvme`, `nvme_tcp` module          | **NO** (nvme-tcp.ko on disk) | `nvme-cli` |
-| multipath    | `multipath`, `multipathd`, `dm_multipath` | **NO** (dm-multipath.ko on disk) | `multipath-tools` |
+| capability | needs                                     | present?                         | to install        |
+| ---------- | ----------------------------------------- | -------------------------------- | ----------------- |
+| NFS        | `mount.nfs`                               | YES                              | —                 |
+| iSCSI      | `iscsiadm`, `iscsid`, `iscsi_tcp`         | YES (modules already loaded)     | —                 |
+| ext4       | `mkfs.ext4`, `resize2fs`                  | YES                              | —                 |
+| XFS        | `mkfs.xfs`, `xfs_growfs`                  | **NO**                           | `xfsprogs`        |
+| SMB        | `mount.cifs`, `cifs` module               | **NO** (cifs.ko on disk)         | `cifs-utils`      |
+| NVMe-oF    | `nvme`, `nvme_tcp` module                 | **NO** (nvme-tcp.ko on disk)     | `nvme-cli`        |
+| multipath  | `multipath`, `multipathd`, `dm_multipath` | **NO** (dm-multipath.ko on disk) | `multipath-tools` |
 
 Every missing item's kernel module IS present on disk — only userspace packages are
 absent, so enabling any of these is an apt install plus a module load, not a kernel change.
 
 Rules:
+
 - Probe binaries by absolute path in the host mount namespace, and modules via
   /proc/modules plus a modinfo/`.ko` existence check (available-but-not-loaded is a
   DIFFERENT state from unavailable, and is recoverable with modprobe).
@@ -416,22 +442,26 @@ Installed `cifs-utils` on worker-21, loaded the `cifs` module, mounted and wrote
     -> mounted, write OK, read back OK
 
 ### FINDING — SMB datasets use a DIFFERENT permission model to NFS
+
 `pool.dataset.create {share_type: "SMB"}` yields **mode 0770 with an NFSv4 ACL**
 (`filesystem.stat -> acl: true`), whereas a plain dataset is 0755 with no ACL.
 So SMB volumes need `filesystem.setacl`, NOT the `filesystem.setperm` used for NFS.
 The two file backends do not share a permissions path.
 
 ### FINDING — SMB ownership is a MOUNT-TIME concern
+
 The client mount reports `uid=0,noforceuid,gid=0,file_mode=0755,dir_mode=0755`.
 CIFS maps ownership client-side via mount options, so for SMB the uid/gid/mode a pod sees
 is set by NodeStageVolume mount options, not by anything done on TrueNAS. Opposite of NFS.
 
 ### SMB requires credentials
+
 An SMB share needs a real TrueNAS user (`user.create {..., smb: true}`). The driver must
 take SMB credentials from a Secret and write a credentials file for `mount.cifs` — never
 pass the password on the command line, where it is visible in the process table.
 
 ### SMB also reports the whole pool without a quota
+
 `df` showed 31T for the share. Same refquota requirement as NFS — it applies to every
 filesystem-backed volume, regardless of protocol.
 
@@ -451,6 +481,7 @@ Installed `nvme-cli`, loaded `nvme_tcp` (`/dev/nvme-fabrics` appeared), then:
           nvme disconnect -n <subnqn>
 
 ### FINDING — device resolution must key on the subsystem SERIAL
+
 worker-21 has its OWN local NVMe SSD at `/dev/nvme0n1` (Lexar NM620 2TB); our volume
 attached as `/dev/nvme1n1`. Never assume an index. The stable link is:
 
@@ -461,6 +492,7 @@ So match on the `serial` returned by `nvmet.subsys.create` (glob `nvme-*_<serial
 not on the model string, which differs per appliance.
 
 ### FINDING — volblocksize surfaces as physical sector size
+
 `mkfs.xfs` warned: "specified blocksize 4096 is less than device physical sector size
 16384; switching to logical sector size 512". The zvol's `volblocksize` is visible to the
 initiator as physical sector size and interacts with filesystem creation. Block-size
@@ -468,14 +500,18 @@ choice is therefore not purely a performance knob — document it and pick defau
 deliberately.
 
 ### Production note
+
 The probe used `allow_any_host: true`. Production should register host NQNs via
 `nvmet.host` + `nvmet.host_subsys` — the NVMe equivalent of iSCSI initiator groups —
 and optionally DH-CHAP (`nvmet.host.generate_key`).
 
 ## Final state after ALL probing
+
 Pool0: 19 datasets (unchanged). NFS shares: 3 (original). SMB shares: 10 (original).
 iSCSI extents/targets/portals: 0. nvmet subsys/ports/namespaces: 0. Probe user removed.
+
 ### Cluster brought to a uniform baseline (all 8 nodes)
+
 `cifs-utils`, `nvme-cli` and `xfsprogs` installed on every node
 (master-11/12/13, worker-21..25); `cifs` and `nvme_tcp` loaded on each. Verified:
 all report "MISSING: none". So XFS, SMB and NVMe/TCP are available cluster-wide.
@@ -486,9 +522,76 @@ blacklisted first. Installing it is a separate, deliberate change requiring a
 `/etc/multipath.conf` blacklist — not a side effect of a probe.
 
 ### Kernel module loading — DECIDED
+
 The node plugin `modprobe`s what it needs at startup (cifs, nvme_tcp, iscsi_tcp,
 and dm_multipath when multipath is enabled) and reports anything it could not load.
 Rationale: self-healing, works on any node the DaemonSet lands on, and a newly added
 node needs no manual host config. Nothing is written to `/etc/modules-load.d`, so the
 modules loaded during probing will NOT survive a reboot until the driver loads them —
 which is the intended behaviour, not a gap.
+
+## Reporting, client lists and share ACLs (verified 2026-09-08, 25.10.6)
+
+Auth: the appliance's admin account here is **`truenas_admin`**, not `root`, `admin`
+or `csi`. An API key is bound to a user; the wrong username yields
+`response_type=AUTH_ERR` from `auth.login_ex` even when the key is valid. That is a
+rejection, not a revocation — the key survives, because the connection was `wss://`.
+
+### reporting.get_data cannot answer per-volume questions
+
+`reporting.netdata_graphs` returns exactly **40 graphs** and **none is per-dataset,
+per-zvol or per-pool I/O**:
+
+    cpu, cputemp, memory, disk (17 ids: PHYSICAL devices sdc, nvme0n1, ...),
+    interface (2 NICs), load, uptime, arcsize, arcfreememory, arcavailablememory,
+    ~24 demand*/l2arc* ARC counters, disktemp (17 ids), ups* (6)
+
+`reporting.graphs` returns the same payload. `reporting.realtime` does not exist
+(`jsonrpc -32601`). So per-volume IOPS/bandwidth/latency **cannot** come from the
+appliance; it must be measured node-side from `/proc/diskstats` and
+`/proc/self/mountstats`. Do not go looking for a dataset graph again.
+
+Request shape is `[[{"name":"cpu"}], {"start":<unix>,"end":<unix>}]` — the window is
+one object, not two positional arguments. Response:
+`[{"name","identifier","data":[[unix_ts, v1, v2, ...], ...]}]`.
+
+### NFS client list: use the v4 call
+
+`nfs.get_nfs3_clients` returns `[]` when exports are v4 — it is not "no clients", it
+is the wrong call. `nfs.get_nfs4_clients` is the real one and gives liveness per
+client:
+
+    [{"id":"3","info":{"clientid":<int>,"address":"192.168.10.102:666",
+      "status":"confirmed","seconds from last renew":14,
+      "name":"Linux NFSv4.2 <hostname>","minor version":2,
+      "callback state":"UP","callback address":"192.168.10.102:0",
+      "admin-revoked states":0},"states":[]}]
+
+`address` is `host:port` and must be split. Several keys contain **spaces**
+(`"seconds from last renew"`, `"minor version"`, `"callback state"`) and need
+explicit struct tags. `seconds from last renew` is the freshness signal a
+connectivity check should use.
+
+Counts: `nfs.client_count` and `iscsi.global.client_count` both return a bare
+integer.
+
+### Share access lists, and the empty-list trap
+
+`sharing.nfs.query` has **two independent flat top-level arrays**, `hosts` and
+`networks`. Access is unrestricted only when **both** are empty — and that is the
+live state of shares 1 and 2 on this appliance today. Emptying `hosts` to revoke a
+node does not fence it if `networks` is also empty; it exports to everyone. Any
+per-node revoke must assert on both fields.
+
+`sharing.smb.query` keeps its host lists **nested under `options`**
+(`options.hostsallow`, `options.hostsdeny`), and `options` carries many unrelated
+sibling keys that vary by `purpose` (`DEFAULT_SHARE` is small, `LEGACY_SHARE` adds
+recyclebin, guestok, streams, durablehandle, shadowcopy, timemachine, ...). Updating
+the host lists requires a read-modify-write of the whole `options` object; sending a
+fresh one wipes the rest of the share's configuration.
+
+### Still unverified
+
+`iscsi.global.sessions` returns `[]` and `iscsi.global.client_count` returns `0`
+while nothing is attached. The call is correct; the **populated element shape is
+unverified** and needs a run with a LUN actually attached.
