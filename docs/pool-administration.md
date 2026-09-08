@@ -31,8 +31,10 @@ Inside the cluster, run it in the controller pod, which already has the
 configuration mounted:
 
 ```sh
+# The image is a scratch image: the binary is at /truenas-csi and there is no
+# shell and no PATH, so it has to be named by its absolute path.
 kubectl exec -n truenas-csi deploy/truenas-csi-controller -c truenas-csi -- \
-  truenas-csi pool status
+  /truenas-csi pool status
 ```
 
 Credentials come from the configuration file and never from an argument: an API
