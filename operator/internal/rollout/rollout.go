@@ -37,6 +37,23 @@ type NodeState struct {
 	BusyReason string
 }
 
+// DaemonSetState is what the node DaemonSet itself says about how many nodes it
+// targets. It is the only thing that can tell "no pods yet" apart from "no
+// nodes to run on", and those two need opposite answers.
+type DaemonSetState struct {
+	// Desired is status.desiredNumberScheduled: the number of nodes the
+	// DaemonSet's own controller has decided this DaemonSet belongs on, after
+	// node selectors, affinity and taints.
+	Desired int
+	// Observed is true when the DaemonSet controller has caught up with the
+	// spec — status.observedGeneration >= metadata.generation — and false when
+	// the DaemonSet has not been read back at all. A Desired of 0 means
+	// "nothing to run here" only when it was actually observed; before that it
+	// is simply an unfilled status field, and reading it as a finished rollout
+	// is how a first install declares itself ready before any node plugin runs.
+	Observed bool
+}
+
 // Plan is what the operator should do next.
 type Plan struct {
 	// Roll is the set of plugin pods to delete now. It holds at most one entry:
@@ -55,23 +72,59 @@ type Plan struct {
 //
 // The rules, in order:
 //
+//  0. If the DaemonSet has not been observed, or has fewer pods than it means
+//     to have, wait. See below.
 //  1. If a node was already rolled and its new plugin is not Ready yet, wait.
 //     Rolling a second node now would leave two nodes without a plugin.
 //  2. Otherwise take the first out-of-date node that is not busy and roll it.
 //  3. If every out-of-date node is busy, wait and say which node and why.
 //
+// Rule 0 is the one that is easy to get wrong, and getting it wrong is what
+// made a first install report Ready with no node plugin running anywhere. A
+// DaemonSet with no pods is ambiguous on its own: it may be one whose pods have
+// not been created yet, or one that legitimately targets no node at all because
+// a nodeSelector excludes every one of them. The two need OPPOSITE answers —
+// the first is a rollout still in progress, the second is a finished rollout
+// with nothing in it — and the DaemonSet's own status is what separates them.
+// Treating either as the other swaps one wrong answer for another.
+//
 // Nodes are considered in name order so that a rollout interrupted by an
 // operator restart resumes deterministically instead of picking a new victim.
-func Next(nodes []NodeState) Plan {
+func Next(nodes []NodeState, ds DaemonSetState) Plan {
 	ordered := make([]NodeState, len(nodes))
 	copy(ordered, nodes)
 	sort.Slice(ordered, func(i, j int) bool { return ordered[i].Name < ordered[j].Name })
 
-	plan := Plan{Total: len(ordered)}
+	// Total is what the DaemonSet means to run, not what happens to exist:
+	// during a first install the second number is still climbing towards the
+	// first, and a progress display of 0/0 hides exactly that.
+	total := ds.Desired
+	if len(ordered) > total {
+		// More pods than the DaemonSet wants — a node draining, or a pod the
+		// DaemonSet has decided to remove. Counting the ones that are really
+		// there keeps Updated <= Total.
+		total = len(ordered)
+	}
+	plan := Plan{Total: total}
+	// Counted before rule 0 returns, so a rollout that is still waiting for
+	// pods still reports the progress it has made.
 	for _, n := range ordered {
 		if n.UpToDate && n.Ready {
 			plan.Updated++
 		}
+	}
+
+	// Rule 0. An unobserved DaemonSet has an empty status, and an empty status
+	// is not a report of zero nodes.
+	if !ds.Observed {
+		plan.WaitingFor = "waiting for the node DaemonSet to report which nodes it targets"
+		return plan
+	}
+	if missing := ds.Desired - len(ordered); missing > 0 {
+		plan.WaitingFor = fmt.Sprintf(
+			"waiting for the node DaemonSet to create its pods (%d of %d node(s) have none)",
+			missing, ds.Desired)
+		return plan
 	}
 
 	// Rule 1: never overlap. An up-to-date pod that is not ready is a node

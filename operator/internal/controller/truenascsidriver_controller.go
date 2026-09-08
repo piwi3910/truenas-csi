@@ -489,6 +489,39 @@ func (r *TrueNASCSIDriverReconciler) controllerState(ctx context.Context, ns str
 	return true, true, nil
 }
 
+// nodeDaemonSetState reads how many nodes the node DaemonSet targets, and
+// whether that number has been reported at all.
+//
+// The distinction it carries is the difference between a rollout that has not
+// started and one that has nothing to do. A DaemonSet whose pods have not been
+// created yet and a DaemonSet excluded from every node by a nodeSelector both
+// show zero pods; only status.desiredNumberScheduled, and only once the
+// DaemonSet controller has observed the current generation, tells them apart.
+//
+// A DaemonSet that is not there yet — the very first reconcile, before the
+// apply has been read back — is reported as unobserved rather than as zero
+// nodes, for the same reason controllerState treats a missing Deployment as
+// "not updated": an object nobody has seen says nothing about the cluster.
+func (r *TrueNASCSIDriverReconciler) nodeDaemonSetState(ctx context.Context, ns string) (rollout.DaemonSetState, error) {
+	list := &appsv1.DaemonSetList{}
+	if err := r.List(ctx, list, client.InNamespace(ns),
+		client.MatchingLabels{"app.kubernetes.io/component": "node"}); err != nil {
+		return rollout.DaemonSetState{}, err
+	}
+	state := rollout.DaemonSetState{Observed: len(list.Items) > 0}
+	for i := range list.Items {
+		d := &list.Items[i]
+		if d.Status.ObservedGeneration < d.Generation {
+			// The status still describes the previous pod template. Its
+			// desiredNumberScheduled may be right, but nothing here may assume
+			// it is.
+			state.Observed = false
+		}
+		state.Desired += int(d.Status.DesiredNumberScheduled)
+	}
+	return state, nil
+}
+
 // nodeRolloutResult is what rollNodes learned.
 type nodeRolloutResult struct {
 	Updated     int
@@ -539,18 +572,18 @@ func (r *TrueNASCSIDriverReconciler) rollNodes(
 		})
 	}
 
-	plan := rollout.Next(states)
+	ds, err := r.nodeDaemonSetState(ctx, ns)
+	if err != nil {
+		return nodeRolloutResult{}, err
+	}
+
+	plan := rollout.Next(states, ds)
 	res := nodeRolloutResult{
 		Updated:     plan.Updated,
 		Total:       plan.Total,
 		Done:        plan.Done,
 		WaitingFor:  plan.WaitingFor,
 		CurrentNode: rollout.CurrentNode(states, plan),
-	}
-	if len(states) == 0 {
-		// The DaemonSet was only just applied; its pods do not exist yet.
-		res.WaitingFor = "waiting for the node DaemonSet to create its pods"
-		return res, nil
 	}
 	for _, podName := range plan.Roll {
 		logger.Info("rolling node plugin", "pod", podName, "node", res.CurrentNode, "revision", revision)

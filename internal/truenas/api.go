@@ -62,6 +62,7 @@ type API interface {
 	// side knows it.
 	ReportingGetData(ctx context.Context, q []ReportingQuery, start, end time.Time) ([]ReportingSeries, error)
 	ISCSISessions(ctx context.Context) ([]ISCSISession, error)
+	NVMeSessions(ctx context.Context) ([]NVMeSession, error)
 	NFSClients(ctx context.Context) ([]NFSClient, error)
 	// The appliance's own client counts: one call, one integer, cheap enough to
 	// poll as a health signal.

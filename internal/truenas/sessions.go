@@ -189,6 +189,76 @@ type nfs4Client struct {
 	} `json:"info"`
 }
 
+// NVMeSession is one live NVMe-oF connection as the appliance sees it.
+//
+// It is the NVMe analogue of ISCSISession and exists for the same reason:
+// during a fence the node's own kernel is the least trustworthy witness to what
+// the node is still holding, while the target knows exactly which controllers
+// are connected to it.
+//
+// The field names come from the published schema at
+// https://192.168.10.253/api/docs/current/api_methods_nvmet.global.sessions.html
+// (host_traddr, hostnqn, subsys_id, port_id, ctrl) on 25.10.5.
+//
+// UNVERIFIED: the shape of a POPULATED element. That schema is the appliance's
+// own, but no NVMe-oF initiator was attached when it was read, so the exact
+// rendering of host_traddr — a bare address, or "host:port" as the NFSv4 client
+// listing uses — is unconfirmed. The hardware check: connect a node to an
+// exported subsystem and call nvmet.global.sessions. HostAddr is parsed through
+// the same host-only helper the NFS listing uses, so a "host:port" rendering
+// still matches; one carrying a transport suffix would not.
+type NVMeSession struct {
+	// HostNQN is the initiator's NQN, matching the node's advertised host NQN.
+	HostNQN string
+	// HostAddr is the initiator's address, without a port. It is the fallback
+	// identity when a node's NQN is unknown, and the cross-check when it is
+	// known.
+	HostAddr string
+	// SubsysID is the id of the subsystem on this appliance the host is
+	// connected to. This driver creates one subsystem per volume, so unlike an
+	// iSCSI session an NVMe session names the volume as well as the node —
+	// which the connectivity service does not yet exploit, because it would
+	// have to map a volume handle to a subsystem id to do so.
+	SubsysID int
+	// PortID is the id of the port the host reached the subsystem through.
+	PortID int
+	// Controller is the NVMe controller number of this connection. It is
+	// carried for diagnostics; nothing matches on it.
+	Controller int
+}
+
+// NVMeSessions lists every live NVMe-oF connection, across all subsystems.
+//
+// Without it an NVMe-oF volume is permanently unfenceable: the fencing path
+// refuses to act on a connectivity answer it could not obtain, which is the
+// safe direction, but a real outage when the appliance could have answered all
+// along.
+func (c *Ops) NVMeSessions(ctx context.Context) ([]NVMeSession, error) {
+	var out []nvmeSession
+	if err := c.CallJSON(ctx, &out, "nvmet.global.sessions"); err != nil {
+		return nil, err
+	}
+	sessions := make([]NVMeSession, 0, len(out))
+	for _, s := range out {
+		sessions = append(sessions, NVMeSession{
+			HostNQN:    strings.TrimSpace(s.HostNQN),
+			HostAddr:   hostOnly(strings.TrimSpace(s.HostTRAddr)),
+			SubsysID:   s.SubsysID,
+			PortID:     s.PortID,
+			Controller: s.Ctrl,
+		})
+	}
+	return sessions, nil
+}
+
+type nvmeSession struct {
+	HostTRAddr string `json:"host_traddr"`
+	HostNQN    string `json:"hostnqn"`
+	SubsysID   int    `json:"subsys_id"`
+	PortID     int    `json:"port_id"`
+	Ctrl       int    `json:"ctrl"`
+}
+
 // hostOnly strips the port from an "ip:port" pair, leaving a bare address alone.
 func hostOnly(addr string) string {
 	if addr == "" {

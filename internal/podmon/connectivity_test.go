@@ -12,18 +12,24 @@ import (
 	"github.com/piwi3910/truenas-csi/internal/volume"
 )
 
-// fakeSessions stands in for the appliance. It answers the two "who is
+// fakeSessions stands in for the appliance. It answers the three "who is
 // attached?" calls and nothing else, which is the whole point of the narrow
 // Sessions interface.
 type fakeSessions struct {
 	iscsi    []truenas.ISCSISession
+	nvme     []truenas.NVMeSession
 	nfs      []truenas.NFSClient
 	iscsiErr error
+	nvmeErr  error
 	nfsErr   error
 }
 
 func (f fakeSessions) ISCSISessions(context.Context) ([]truenas.ISCSISession, error) {
 	return f.iscsi, f.iscsiErr
+}
+
+func (f fakeSessions) NVMeSessions(context.Context) ([]truenas.NVMeSession, error) {
+	return f.nvme, f.nvmeErr
 }
 
 func (f fakeSessions) NFSClients(context.Context) ([]truenas.NFSClient, error) {
@@ -57,11 +63,22 @@ func mustID(t *testing.T, s string) volume.ID {
 	return id
 }
 
-// worker21 is the node under test throughout: one address, one IQN.
+// worker21 is the node under test throughout: one address, one IQN, and
+// deliberately NO host NQN — most nodes in a cluster that never ran an NVMe-oF
+// volume have none.
 var worker21 = backend.NodeRef{
 	ID:    "worker-21",
 	Addrs: []string{"192.168.10.21"},
 	IQN:   "iqn.2005-10.org.freenas.ctl:worker-21",
+}
+
+// worker21NVMe is the same node with its NVMe host NQN known, which is what the
+// node plugin annotates once it has an NVMe-oF volume to stage.
+var worker21NVMe = backend.NodeRef{
+	ID:    worker21.ID,
+	Addrs: worker21.Addrs,
+	IQN:   worker21.IQN,
+	NQN:   "nqn.2014-08.org.nvmexpress:uuid:worker-21",
 }
 
 // TestVerdictNeverTreatsAnUnknownAsSafeToFence is the load-bearing test of this
@@ -184,9 +201,11 @@ func TestSafeToFenceRefusesAnEmptySetOfReports(t *testing.T) {
 // same export.
 func TestCheckReadsTheApplianceAndAttributesSessionsToTheRightNode(t *testing.T) {
 	cases := []struct {
-		name       string
-		volumeID   string
-		sessions   fakeSessions
+		name     string
+		volumeID string
+		sessions fakeSessions
+		// node overrides the node under test; the zero value means worker21.
+		node       *backend.NodeRef
 		wantKind   SignalKind
 		wantState  State
 		wantSafe   bool
@@ -259,10 +278,50 @@ func TestCheckReadsTheApplianceAndAttributesSessionsToTheRightNode(t *testing.T)
 			wantState: StateUnknown,
 		},
 		{
-			name:      "nvme: the session call exists on the appliance but not on this driver's API",
+			name:      "nvme: this node still holds a controller, matched by host NQN",
 			volumeID:  "nas1/nvme/tank/k8s/pvc-a",
+			node:      &worker21NVMe,
+			sessions:  fakeSessions{nvme: []truenas.NVMeSession{{HostNQN: worker21NVMe.NQN, SubsysID: 3, Controller: 7}}},
+			wantKind:  SignalNVMeSession,
+			wantState: StateConnected,
+		},
+		{
+			name:      "nvme: this node still holds a controller, matched by address",
+			volumeID:  "nas1/nvme/tank/k8s/pvc-a",
+			node:      &worker21NVMe,
+			sessions:  fakeSessions{nvme: []truenas.NVMeSession{{HostAddr: "192.168.10.21", SubsysID: 3, Controller: 7}}},
+			wantKind:  SignalNVMeSession,
+			wantState: StateConnected,
+		},
+		{
+			// The point of the whole exercise: an NVMe-oF volume can now be
+			// fenced, on positive evidence, instead of being permanently stuck.
+			name:     "nvme: another node holds a controller, this one does not",
+			volumeID: "nas1/nvme/tank/k8s/pvc-a",
+			node:     &worker21NVMe,
+			sessions: fakeSessions{nvme: []truenas.NVMeSession{
+				{HostNQN: "nqn.2014-08.org.nvmexpress:uuid:worker-99", HostAddr: "192.168.10.99", SubsysID: 4}}},
+			wantKind:  SignalNVMeSession,
+			wantState: StateDisconnected,
+			wantSafe:  true,
+		},
+		{
+			// A node with no NQN annotation cannot be found in a listing keyed
+			// by NQN, and "not found" must not become "not there".
+			name:      "nvme: the node advertises no host NQN, so absence proves nothing",
+			volumeID:  "nas1/nvme/tank/k8s/pvc-a",
+			sessions:  fakeSessions{nvme: []truenas.NVMeSession{{HostNQN: "nqn.other", HostAddr: "192.168.10.99"}}},
 			wantKind:  SignalNVMeSession,
 			wantState: StateUnknown,
+		},
+		{
+			name:       "nvme: the appliance refused to answer",
+			volumeID:   "nas1/nvme/tank/k8s/pvc-a",
+			node:       &worker21NVMe,
+			sessions:   fakeSessions{nvmeErr: errors.New("websocket is closed")},
+			wantKind:   SignalNVMeSession,
+			wantState:  StateUnknown,
+			wantErrors: true,
 		},
 		{
 			name:       "iscsi: the appliance refused to answer",
@@ -276,11 +335,15 @@ func TestCheckReadsTheApplianceAndAttributesSessionsToTheRightNode(t *testing.T)
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			node := worker21
+			if tc.node != nil {
+				node = *tc.node
+			}
 			c := &Connectivity{
-				Nodes:      fakeNodes{ref: worker21},
+				Nodes:      fakeNodes{ref: node},
 				Appliances: fakeAppliances{sessions: tc.sessions},
 			}
-			reports := c.Check(context.Background(), worker21.ID, []volume.ID{mustID(t, tc.volumeID)})
+			reports := c.Check(context.Background(), node.ID, []volume.ID{mustID(t, tc.volumeID)})
 			if len(reports) != 1 {
 				t.Fatalf("want one report, got %d", len(reports))
 			}
@@ -308,6 +371,57 @@ func TestCheckReadsTheApplianceAndAttributesSessionsToTheRightNode(t *testing.T)
 				t.Error("the report does not state that per-volume I/O is unobservable")
 			}
 		})
+	}
+}
+
+// TestNVMeIsNeverFencedOnAnAnswerWeDoNotHave pins the NVMe half of the safety
+// property, in both directions.
+//
+// NVMe-oF was unfenceable for a missing method rather than a real limitation,
+// and closing that gap moved it from "never fenced" to "fenced on evidence".
+// The failure mode that creates is the one this test exists to prevent: a
+// future change that treats a missing or unattributable NVMe answer as
+// permission. Every state except a positive StateDisconnected must refuse, and
+// SignalNVMeSession must never join subsumedUnobservable — nothing else in a
+// report observes an NVMe controller, so no other signal could stand in for it.
+func TestNVMeIsNeverFencedOnAnAnswerWeDoNotHave(t *testing.T) {
+	for _, state := range []State{StateUnknown, StateConnected, StateUnobservable} {
+		t.Run(state.String(), func(t *testing.T) {
+			r := Report{
+				NodeID:   worker21.ID,
+				VolumeID: "nas1/nvme/tank/k8s/pvc-a",
+				Signals: []Signal{
+					{Kind: SignalNVMeSession, State: state, Reason: "seeded"},
+					checkVolumeIO(),
+				},
+			}
+			if v := r.Verdict(); v.SafeToFence {
+				t.Fatalf("an NVMe signal in state %s was called safe to fence: %s", state, v.Reason)
+			}
+		})
+	}
+
+	// The one state that may fence, so the test above cannot pass by refusing
+	// everything.
+	fenceable := Report{
+		NodeID:   worker21.ID,
+		VolumeID: "nas1/nvme/tank/k8s/pvc-a",
+		Signals: []Signal{
+			{Kind: SignalNVMeSession, State: StateDisconnected, Reason: "no controller from this host"},
+			checkVolumeIO(),
+		},
+	}
+	if v := fenceable.Verdict(); !v.SafeToFence {
+		t.Fatalf("a positively disconnected NVMe volume is still unfenceable: %s", v.Reason)
+	}
+
+	// And the structural half: the subsumption list is the only way an
+	// unobservable signal can stop blocking, so it must not grow an NVMe entry.
+	for _, kind := range subsumedUnobservable {
+		if kind == SignalNVMeSession {
+			t.Fatal("SignalNVMeSession was added to subsumedUnobservable. No other signal in a " +
+				"report observes an NVMe controller, so nothing can vouch for what it would have vetoed.")
+		}
 	}
 }
 
@@ -397,7 +511,7 @@ func TestConnectivityIsSourcedFromTheApplianceNotTheNode(t *testing.T) {
 				"answering, and that is the only situation fencing exists for.", banned)
 		}
 	}
-	for _, required := range []string{"ISCSISessions(ctx)", "NFSClients(ctx)"} {
+	for _, required := range []string{"ISCSISessions(ctx)", "NVMeSessions(ctx)", "NFSClients(ctx)"} {
 		if !strings.Contains(body, required) {
 			t.Errorf("connectivity.go no longer calls %s: it is not asking the appliance anything", required)
 		}

@@ -43,6 +43,20 @@ func (c *Client) ISCSISessions(context.Context) ([]truenas.ISCSISession, error) 
 	return nil, fmt.Errorf("iscsi.global.sessions: %w", ErrNotSupported)
 }
 
+// NVMeSessions is not available on CORE.
+//
+// This one is not a routing problem: TrueNAS CORE is FreeBSD-based and has no
+// nvmet namespace at all, so there is nothing to route to. It refuses for the
+// same reason as the rest — a fencing controller reads an empty session list as
+// "that node has let go", and CORE cannot honestly say that.
+//
+// UNVERIFIED: that no CORE release exposes any NVMe-oF target surface. The
+// hardware check is core.get_methods on a CORE appliance, looking for an nvmet
+// (or ctld NVMe) namespace.
+func (c *Client) NVMeSessions(context.Context) ([]truenas.NVMeSession, error) {
+	return nil, fmt.Errorf("nvmet.global.sessions: %w", ErrNotSupported)
+}
+
 // ISCSIClientCount is not available on CORE.
 //
 // UNVERIFIED: same routing problem as ISCSISessions — the generic router would
