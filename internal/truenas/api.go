@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/piwi3910/truenas-csi/internal/config"
 )
@@ -54,6 +55,18 @@ type API interface {
 	SnapshotCreateRecursive(ctx context.Context, dataset, name string) (*Snapshot, error)
 	// ISCSISessionCount reports how many initiators are attached, for metrics.
 	ISCSISessionCount(ctx context.Context) (int, error)
+
+	// The connectivity and performance queries. These answer FROM THE
+	// APPLIANCE, which is what makes them usable during a fence: a node that
+	// has stopped answering can still be holding a session, and only the target
+	// side knows it.
+	ReportingGetData(ctx context.Context, q []ReportingQuery, start, end time.Time) ([]ReportingSeries, error)
+	ISCSISessions(ctx context.Context) ([]ISCSISession, error)
+	NFSClients(ctx context.Context) ([]NFSClient, error)
+	// The appliance's own client counts: one call, one integer, cheap enough to
+	// poll as a health signal.
+	ISCSIClientCount(ctx context.Context) (int, error)
+	NFSClientCount(ctx context.Context) (int, error)
 
 	// SMB datasets carry an NFSv4 ACL rather than a mode, and NVMe-oF volumes
 	// are served through nvmet objects. Both are transport-agnostic middleware
