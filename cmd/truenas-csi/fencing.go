@@ -44,6 +44,19 @@ func startFencing(ctx context.Context, o options, reg *backend.Registry,
 			"revoke access the other had just checked")
 		return
 	}
+	// Defence in depth. Today this cannot trigger -- the node resolver and the
+	// lease below are both built from the same in-cluster config, so if one
+	// works the other does -- but fencing revokes a failed node's storage
+	// access and force-deletes its pods, and it must not depend on two
+	// unrelated code paths happening to fail together. A resolver that cannot
+	// see the cluster's Node objects cannot describe the node being fenced.
+	if !backend.ClusterScoped(nodes) {
+		slog.Error("pod fencing disabled: the node resolver cannot read the cluster's Node objects, " +
+			"so it cannot describe the node being fenced. This driver is not running with in-cluster " +
+			"credentials")
+		return
+	}
+
 	leader, err := obs.InClusterLeaderConfig(o.fencingLease)
 	if err != nil {
 		slog.Error("pod fencing disabled: no in-cluster API access for the fencing lease",

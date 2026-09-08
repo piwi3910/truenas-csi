@@ -36,8 +36,21 @@ func NewController(reg *backend.Registry, cfg *config.Config) csipb.ControllerSe
 		}
 		return backendPaths{pool: b.Pool, parent: b.ParentDataset}, nil
 	}
-	return &controller{reg: reg, cfg: cfg, locks: NewVolumeLocks(),
-		nodes: backend.NewNodeResolver(cfg.NodeID)}
+	return NewControllerWithNodes(reg, cfg, backend.NewNodeResolver(cfg.NodeID))
+}
+
+// NewControllerWithNodes is NewController with the node resolver supplied.
+//
+// The resolver decides which machine an appliance-side access grant names, so
+// it is the one dependency a caller outside a cluster cannot inherit: the
+// in-cluster path falls back to LocalNodeResolver, which answers with the
+// calling process's OWN interfaces. That is correct for a single-host
+// deployment and wrong for the end-to-end suite, which runs on a workstation
+// and publishes to a cluster node -- it would grant the workstation and leave
+// the real node fenced out. Such callers pass a cluster-scoped resolver here.
+func NewControllerWithNodes(reg *backend.Registry, cfg *config.Config,
+	nodes backend.NodeResolver) csipb.ControllerServer {
+	return &controller{reg: reg, cfg: cfg, locks: NewVolumeLocks(), nodes: nodes}
 }
 
 func (c *controller) ControllerGetCapabilities(context.Context, *csipb.ControllerGetCapabilitiesRequest) (*csipb.ControllerGetCapabilitiesResponse, error) {

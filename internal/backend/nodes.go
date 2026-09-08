@@ -50,8 +50,17 @@ type NodeResolver interface {
 func NewNodeResolver(selfNodeID string) NodeResolver {
 	r, err := NewKubeNodeResolver()
 	if err != nil {
-		obs.Logger(context.Background()).Info(
-			"no Kubernetes API available for node resolution; per-node grants will only be issued for this driver's own node id",
+		// Warn, not Info. In a pod this cannot happen: rest.InClusterConfig
+		// reads only the service-account token and the KUBERNETES_SERVICE_*
+		// environment, and never contacts the API server, so an API outage does
+		// not land here -- only running outside Kubernetes does. If this line
+		// appears in a cluster something is wrong with the deployment, and the
+		// consequence is not cosmetic: every publish for a node other than this
+		// process's own is refused as NotFound, so pods do not start.
+		obs.Logger(context.Background()).Warn(
+			"no Kubernetes API available for node resolution: per-node grants can only be issued "+
+				"for this process's own node id, every other publish will be refused as NotFound, "+
+				"and pod fencing will not run",
 			"node_id", selfNodeID, "reason", err)
 		return NewLocalNodeResolver(selfNodeID)
 	}
@@ -70,6 +79,18 @@ type KubeNodeResolver struct {
 	// NotFound from an empty cache would fence a healthy node.
 	syncOnce sync.Once
 	synced   func(context.Context) error
+}
+
+// NewKubeNodeResolverFor builds a resolver over an existing clientset.
+//
+// It exists for callers that already hold credentials the in-cluster path
+// cannot produce -- notably the node-side end-to-end suite, which runs outside
+// the cluster against a kubeconfig and must resolve the REAL addresses of the
+// node it mounts from. Without it such a test can only reach LocalNodeResolver,
+// which answers with the test machine's own interfaces, so a publish would
+// grant the laptop and the cluster node would still be fenced out.
+func NewKubeNodeResolverFor(cs kubernetes.Interface) *KubeNodeResolver {
+	return newKubeNodeResolver(cs)
 }
 
 // NewKubeNodeResolver builds a resolver from the pod's in-cluster credentials.
@@ -173,6 +194,27 @@ func nodeRefFrom(n *corev1.Node) NodeRef {
 	}
 	sort.Strings(ref.Addrs)
 	return ref
+}
+
+// ClusterScoped reports whether this resolver can answer for nodes other than
+// the process's own -- that is, whether it reads the cluster's Node objects.
+//
+// It exists so a caller whose correctness depends on resolving OTHER nodes can
+// refuse to run rather than discover the limitation one publish at a time. Pod
+// fencing is exactly such a caller: it revokes a failed node's access, and a
+// resolver that only knows this process's own host would either refuse (safe but
+// silent) or, if the ids happened to match, grant the wrong machine's addresses.
+func (r *KubeNodeResolver) ClusterScoped() bool { return true }
+
+// ClusterScoped is false: this resolver knows exactly one node, its own.
+func (r *LocalNodeResolver) ClusterScoped() bool { return false }
+
+// ClusterScoped reports whether a resolver can answer for nodes other than the
+// process's own. A resolver that does not say is assumed not to, because the
+// answer gates a destructive operation.
+func ClusterScoped(r NodeResolver) bool {
+	cs, ok := r.(interface{ ClusterScoped() bool })
+	return ok && cs.ClusterScoped()
 }
 
 // LocalNodeResolver knows exactly one node: the one this process was

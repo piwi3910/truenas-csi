@@ -15,6 +15,8 @@ import (
 	"github.com/piwi3910/truenas-csi/internal/config"
 	"github.com/piwi3910/truenas-csi/internal/csi"
 	"github.com/piwi3910/truenas-csi/internal/truenas"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
 )
 
 // env describes the appliance under test. Every test skips loudly when it is
@@ -24,6 +26,9 @@ type env struct {
 	client *truenas.Client
 	prefix string
 	server string
+	// nodeID is the node an appliance-side grant is written for. It is the
+	// cluster node the node-side suite mounts from, not this machine.
+	nodeID string
 }
 
 func requireAppliance(t *testing.T) *env {
@@ -59,7 +64,8 @@ func requireAppliance(t *testing.T) *env {
 	}
 	t.Cleanup(func() { c.Close() })
 	return &env{cfg: cfg, client: c, prefix: b.Pool + "/" + b.ParentDataset,
-		server: get("TRUENAS_DATA_ADDRESS", "")}
+		server: get("TRUENAS_DATA_ADDRESS", ""),
+		nodeID: os.Getenv("TRUENAS_E2E_NODE")}
 }
 
 func (e *env) controller(t *testing.T) csipb.ControllerServer {
@@ -69,7 +75,32 @@ func (e *env) controller(t *testing.T) csipb.ControllerServer {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { reg.Close() })
-	return csi.NewController(reg, e.cfg)
+	return csi.NewControllerWithNodes(reg, e.cfg, e.resolver(t))
+}
+
+// resolver returns a node resolver that answers for the CLUSTER's nodes.
+//
+// The default in-cluster resolver cannot be built from a workstation, and the
+// fallback answers with this machine's own interfaces -- so a publish would add
+// the workstation's addresses to the export and the cluster node would still be
+// refused. Building one over the ambient kubeconfig makes the grant name the
+// node that actually mounts.
+func (e *env) resolver(t *testing.T) backend.NodeResolver {
+	t.Helper()
+	if e.nodeID == "" || e.nodeID == e.cfg.NodeID {
+		return backend.NewLocalNodeResolver(e.cfg.NodeID)
+	}
+	rules := clientcmd.NewDefaultClientConfigLoadingRules()
+	cfg, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
+		rules, &clientcmd.ConfigOverrides{}).ClientConfig()
+	if err != nil {
+		t.Fatalf("building a kubeconfig client for node resolution: %v", err)
+	}
+	cs, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		t.Fatalf("kubernetes client: %v", err)
+	}
+	return backend.NewKubeNodeResolverFor(cs)
 }
 
 func (e *env) params(protocol string) map[string]string {

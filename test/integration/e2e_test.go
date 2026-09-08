@@ -38,7 +38,47 @@ func (e *env) createVolume(t *testing.T, c csipb.ControllerServer, name, protoco
 			t.Errorf("cleanup DeleteVolume(%s): %v", id, err)
 		}
 	})
-	return resp.GetVolume()
+	return e.publish(t, c, resp.GetVolume())
+}
+
+// publish grants the node appliance-side access and revokes it on cleanup.
+//
+// Every volume is created FENCED -- an NFS export carries only the unroutable
+// deny host, an iSCSI extent is mapped to no LUN, an SMB share denies everyone
+// -- so nothing can reach a volume until ControllerPublishVolume grants the
+// node. A test that mounted without publishing would be exercising the fence
+// rather than the data path, and would fail in a thoroughly misleading way: an
+// NFS server answers a host outside its access list with a bare
+// "No such file or directory", which reads like a missing dataset.
+func (e *env) publish(t *testing.T, c csipb.ControllerServer, vol *csipb.Volume) *csipb.Volume {
+	t.Helper()
+	if e.nodeID == "" {
+		return vol
+	}
+	id := vol.GetVolumeId()
+	resp, err := c.ControllerPublishVolume(context.Background(), &csipb.ControllerPublishVolumeRequest{
+		VolumeId: id, NodeId: e.nodeID, VolumeCapability: caps()[0],
+	})
+	if err != nil {
+		t.Fatalf("ControllerPublishVolume(%s -> %s): %v", id, e.nodeID, err)
+	}
+	t.Cleanup(func() {
+		if _, err := c.ControllerUnpublishVolume(context.Background(),
+			&csipb.ControllerUnpublishVolumeRequest{VolumeId: id, NodeId: e.nodeID}); err != nil {
+			t.Errorf("cleanup ControllerUnpublishVolume(%s): %v", id, err)
+		}
+	})
+	merged := map[string]string{}
+	for k, v := range vol.GetVolumeContext() {
+		merged[k] = v
+	}
+	for k, v := range resp.GetPublishContext() {
+		merged[k] = v
+	}
+	return &csipb.Volume{
+		VolumeId: id, CapacityBytes: vol.GetCapacityBytes(), VolumeContext: merged,
+		ContentSource: vol.GetContentSource(), AccessibleTopology: vol.GetAccessibleTopology(),
+	}
 }
 
 // nfsMountScript builds a script that mounts an NFS volume on the node.
