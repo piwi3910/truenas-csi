@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/piwi3910/truenas-csi/internal/driver"
 )
 
 // requireInstallEnv gates the install/upgrade test on a real cluster, a real
@@ -57,6 +59,34 @@ func mustRun(t *testing.T, timeout time.Duration, name string, args ...string) s
 	return out
 }
 
+// requireDriverNotInstalled skips when this driver is ALREADY installed on the
+// target cluster.
+//
+// Two installs cannot coexist and no chart change can make them: the CSIDriver
+// object is named for the driver, not for the release, because that string is
+// what a PersistentVolume records and what the kubelet looks up. A second
+// install therefore fights the first for a cluster-scoped object, and Helm
+// reports it as an ownership error on whichever object it reaches first —
+// which reads like a chart bug and is not one.
+//
+// Skipping is right rather than uninstalling: the existing release may be
+// serving real workloads, and this test must never take them down to run.
+func requireDriverNotInstalled(t *testing.T) {
+	t.Helper()
+	out, err := run(t, 2*time.Minute, "kubectl", "get", "csidriver",
+		driver.DriverName, "--ignore-not-found", "-o", "name")
+	if err != nil {
+		return // cannot tell; let the install speak for itself
+	}
+	if strings.TrimSpace(out) == "" {
+		return
+	}
+	t.Skipf("CSIDriver %s is already installed on this cluster, so a second "+
+		"install would fight it for cluster-scoped objects. Point KUBECONFIG at "+
+		"a cluster without the driver (CI uses a throwaway kind cluster) or "+
+		"uninstall it first.", driver.DriverName)
+}
+
 // TestChartInstallAndUpgrade installs the chart on a real cluster, binds a PVC,
 // mounts it in a pod, then upgrades the release and asserts the running pod is
 // neither restarted nor left with a broken mount.
@@ -65,6 +95,8 @@ func mustRun(t *testing.T, timeout time.Duration, name string, args ...string) s
 // way a storage driver takes workloads down, so this is the check that matters.
 func TestChartInstallAndUpgrade(t *testing.T) {
 	image, endpoint, apiKey, username, pool, parent, server := requireInstallEnv(t)
+
+	requireDriverNotInstalled(t)
 
 	ns := fmt.Sprintf("truenas-csi-e2e-%d", time.Now().Unix()%100000)
 	release := "truenas-csi"
