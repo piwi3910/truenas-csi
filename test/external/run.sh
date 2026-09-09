@@ -127,6 +127,23 @@ fi
 
 rendered="$workdir/testdriver-$protocol.rendered.yaml"
 
+# The node plugin publishes one topology key per configured backend, named after
+# it, so the definitions cannot carry it. It comes from the StorageClass under
+# test, which already names the backend it provisions on. A class that names
+# none (the single-backend case, where the parameter is optional) leaves the key
+# out of the list entirely rather than rendering a wrong one.
+backendkey=""
+if [ -z "${TRUENAS_E2E_BACKEND:-}" ] && command -v kubectl >/dev/null 2>&1; then
+	TRUENAS_E2E_BACKEND="$(KUBECONFIG="$kubeconfig" kubectl get storageclass "$storageclass" \
+		-o jsonpath='{.parameters.backend}' 2>/dev/null || true)"
+fi
+if [ -n "${TRUENAS_E2E_BACKEND:-}" ]; then
+	backendkey="csi.truenas.watteel.com/backend-$TRUENAS_E2E_BACKEND"
+else
+	echo "run.sh: StorageClass $storageclass names no backend and TRUENAS_E2E_BACKEND is unset --" >&2
+	echo "run.sh: the per-backend topology key is omitted from the driver definition" >&2
+fi
+
 # No VolumeSnapshotClass named means the cluster may not even have the snapshot
 # CRDs installed. Dropping the SnapshotClass block while leaving
 # snapshotDataSource true would make every snapshot test fail on a missing class
@@ -139,17 +156,22 @@ fi
 
 # One awk pass rather than a chain of `sed -i`: in-place editing and `addr,+N`
 # ranges are spelt differently by GNU and BSD sed, and this script runs on both.
-awk -v sc="$storageclass" -v vsc="$snapshotclass" '
+awk -v sc="$storageclass" -v vsc="$snapshotclass" -v bk="$backendkey" '
 	# Drop the SnapshotClass mapping and its single child when no class is named.
 	skipnext { skipnext = 0; next }
 	vsc == "" && /^SnapshotClass:/ { skipnext = 1; next }
 	vsc == "" && /^[[:space:]]*snapshotDataSource:[[:space:]]*true/ {
 		sub(/true/, "false"); print; next
 	}
-	{ gsub(/__STORAGE_CLASS__/, sc); gsub(/__SNAPSHOT_CLASS__/, vsc); print }
+	# The per-backend topology key is dropped entirely when there is none to
+	# render: a literal placeholder would be checked for below, and an empty
+	# list entry would be read as a key named "".
+	bk == "" && /__BACKEND_TOPOLOGY_KEY__/ { next }
+	{ gsub(/__STORAGE_CLASS__/, sc); gsub(/__SNAPSHOT_CLASS__/, vsc)
+	  gsub(/__BACKEND_TOPOLOGY_KEY__/, bk); print }
 ' "$definition" >"$rendered"
 
-if grep -q '__STORAGE_CLASS__\|__SNAPSHOT_CLASS__' "$rendered"; then
+if grep -q '__STORAGE_CLASS__\|__SNAPSHOT_CLASS__\|__BACKEND_TOPOLOGY_KEY__' "$rendered"; then
 	die "the rendered definition still contains a placeholder: $rendered"
 fi
 
@@ -171,10 +193,12 @@ skips=()
 
 # The suite reboots nodes, kills kubelet and severs the network to prove the CO
 # recovers. That needs a throwaway cluster and SSH to every node, neither of
-# which this harness assumes. It is also where an appliance-side fence would be
-# exercised, and this driver has none yet: ControllerUnpublishVolume is a no-op
-# (internal/csi/controller.go) and the CSIDriver sets attachRequired: false.
-# That is plan task 5, tracked, and not something a test list should paper over.
+# which this harness assumes.
+#
+# It is also where the appliance-side fence would be exercised. The driver HAS
+# one now -- ControllerUnpublishVolume revokes access per node and the CSIDriver
+# sets attachRequired: true -- so this entry is an environmental cost and no
+# longer a missing capability. Running it needs a cluster the suite may break.
 skips+=('\[Disruptive\]')
 
 # Guarded by alpha or beta feature gates that must be enabled on the API server

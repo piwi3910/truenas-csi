@@ -42,8 +42,26 @@ DriverInfo:
   # StorageClass to it. On a cluster where some node lacks nfs-common it can pin
   # "false" and every provision then fails for a reason that is not a driver
   # defect. The suite therefore requires a homogeneous cluster — see README.md.
+  # EVERY key the node plugin publishes, not just this protocol's.
+  #
+  # NodeGetInfo reports one segment per capability the node was probed for, so a
+  # CSIStorageCapacity object's NodeTopology carries all of them. Declaring only
+  # the protocol's key made the capacity suite look for an object keyed on that
+  # one alone, find none, and fail a driver that was behaving correctly --
+  # declaring the real set turns the same run green.
+  #
+  # The backend key is rendered by run.sh from the StorageClass's own `backend`
+  # parameter, because it is named after the operator's backend and cannot be
+  # checked in.
   TopologyKeys:
     - csi.truenas.watteel.com/nfs
+    - csi.truenas.watteel.com/iscsi
+    - csi.truenas.watteel.com/nvme
+    - csi.truenas.watteel.com/smb
+    - csi.truenas.watteel.com/ext4
+    - csi.truenas.watteel.com/xfs
+    - csi.truenas.watteel.com/multipath
+    - __BACKEND_TOPOLOGY_KEY__
   NumAllowedTopologies: 1
 
   Capabilities:
