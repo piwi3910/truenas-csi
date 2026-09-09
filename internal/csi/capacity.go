@@ -141,7 +141,9 @@ func (c *controller) requireRoomOutsideReserve(ctx context.Context, backendName 
 // the driver never saw. What this check adds is a clear ResourceExhausted at
 // provisioning time instead of an EDQUOT surfacing as a middleware error, and
 // a ceiling on THIN volumes, whose provisioned size ZFS does not charge against
-// the quota until the data is actually written.
+// the quota until the data is actually written — which is why the namespace is
+// measured against the LARGER of its usage and its provisioned bytes, and not
+// against usage alone. See NamespaceDataset.Room.
 //
 // A flat volume — the feature off, or no namespace in the request — returns
 // immediately and costs no appliance round trip.
@@ -174,10 +176,14 @@ func (c *controller) requireRoomInNamespaceQuota(ctx context.Context, id volume.
 		deferred = " (this quota is below current usage and was therefore not applied to ZFS, " +
 			"so existing workloads keep writing while new volumes are refused)"
 	}
+	// Both figures are named, because which one binds decides what the operator
+	// does next: over USED means delete data or raise the quota, over
+	// PROVISIONED means delete a claim nobody is filling.
 	return status.Errorf(codes.ResourceExhausted,
-		"namespace %q on backend %q has a quota of %d bytes and already uses %d, leaving %d; "+
-			"the request for %d bytes does not fit%s",
-		id.Namespace, id.Backend, ns.QuotaBytes, ns.UsedBytes, room, size, deferred)
+		"namespace %q on backend %q has a quota of %d bytes; it uses %d and has provisioned %d, "+
+			"leaving %d; the request for %d bytes does not fit%s",
+		id.Namespace, id.Backend, ns.QuotaBytes, ns.UsedBytes, ns.ProvisionedBytes,
+		room, size, deferred)
 }
 
 // ListVolumes returns only volumes this driver owns, paginated by dataset id.
