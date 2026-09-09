@@ -377,9 +377,14 @@ func testRequest(name string, bytes int64) backend.CreateRequest {
 		ID:            testID(name),
 		CapacityBytes: bytes,
 		Params: map[string]string{
-			"server":          "192.168.10.253",
-			"secretName":      "smb-creds",
-			"secretNamespace": "kube-system",
+			"server": "192.168.10.253",
+			// The RESERVED names. Kubernetes reads these off the StorageClass to
+			// build the PersistentVolume's nodeStageSecretRef, which is the only
+			// way credentials reach NodeStageVolume. This fixture used to carry
+			// "secretName"/"secretNamespace", which look right and deliver
+			// nothing -- see parseParams.
+			"csi.storage.k8s.io/node-stage-secret-name":      "smb-creds",
+			"csi.storage.k8s.io/node-stage-secret-namespace": "kube-system",
 		},
 	}
 }
@@ -663,11 +668,20 @@ func TestSMBPublishContextCarriesNoPassword(t *testing.T) {
 	// SMB ownership is mount-time: the client maps uid/gid itself.
 	for k, want := range map[string]string{
 		"uid": "1000", "gid": "1000", "fileMode": "0660", "dirMode": "0770",
-		nodeStageSecretNameKey:      "smb-creds",
-		nodeStageSecretNamespaceKey: "kube-system",
 	} {
 		if pc[k] != want {
 			t.Fatalf("publish context %q = %q, want %q", k, pc[k], want)
+		}
+	}
+	// The secret reference is NOT carried here. Kubernetes builds the
+	// PersistentVolume's nodeStageSecretRef from the StorageClass's reserved
+	// parameters before this driver is called, and never reads the volume
+	// context for it -- echoing the reserved names into the context looked
+	// right, delivered nothing, and was why no SMB volume could be mounted.
+	for _, k := range []string{nodeStageSecretNameKey, nodeStageSecretNamespaceKey} {
+		if _, ok := pc[k]; ok {
+			t.Errorf("publish context carries %q, which Kubernetes does not read there "+
+				"and which suggests the credentials are handled when they are not", k)
 		}
 	}
 }

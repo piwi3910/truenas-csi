@@ -291,8 +291,13 @@ reclaimPolicy: Delete
 parameters:
   backend: nas1
   protocol: smb
-  secretName: truenas-smb
-  secretNamespace: truenas-csi
+  # The RESERVED names. Kubernetes reads these off the StorageClass to build the
+  # PersistentVolume's nodeStageSecretRef, which is the only route by which
+  # credentials reach the node. A friendlier-looking secretName/secretNamespace
+  # pair cannot do it: the driver never sees the class until after the
+  # provisioner has decided the secret reference.
+  csi.storage.k8s.io/node-stage-secret-name: truenas-smb
+  csi.storage.k8s.io/node-stage-secret-namespace: truenas-csi
   # SMB ownership is a mount-time property, not a property of the files.
   uid: "1000"
   gid: "1000"

@@ -1055,3 +1055,16 @@ Verified on 25.10.6, both ways:
 The mechanism works; nothing sets the annotation. `nvmet.global.sessions`
 reports live controllers regardless of ACLs, so fencing still identifies a
 connected node by `host_traddr` and correctly refuses to fence it.
+
+## SMB credentials reach the node only through nodeStageSecretRef
+
+Kubernetes builds a PersistentVolume's `nodeStageSecretRef` from the RESERVED
+StorageClass parameters `csi.storage.k8s.io/node-stage-secret-name` and
+`...-namespace`, read by external-provisioner BEFORE the driver is called.
+Nothing the driver returns can create that reference — putting those key names
+into the volume context is inert.
+
+Verified on the cluster: a class with `secretName`/`secretNamespace` produces
+`nodeStageSecretRef: None` and every mount fails; the same class with the
+reserved names produces `{"name":"truenas-smb","namespace":"default"}` and the
+volume mounts.

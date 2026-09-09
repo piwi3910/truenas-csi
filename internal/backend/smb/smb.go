@@ -31,6 +31,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"strconv"
 	"strings"
 	"sync"
@@ -164,6 +165,29 @@ func parseParams(p map[string]string) (params, error) {
 	out.sharePrefix = get(ParamShareName)
 	out.secretName = get(ParamSecretName)
 	out.secretNamespace = get(ParamSecretNamespace)
+
+	// The credentials reach the node through the PersistentVolume's
+	// nodeStageSecretRef, and ONLY Kubernetes can put them there: the
+	// provisioner reads the reserved parameters below off the StorageClass
+	// before this driver is called, and nothing the driver returns can create
+	// that reference. secretName and secretNamespace were echoed into the
+	// volume context under the reserved names, which Kubernetes does not read
+	// there -- so every SMB volume provisioned, bound, and then failed to mount
+	// with "smb volume needs username and password in its node-stage secret".
+	//
+	// Refusing here turns that into one clear error at the first claim instead
+	// of a mount-time mystery on every pod.
+	if get(nodeStageSecretNameKey) == "" {
+		hint := ""
+		if out.secretName != "" {
+			hint = fmt.Sprintf(" (%q and %q cannot deliver it: Kubernetes reads the "+
+				"reserved names, not these)", ParamSecretName, ParamSecretNamespace)
+		}
+		return params{}, status.Errorf(codes.InvalidArgument,
+			"an smb StorageClass must name the Secret holding the SMB user with the "+
+				"reserved parameters %q and %q%s",
+			nodeStageSecretNameKey, nodeStageSecretNamespaceKey, hint)
+	}
 
 	for _, f := range []struct {
 		key string
@@ -643,12 +667,6 @@ func (b *Backend) PublishContext(ctx context.Context, id volume.ID) (map[string]
 		"fileMode": p.fileMode,
 		"dirMode":  p.dirMode,
 	}
-	if p.secretName != "" {
-		out[nodeStageSecretNameKey] = p.secretName
-	}
-	if p.secretNamespace != "" {
-		out[nodeStageSecretNamespaceKey] = p.secretNamespace
-	}
 	return out, nil
 }
 
@@ -663,12 +681,6 @@ func (b *Backend) volumeFor(id volume.ID, bytes int64, name string, p params) *b
 	}
 	if p.server != "" {
 		ctxMap["server"] = p.server
-	}
-	if p.secretName != "" {
-		ctxMap[nodeStageSecretNameKey] = p.secretName
-	}
-	if p.secretNamespace != "" {
-		ctxMap[nodeStageSecretNamespaceKey] = p.secretNamespace
 	}
 	return &backend.Volume{ID: id, CapacityBytes: bytes, Context: ctxMap}
 }

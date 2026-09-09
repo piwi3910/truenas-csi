@@ -75,7 +75,6 @@ with the same variables set (which is what `make e2e-external` shells into).
 | `TRUENAS_E2E_EXTRA_SKIP`                         | no       | an extra ginkgo skip regex, for triaging one failure without editing the reviewed list                         |
 | `TRUENAS_E2E_FOCUS`                              | no       | narrow the focus below `External.Storage`                                                                      |
 | `TRUENAS_E2E_TIMEOUT`                            | no       | ginkgo timeout, default `4h`                                                                                   |
-| `TRUENAS_E2E_ALLOW_SMB`                          | no       | required to run the SMB definition at all — see below                                                          |
 | `TRUENAS_E2E_WORKDIR` / `_BINDIR` / `_REPORTDIR` | no       | where the binary, rendered definition and JUnit report land                                                    |
 | `TRUENAS_E2E_CONTEXT`                            | no       | kubeconfig context                                                                                             |
 
@@ -165,19 +164,14 @@ single pass/fail across four protocols hides which one regressed.
 
 ## Known gaps this harness makes visible
 
-- **SMB has no node data path.** The backend provisions correctly (verified
-  against TrueNAS 25.10.6), but `internal/node/node.go` knows only `nfs`,
-  `iscsi` and `nvme`, so `NodeStageVolume` fails with `InvalidArgument`; and
-  no node publishes a `csi.truenas.watteel.com/smb` topology label while
-  `requiredTopology()` demands exactly that segment, so an SMB PVC is
-  unschedulable before it is unmountable. `README.md` at the repository root
-  already calls SMB a deferred protocol. `run.sh` refuses to run the SMB
-  definition unless `TRUENAS_E2E_ALLOW_SMB=true`; the file is checked in so the
-  capability claims are written from the backend's real behaviour rather than
-  reconstructed later.
-- **SMB is refused RWX by the controller.** `supportsAccessMode()` in
-  `internal/csi/controller.go` special-cases only `"nfs"` and drops SMB into the
-  default branch, which rejects every `MULTI_NODE_*` mode. An SMB share genuinely
-  serves many nodes at once, so `testdriver-smb.yaml` sets `RWX: true` — the
-  storage's real capability — and the suite will fail loudly on the controller
-  bug rather than encode it as fact. The fix belongs in the controller.
+- **SMB needs credentials the other protocols do not.** The definition is run
+  like the others — `internal/node/cifs.go` is the data path, `preflight.go`
+  probes `CapSMB`, and a node with `mount.cifs` publishes the
+  `csi.truenas.watteel.com/smb` label that `requiredTopology()` asks for — but
+  the StorageClass must name a Kubernetes Secret holding an SMB user, through
+  its `secretName` and `secretNamespace` parameters. Without one the mount
+  fails at the node, which is a configuration error and not a driver defect.
+  SMB is served RWX, as the definition claims: `protocolAccessClass` in
+  `internal/csi/accessmode.go` classifies it as a shared filesystem alongside
+  NFS, so every `MULTI_NODE_*` mode is admitted. (This entry used to record the
+  opposite, from when `supportsAccessMode` special-cased `"nfs"` alone.)

@@ -1,22 +1,14 @@
 # Upstream Kubernetes external-storage test driver definition — SMB.
 #
-# THIS DEFINITION CANNOT PASS TODAY, AND THAT IS THE POINT OF SHIPPING IT.
+# This ran as a placeholder for a protocol that had no node data path. That
+# stopped being true when internal/node/cifs.go landed: internal/node/node.go
+# declares ProtocolSMB, internal/node/preflight.go probes CapSMB, and a node
+# with mount.cifs publishes the csi.truenas.watteel.com/smb topology label that
+# requiredTopology() asks for. The definition is now run like the others.
 #
-# The SMB backend provisions correctly (internal/backend/smb/smb.go, verified
-# against a live TrueNAS 25.10.6) but there is no node data path for it:
-#
-#   * internal/node/node.go declares only ProtocolNFS, ProtocolISCSI and
-#     ProtocolNVMe, and protocolOf() cannot resolve "smb", so NodeStageVolume
-#     fails with InvalidArgument "publish context names no supported protocol";
-#   * internal/node/preflight.go has no cifs capability, so no node ever
-#     publishes a `csi.truenas.watteel.com/smb` topology label — while
-#     requiredTopology() in internal/csi/controller.go asks for exactly that
-#     segment. An SMB PVC is therefore unschedulable before it is unmountable.
-#
-# README.md already calls SMB a "deferred protocol". This file records what the
-# harness must assert the day the node path lands, so the capability claims are
-# written from the backend's real behaviour rather than reconstructed later.
-# run.sh refuses to run this definition unless TRUENAS_E2E_ALLOW_SMB=true.
+# It needs credentials the other protocols do not: an SMB user on the appliance
+# and a Kubernetes Secret holding it, named by the StorageClass's secretName and
+# secretNamespace parameters. See docs/security.md and test/external/README.md.
 
 StorageClass:
   FromExistingClassName: __STORAGE_CLASS__

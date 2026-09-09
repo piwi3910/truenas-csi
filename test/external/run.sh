@@ -52,10 +52,6 @@ snapshotclass="${TRUENAS_E2E_SNAPSHOTCLASS:-}"
 definition="$here/testdriver-$protocol.yaml"
 [ -r "$definition" ] || die "no driver definition for protocol $protocol ($definition)"
 
-if [ "$protocol" = "smb" ] && [ "${TRUENAS_E2E_ALLOW_SMB:-}" != "true" ]; then
-	die "SMB has no node data path yet (see testdriver-smb.yaml); set TRUENAS_E2E_ALLOW_SMB=true to run it anyway"
-fi
-
 workdir="${TRUENAS_E2E_WORKDIR:-${TMPDIR:-/tmp}/truenas-csi-e2e}"
 bindir="${TRUENAS_E2E_BINDIR:-$workdir/bin}"
 reportdir="${TRUENAS_E2E_REPORTDIR:-$workdir/report}"
