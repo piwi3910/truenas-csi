@@ -13,12 +13,40 @@ import (
 )
 
 // Snapshot is a point-in-time copy of a volume.
+//
+// SizeBytes is the PROVISIONED size of the source volume, not the space the
+// snapshot itself occupies. That is what the CSI spec asks for and what the
+// consumer needs: external-snapshotter copies it into the VolumeSnapshot's
+// status.restoreSize, and external-provisioner then refuses a restore claim
+// smaller than it. Reporting the snapshot's own (near-zero) referenced bytes
+// would let a 1Gi claim restore a 3Gi volume and silently truncate nothing —
+// the restore would succeed and the PV would lie about its capacity.
 type Snapshot struct {
 	ID             string
 	SourceVolumeID string
 	SizeBytes      int64
 	CreationTime   time.Time
 	ReadyToUse     bool
+}
+
+// provisionedBytes is the source volume's provisioned size for a snapshot.
+//
+// A zvol snapshot carries volsize, so it answers on its own. A filesystem
+// snapshot carries no quota property at all, so its live dataset is queried
+// instead. Neither is fatal when it fails: a zero size costs the restore-size
+// check, which is better than failing a snapshot that ZFS already took.
+func provisionedBytes(ctx context.Context, c truenas.API, snap *truenas.Snapshot, dataset string) int64 {
+	if snap != nil && snap.Properties.VolSize.Parsed > 0 {
+		return snap.Properties.VolSize.Parsed
+	}
+	ds, err := c.DatasetQuery(ctx, dataset)
+	if err != nil || ds == nil {
+		return 0
+	}
+	if ds.VolSize.Parsed > 0 {
+		return ds.VolSize.Parsed
+	}
+	return ds.RefQuota.Parsed
 }
 
 // CreateSnapshot snapshots a volume. ZFS snapshots are atomic and instant, so
@@ -31,16 +59,55 @@ func (r *Registry) CreateSnapshot(ctx context.Context, source volume.ID, name st
 	ds := source.DatasetPath()
 	id := ds + "@" + name
 
+	// The re-call path reports the SAME creation time and size as the first
+	// call, read back off the appliance. CSI requires CreateSnapshot to be
+	// idempotent, and a sidecar that saw a different creation time on a retry
+	// would treat it as a different snapshot.
 	if existing, err := c.SnapshotQuery(ctx, id); err == nil && existing != nil {
 		return &Snapshot{ID: snapshotID(source.Backend, id), SourceVolumeID: source.String(),
-			ReadyToUse: true}, nil
+			SizeBytes:    provisionedBytes(ctx, c, existing, ds),
+			CreationTime: existing.CreationTime(), ReadyToUse: true}, nil
 	}
-	if _, err := c.SnapshotCreate(ctx, ds, name); err != nil {
+	created, err := c.SnapshotCreate(ctx, ds, name)
+	if err != nil {
 		return nil, err
+	}
+	// pool.snapshot.create does not return the property block, so the creation
+	// time is read back. Falling back to the local clock keeps a snapshot that
+	// exists from being reported as failed over a cosmetic field.
+	when := time.Now().UTC()
+	snap, err := c.SnapshotQuery(ctx, id)
+	if err != nil || snap == nil {
+		snap = created
+	} else if t := snap.CreationTime(); !t.IsZero() {
+		when = t
 	}
 	return &Snapshot{
 		ID: snapshotID(source.Backend, id), SourceVolumeID: source.String(),
-		CreationTime: time.Now(), ReadyToUse: true,
+		SizeBytes: provisionedBytes(ctx, c, snap, ds), CreationTime: when, ReadyToUse: true,
+	}, nil
+}
+
+// Snapshot returns one snapshot by its driver id, or (nil, nil) when it does
+// not exist. It fills in the same size and creation time CreateSnapshot
+// reports, so ListSnapshots for a single id and the create response agree.
+func (r *Registry) Snapshot(ctx context.Context, id string) (*Snapshot, error) {
+	backendName, zfsID, err := parseSnapshotID(id)
+	if err != nil {
+		return nil, err
+	}
+	c, err := r.Client(ctx, backendName)
+	if err != nil {
+		return nil, err
+	}
+	snap, err := c.SnapshotQuery(ctx, zfsID)
+	if err != nil || snap == nil {
+		return nil, err
+	}
+	return &Snapshot{
+		ID: id, SourceVolumeID: snap.Dataset,
+		SizeBytes:    provisionedBytes(ctx, c, snap, snap.Dataset),
+		CreationTime: snap.CreationTime(), ReadyToUse: true,
 	}, nil
 }
 
@@ -112,9 +179,19 @@ func (r *Registry) ListSnapshots(ctx context.Context, backendName string) ([]Sna
 	if err != nil {
 		return nil, err
 	}
+	// One listing of the source datasets, so filesystem snapshots can report a
+	// size without a query each. A failure here is not fatal: it costs the
+	// size, not the listing.
+	sources := map[string]truenas.Dataset{}
+	if all, err := c.DatasetList(ctx, prefix); err == nil {
+		for i := range all {
+			sources[all[i].ID] = all[i]
+		}
+	}
+
 	graveyard := retention.PolicyFor(cfgB)
 	out := make([]Snapshot, 0, len(snaps))
-	for _, s := range snaps {
+	for i, s := range snaps {
 		// A retired volume's snapshots travel with it into the graveyard — ZFS
 		// renames a dataset's snapshots along with the dataset. Listing them
 		// would report snapshots whose source volume no longer exists, so they
@@ -123,8 +200,18 @@ func (r *Registry) ListSnapshots(ctx context.Context, backendName string) ([]Sna
 		if graveyard.On() && graveyard.ConfineToGraveyard(s.Dataset) == nil {
 			continue
 		}
+		size := snaps[i].Properties.VolSize.Parsed
+		if size == 0 {
+			// A filesystem snapshot carries no quota, so the size comes from
+			// the live dataset — looked up in the map rather than with a call
+			// per snapshot, which would make listing cost O(snapshots).
+			if ds, ok := sources[s.Dataset]; ok {
+				size = ds.RefQuota.Parsed
+			}
+		}
 		out = append(out, Snapshot{
-			ID: snapshotID(backendName, s.ID), SourceVolumeID: s.Dataset, ReadyToUse: true,
+			ID: snapshotID(backendName, s.ID), SourceVolumeID: s.Dataset,
+			SizeBytes: size, CreationTime: s.CreationTime(), ReadyToUse: true,
 		})
 	}
 	return out, nil

@@ -45,7 +45,6 @@ func (r *Registry) CreateGroupSnapshot(ctx context.Context, sources []volume.ID,
 		return nil, err
 	}
 	groupZFS := parent + "@" + name
-	created := time.Now()
 
 	// Idempotency: the CO retries forever, and a second recursive snapshot
 	// under the same name would fail rather than converge.
@@ -57,16 +56,35 @@ func (r *Registry) CreateGroupSnapshot(ctx context.Context, sources []volume.ID,
 		if _, err := c.SnapshotCreateRecursive(ctx, parent, name); err != nil {
 			return nil, err
 		}
+		existing, _ = c.SnapshotQuery(ctx, groupZFS)
+	}
+	// The creation time is ZFS's, not this process's: a retry must report the
+	// same instant as the first call, and only the appliance remembers it
+	// across a controller restart. The local clock is the fallback.
+	created := time.Now().UTC()
+	if existing != nil {
+		if t := existing.CreationTime(); !t.IsZero() {
+			created = t
+		}
 	}
 
 	g := &GroupSnapshot{
 		ID: snapshotID(backendName, groupZFS), CreationTime: created, ReadyToUse: true,
 	}
 	for _, s := range sources {
+		memberZFS := s.DatasetPath() + "@" + name
+		member, _ := c.SnapshotQuery(ctx, memberZFS)
+		when := created
+		if member != nil {
+			if t := member.CreationTime(); !t.IsZero() {
+				when = t
+			}
+		}
 		g.Members = append(g.Members, Snapshot{
-			ID:             snapshotID(backendName, s.DatasetPath()+"@"+name),
+			ID:             snapshotID(backendName, memberZFS),
 			SourceVolumeID: s.String(),
-			CreationTime:   created,
+			SizeBytes:      provisionedBytes(ctx, c, member, s.DatasetPath()),
+			CreationTime:   when,
 			ReadyToUse:     true,
 		})
 	}
@@ -143,12 +161,18 @@ func (r *Registry) GetGroupSnapshot(ctx context.Context, id string, memberIDs []
 	}
 	parent, _ := splitSnapshotID(groupZFS)
 	g := &GroupSnapshot{ID: id, ReadyToUse: true}
-	for _, s := range found {
+	for i, s := range found {
 		if s.Dataset == parent {
-			continue // the parent dataset is the group's anchor, not a volume
+			// The parent dataset is the group's anchor, not a volume — but it
+			// is the snapshot the group id names, so it carries the group's
+			// creation time.
+			g.CreationTime = s.CreationTime()
+			continue
 		}
 		g.Members = append(g.Members, Snapshot{
-			ID: snapshotID(backendName, s.ID), SourceVolumeID: s.Dataset, ReadyToUse: true,
+			ID: snapshotID(backendName, s.ID), SourceVolumeID: s.Dataset,
+			SizeBytes:    provisionedBytes(ctx, c, &found[i], s.Dataset),
+			CreationTime: s.CreationTime(), ReadyToUse: true,
 		})
 	}
 	// Members the caller named take precedence over what the parent happens to

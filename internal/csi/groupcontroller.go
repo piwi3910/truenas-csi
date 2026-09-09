@@ -95,7 +95,7 @@ func (g *groupController) CreateVolumeGroupSnapshot(ctx context.Context, req *cs
 	}
 	for _, m := range gs.Members {
 		out.Snapshots = append(out.Snapshots, &csipb.Snapshot{
-			SnapshotId: m.ID, SourceVolumeId: m.SourceVolumeID,
+			SnapshotId: m.ID, SourceVolumeId: m.SourceVolumeID, SizeBytes: m.SizeBytes,
 			CreationTime: timestamppb.New(m.CreationTime), ReadyToUse: m.ReadyToUse,
 			GroupSnapshotId: gs.ID,
 		})
@@ -151,7 +151,7 @@ func (g *groupController) GetVolumeGroupSnapshot(ctx context.Context, req *csipb
 	for _, m := range gs.Members {
 		// The members come back carrying their ZFS source dataset; snapshotPB
 		// maps that back to the volume handle the CO knows.
-		s := snapshotPB(m.ID, m.SourceVolumeID, backendName)
+		s := snapshotPB(m.ID, m.SourceVolumeID, backendName, m.SizeBytes, m.CreationTime)
 		s.GroupSnapshotId = gs.ID
 		out.Snapshots = append(out.Snapshots, s)
 	}

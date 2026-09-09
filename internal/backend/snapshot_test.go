@@ -104,3 +104,78 @@ func TestSnapshotIDCarriesBackend(t *testing.T) {
 		t.Fatalf("got (%q,%q,%v)", b, z, err)
 	}
 }
+
+// TestCreateSnapshotReportsProvisionedSize pins the fix for an empty
+// status.restoreSize on every VolumeSnapshot. CreateSnapshot never set
+// SizeBytes, so external-snapshotter had nothing to publish and
+// external-provisioner could not refuse a restore claim smaller than the
+// source volume.
+//
+// The property block below is the shape a real 25.10 appliance returns for a
+// zvol snapshot: "creation" parses as a {"$date": ms} object, so the seconds
+// have to come from "rawvalue", and "volsize" is the source's PROVISIONED
+// size, not the snapshot's own (near-zero) referenced bytes.
+func TestCreateSnapshotReportsProvisionedSize(t *testing.T) {
+	const zvolSnapshot = `[{
+	  "id": "Pool0/k8s/pvc-1@snap1",
+	  "dataset": "Pool0/k8s/pvc-1",
+	  "properties": {
+	    "creation": {"parsed": {"$date": 1788937661000}, "rawvalue": "1788937661",
+	                 "value": "Wed Sep  9 11:07 2026", "source": "NONE"},
+	    "referenced": {"parsed": 252720, "rawvalue": "252720", "value": "246K", "source": "NONE"},
+	    "volsize": {"parsed": 3221225472, "rawvalue": "3221225472", "value": "3G", "source": "NONE"}
+	  }
+	}]`
+	s := fake.Start(t, fake.Options{})
+	var queried bool
+	s.Handle("pool.snapshot.query", func([]json.RawMessage) (any, error) {
+		if !queried { // the create path looks first, and must find nothing
+			queried = true
+			return []any{}, nil
+		}
+		var v any
+		_ = json.Unmarshal([]byte(zvolSnapshot), &v)
+		return v, nil
+	})
+	s.HandleValue("pool.snapshot.create", map[string]any{"id": "Pool0/k8s/pvc-1@snap1"})
+	r := regWith(t, s)
+
+	snap, err := r.CreateSnapshot(context.Background(), srcID(), "snap1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.SizeBytes != 3221225472 {
+		t.Errorf("SizeBytes = %d, want the source volsize 3221225472", snap.SizeBytes)
+	}
+	if got := snap.CreationTime.Unix(); got != 1788937661 {
+		t.Errorf("CreationTime = %d, want ZFS's 1788937661", got)
+	}
+}
+
+// TestCreateSnapshotFilesystemSizeComesFromDataset covers the other half: a
+// FILESYSTEM snapshot carries no volsize and no refquota at all — verified
+// against a live appliance — so the size has to be read off the live dataset.
+func TestCreateSnapshotFilesystemSizeComesFromDataset(t *testing.T) {
+	s := fake.Start(t, fake.Options{})
+	s.HandleValue("pool.snapshot.query", []any{map[string]any{
+		"id": "Pool0/k8s/pvc-1@snap1", "dataset": "Pool0/k8s/pvc-1",
+		"properties": map[string]any{
+			"creation": map[string]any{"rawvalue": "1788937661"},
+		},
+	}})
+	s.Handle("pool.dataset.query", func([]json.RawMessage) (any, error) {
+		var v any
+		_ = json.Unmarshal([]byte(`[{"id":"Pool0/k8s/pvc-1","type":"FILESYSTEM",
+		  "refquota":{"parsed":1073741824}}]`), &v)
+		return v, nil
+	})
+	r := regWith(t, s)
+
+	snap, err := r.CreateSnapshot(context.Background(), srcID(), "snap1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.SizeBytes != 1073741824 {
+		t.Errorf("SizeBytes = %d, want the source refquota 1073741824", snap.SizeBytes)
+	}
+}

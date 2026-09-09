@@ -3,6 +3,7 @@ package truenas
 import (
 	"encoding/json"
 	"strconv"
+	"time"
 )
 
 // Property is one ZFS property as the middleware reports it.
@@ -37,10 +38,11 @@ func (s *sizeField) UnmarshalJSON(b []byte) error {
 		return nil
 	}
 	var wrapper struct {
-		Parsed json.RawMessage `json:"parsed"`
+		Parsed   json.RawMessage `json:"parsed"`
+		RawValue string          `json:"rawvalue"`
 	}
-	if err := json.Unmarshal(b, &wrapper); err != nil || len(wrapper.Parsed) == 0 {
-		return nil // null or an unexpected shape means "unset"
+	if err := json.Unmarshal(b, &wrapper); err != nil {
+		return nil // an unexpected shape means "unset"
 	}
 	var n int64
 	if err := json.Unmarshal(wrapper.Parsed, &n); err == nil {
@@ -51,7 +53,16 @@ func (s *sizeField) UnmarshalJSON(b []byte) error {
 	if err := json.Unmarshal(wrapper.Parsed, &str); err == nil {
 		if v, err := strconv.ParseInt(str, 10, 64); err == nil {
 			s.Parsed = v
+			return nil
 		}
+	}
+	// "parsed" is not always a number or a numeric string. A snapshot's
+	// creation time parses as {"$date": <milliseconds>}, and an unset property
+	// parses as null. "rawvalue" is the machine form in every case the driver
+	// reads — unix SECONDS for creation, a byte count for a size — so it is the
+	// fallback rather than a second shape to special-case.
+	if v, err := strconv.ParseInt(wrapper.RawValue, 10, 64); err == nil {
+		s.Parsed = v
 	}
 	return nil
 }
@@ -141,6 +152,33 @@ type Snapshot struct {
 	Dataset   string `json:"dataset"`
 	CreateTXG string `json:"createtxg"`
 	Used      sizeField
+
+	// Properties is the ZFS property block pool.snapshot.query returns. Only
+	// the two fields below are decoded from it, because the rest of the block
+	// is large and the driver reads none of it.
+	Properties SnapshotProperties `json:"properties"`
+}
+
+// SnapshotProperties is the subset of a snapshot's ZFS properties the driver
+// reads back.
+type SnapshotProperties struct {
+	// Creation is unix seconds. ZFS records it on the snapshot itself, which is
+	// the only creation time that survives a controller restart — a snapshot
+	// this driver did not just take has no other source for it.
+	Creation sizeField `json:"creation"`
+	// VolSize is the provisioned size of a zvol snapshot. It is ABSENT on a
+	// filesystem snapshot (and refquota is not carried on a snapshot at all),
+	// so a filesystem's provisioned size has to come from its live dataset.
+	VolSize sizeField `json:"volsize"`
+}
+
+// CreationTime is the snapshot's ZFS creation time, or the zero time when the
+// appliance did not report one.
+func (s Snapshot) CreationTime() time.Time {
+	if s.Properties.Creation.Parsed <= 0 {
+		return time.Time{}
+	}
+	return time.Unix(s.Properties.Creation.Parsed, 0).UTC()
 }
 
 // Pool is a ZFS pool.

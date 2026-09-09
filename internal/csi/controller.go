@@ -683,6 +683,11 @@ func (c *controller) CreateSnapshot(ctx context.Context, req *csipb.CreateSnapsh
 	}
 	return &csipb.CreateSnapshotResponse{Snapshot: &csipb.Snapshot{
 		SnapshotId: s.ID, SourceVolumeId: req.GetSourceVolumeId(),
+		// SizeBytes is the source volume's provisioned size. Omitting it left
+		// every VolumeSnapshot with an empty status.restoreSize, which in turn
+		// let external-provisioner accept a restore claim smaller than the
+		// volume the snapshot came from.
+		SizeBytes:    s.SizeBytes,
 		CreationTime: timestamppb.New(s.CreationTime), ReadyToUse: s.ReadyToUse,
 	}}, nil
 }

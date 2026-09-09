@@ -320,20 +320,17 @@ func (c *controller) ListSnapshots(ctx context.Context, req *csipb.ListSnapshots
 
 	// A specific snapshot was asked for: return it, or nothing.
 	if id := req.GetSnapshotId(); id != "" {
-		backendName, zfsID, parseErr := backend.SnapshotSource(id)
+		backendName, _, parseErr := backend.SnapshotSource(id)
 		if parseErr != nil {
 			return &csipb.ListSnapshotsResponse{}, nil // unknown id: empty, not an error
 		}
-		cl, clErr := c.reg.Client(ctx, backendName)
-		if clErr != nil {
-			return &csipb.ListSnapshotsResponse{}, nil
-		}
-		snap, qErr := cl.SnapshotQuery(ctx, zfsID)
+		snap, qErr := c.reg.Snapshot(ctx, id)
 		if qErr != nil || snap == nil {
 			return &csipb.ListSnapshotsResponse{}, nil
 		}
 		return &csipb.ListSnapshotsResponse{Entries: []*csipb.ListSnapshotsResponse_Entry{
-			{Snapshot: snapshotPB(id, snap.Dataset, backendName)}}}, nil
+			{Snapshot: snapshotPB(id, snap.SourceVolumeID, backendName,
+				snap.SizeBytes, snap.CreationTime)}}}, nil
 	}
 
 	var all []*csipb.Snapshot
@@ -346,7 +343,7 @@ func (c *controller) ListSnapshots(ctx context.Context, req *csipb.ListSnapshots
 			continue
 		}
 		for _, s := range snaps {
-			all = append(all, snapshotPB(s.ID, s.SourceVolumeID, name))
+			all = append(all, snapshotPB(s.ID, s.SourceVolumeID, name, s.SizeBytes, s.CreationTime))
 		}
 	}
 
@@ -409,7 +406,7 @@ var errNoRegistry = errors.New("no registry bound")
 
 // snapshotPB builds the wire form, mapping the ZFS source dataset back to a
 // driver volume id so the CO can correlate it with a PersistentVolume.
-func snapshotPB(id, sourceDataset, backendName string) *csipb.Snapshot {
+func snapshotPB(id, sourceDataset, backendName string, sizeBytes int64, creation time.Time) *csipb.Snapshot {
 	source := sourceDataset
 	if b, err := csiRegistryBackend(backendName); err == nil {
 		prefix := b.pool + "/" + b.parent + "/"
@@ -425,7 +422,7 @@ func snapshotPB(id, sourceDataset, backendName string) *csipb.Snapshot {
 		}
 	}
 	return &csipb.Snapshot{
-		SnapshotId: id, SourceVolumeId: source,
-		CreationTime: timestamppb.New(time.Unix(0, 0)), ReadyToUse: true,
+		SnapshotId: id, SourceVolumeId: source, SizeBytes: sizeBytes,
+		CreationTime: timestamppb.New(creation), ReadyToUse: true,
 	}
 }
