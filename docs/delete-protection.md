@@ -184,18 +184,39 @@ not know about would produce a dataset with no PersistentVolume. Recover by
 hand on the appliance:
 
 ```sh
-# Find it: the property says which PVC it was.
+# Find it. retired-from holds the ORIGINAL volume handle, which is the only
+# record of where the dataset has to go back to — the graveyard name flattens
+# a namespaced volume to <timestamp>-<namespace>-<pvname>.
 zfs get -r io.truenas.csi:retired-from Pool0/k8s/.trash
 
-# Move it back to the path its old handle names, and clear the retirement marks.
+# Move it back to the path its old handle names. The destination parent must
+# already exist: a namespaced volume goes back under <pool>/<parent>/<namespace>,
+# and that dataset is reclaimed once the namespace empties, so re-create it
+# first. TrueNAS reports a missing destination parent as ENOENT naming the
+# SOURCE, which reads as if the graveyard entry were gone.
 zfs rename Pool0/k8s/.trash/20260908T101500Z-pvc-9d1c… Pool0/k8s/pvc-9d1c…
+
+# Clear the retirement marks.
 zfs inherit io.truenas.csi:deleted-at   Pool0/k8s/pvc-9d1c…
 zfs inherit io.truenas.csi:retired-from Pool0/k8s/pvc-9d1c…
+
+# Re-point the ownership marker at the dataset's NEW path. Retiring re-stamped
+# it with the graveyard path, and the driver establishes ownership by comparing
+# this value against the dataset's own id — so without this step the recovered
+# volume is not recognised as the driver's at all: DeleteVolume, expansion and
+# ControllerModifyVolume all refuse it, and ListVolumes omits it.
+zfs set io.truenas.csi:owner-id=Pool0/k8s/pvc-9d1c… Pool0/k8s/pvc-9d1c…
 ```
+
+`io.truenas.csi:graveyard` needs no attention: it is inherited from the
+graveyard dataset rather than set on the entry, so the rename drops it.
 
 Then re-create the PersistentVolume with the original `volumeHandle`; the driver
 will re-create the share on the next publish. Clear `io.truenas.csi:deleted-at`
 first — while it is set, `ListVolumes` will not report the volume.
+
+Verified against a live appliance, including the two steps that are easy to
+miss: the destination parent for a namespaced volume, and `owner-id`.
 
 ## Turning it off again
 
