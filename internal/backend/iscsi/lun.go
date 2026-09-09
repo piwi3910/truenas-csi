@@ -8,10 +8,16 @@ import (
 	"github.com/piwi3910/truenas-csi/internal/truenas"
 )
 
-// maxLUNs is the ceiling a single target addresses. The shared-target model
-// puts every volume on this backend on one target, so this is also the number
-// of iSCSI volumes one backend can hold, and the driver must say so plainly
-// rather than fail somewhere inside the middleware.
+// maxLUNs is the number of LUNs this driver will map onto one target, and so --
+// because the shared-target model puts every volume on a backend on one target
+// -- the number of iSCSI volumes one backend can hold. The driver says so
+// plainly rather than failing somewhere inside the middleware.
+//
+// It is the DRIVER's ceiling, not the appliance's. Measured on 25.10.6:
+// iscsi.targetextent.create accepts lunid 256 and 1024 without complaint, so
+// nothing here is enforcing a middleware limit. 255 is chosen because it is the
+// largest LUN every initiator addresses without peripheral-device addressing,
+// and a volume the node cannot see is worse than one that was refused.
 const maxLUNs = 255
 
 var (

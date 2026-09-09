@@ -1020,3 +1020,10 @@ sources (iSCSI, NFSv4, NVMe) now decode correctly against live payloads.
 `initiator_addr` is a bare address with no port. `target_alias` is the short
 target name without the `iscsi.global` basename prefix. Both as the driver
 assumed, so the fence's iSCSI signal is now measured rather than inferred.
+
+## iscsi.targetextent.create accepts LUN ids far above 255
+
+Measured on 25.10.6: lunid 254, 255, 256, 1023 and 1024 were all accepted on an
+existing target. The driver's `maxLUNs = 255` is therefore its own conservative
+ceiling — the largest LUN every initiator addresses without peripheral-device
+addressing — and not a middleware limit, which is what the comment used to say.
