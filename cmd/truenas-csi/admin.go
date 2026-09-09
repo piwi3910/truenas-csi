@@ -207,9 +207,12 @@ func diskTable(w *tabwriter.Writer, backend string, v any) {
 	_, _ = fmt.Fprintf(w, "\n%s — disks\n", backend)
 	_, _ = fmt.Fprintln(w, "NAME\tPOOL\tSIZE\tMODEL\tSERIAL\tSMART")
 	for _, d := range disks {
+		// "unavailable" and "disabled" are different claims about someone's
+		// hardware. TrueNAS 25.10 exposes no SMART API at all, and printing
+		// "disabled" for every disk on every such appliance was simply wrong.
 		smart := d.SMARTStatus
-		if !d.SMARTEnabled {
-			smart = "disabled"
+		if !d.SMARTAvailable {
+			smart = "unavailable"
 		}
 		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
 			d.Name, d.Pool, humanBytes(d.SizeBytes), d.Model, d.Serial, smart)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -252,4 +253,64 @@ metrics:
 		return m.GetGauge().GetValue(), true
 	}
 	return 0, false
+}
+
+// TestDiskHealthAsksForPools pins the option without which disk.query answers
+// "pool": null for every disk.
+//
+// Verified on 25.10.6: the plain call returns the pool field present and null,
+// so nothing failed and the report simply showed a blank column on an appliance
+// whose disks were all in a pool.
+func TestDiskHealthAsksForPools(t *testing.T) {
+	b, s := appliance(t)
+	var sawExtra bool
+	s.Handle("disk.query", func(params []json.RawMessage) (any, error) {
+		for _, p := range params {
+			if strings.Contains(string(p), `"pools":true`) ||
+				strings.Contains(string(p), `"pools": true`) {
+				sawExtra = true
+			}
+		}
+		var v any
+		if err := json.Unmarshal([]byte(disksJSON), &v); err != nil {
+			t.Fatal(err)
+		}
+		return v, nil
+	})
+	if _, err := DiskHealth(context.Background(), b); err != nil {
+		t.Fatalf("DiskHealth: %v", err)
+	}
+	if !sawExtra {
+		t.Error("disk.query was called without extra.pools, so every disk would " +
+			"be reported with no pool")
+	}
+}
+
+// TestDiskHealthDoesNotClaimSMARTIsDisabled covers an appliance with no SMART
+// API at all, which is every TrueNAS from 25.10: the smart.* namespace was
+// removed and disk.query no longer carries "togglesmart".
+//
+// The driver asked for both, got nothing, and rendered the nothing as
+// "disabled" — a statement about the operator's hardware that had never been
+// checked, on every disk of every current appliance. Absent must stay absent.
+func TestDiskHealthDoesNotClaimSMARTIsDisabled(t *testing.T) {
+	b, s := appliance(t)
+	s.Handle("smart.test.results", func([]json.RawMessage) (any, error) {
+		return nil, fmt.Errorf("jsonrpc -32601: method not found")
+	})
+	disks, err := DiskHealth(context.Background(), b)
+	if err != nil {
+		t.Fatalf("DiskHealth: %v", err)
+	}
+	if len(disks) == 0 {
+		t.Fatal("no disks reported")
+	}
+	for _, d := range disks {
+		if d.SMARTAvailable {
+			t.Errorf("disk %s reports SMART available on an appliance with no SMART API", d.Name)
+		}
+		if !d.Healthy {
+			t.Errorf("disk %s was marked unhealthy merely because SMART is absent", d.Name)
+		}
+	}
 }

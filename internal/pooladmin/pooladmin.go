@@ -97,12 +97,20 @@ type Pool struct {
 
 // Disk is one disk's state and SMART summary, where the appliance exposes one.
 type Disk struct {
-	Name         string
-	Serial       string
-	Model        string
-	Pool         string
-	SizeBytes    int64
-	SMARTEnabled bool
+	Name      string
+	Serial    string
+	Model     string
+	Pool      string
+	SizeBytes int64
+	// SMARTAvailable reports whether the appliance exposes SMART at all.
+	//
+	// TrueNAS 25.10 has NO smart.* methods: the namespace was removed from the
+	// middleware, and disk.query no longer returns a "togglesmart" field. The
+	// driver asked for both and got nothing, then rendered the nothing as
+	// "SMART: disabled" for every disk on every modern appliance -- a claim
+	// about the operator's hardware that was never checked. Absent is not
+	// disabled, and this field is what keeps the two apart.
+	SMARTAvailable bool
 	// SMARTStatus is the appliance's own word for the last SMART test result
 	// ("SUCCESS", "FAILED", "RUNNING"), or "UNKNOWN" when it exposes none.
 	SMARTStatus string
@@ -195,30 +203,33 @@ func PoolStatus(ctx context.Context, b Backend) ([]Pool, error) {
 // than reporting the SMART status as unknown.
 func DiskHealth(ctx context.Context, b Backend) ([]Disk, error) {
 	var raw []struct {
-		Name        string          `json:"name"`
-		Serial      string          `json:"serial"`
-		Model       string          `json:"model"`
-		Pool        string          `json:"pool"`
-		Size        json.RawMessage `json:"size"`
-		ToggleSMART bool            `json:"togglesmart"`
+		Name   string          `json:"name"`
+		Serial string          `json:"serial"`
+		Model  string          `json:"model"`
+		Pool   string          `json:"pool"`
+		Size   json.RawMessage `json:"size"`
 	}
-	if err := query(ctx, b, &raw, "disk.query"); err != nil {
+	// extra.pools is not optional decoration: without it disk.query returns
+	// "pool": null for EVERY disk, and the report showed a blank pool column on
+	// an appliance whose disks were all in one. Verified on 25.10.6.
+	if err := query(ctx, b, &raw, "disk.query",
+		[]any{}, map[string]any{"extra": map[string]any{"pools": true}}); err != nil {
 		return nil, fmt.Errorf("backend %q: disk.query: %w", b.Name, err)
 	}
 
-	smart := smartResults(ctx, b)
+	smart, smartAvailable := smartResults(ctx, b)
 
 	out := make([]Disk, 0, len(raw))
 	for _, r := range raw {
 		d := Disk{
-			Name:         r.Name,
-			Serial:       r.Serial,
-			Model:        r.Model,
-			Pool:         r.Pool,
-			SizeBytes:    number(r.Size),
-			SMARTEnabled: r.ToggleSMART,
-			SMARTStatus:  "UNKNOWN",
-			Healthy:      true,
+			Name:           r.Name,
+			Serial:         r.Serial,
+			Model:          r.Model,
+			Pool:           r.Pool,
+			SizeBytes:      number(r.Size),
+			SMARTAvailable: smartAvailable,
+			SMARTStatus:    "UNKNOWN",
+			Healthy:        true,
 		}
 		if s, ok := smart[r.Name]; ok {
 			d.SMARTStatus = s.status
@@ -239,7 +250,7 @@ type smartSummary struct {
 
 // smartResults reads the last SMART test per disk, tolerating an appliance that
 // does not expose the method at all.
-func smartResults(ctx context.Context, b Backend) map[string]smartSummary {
+func smartResults(ctx context.Context, b Backend) (map[string]smartSummary, bool) {
 	var raw []struct {
 		Disk  string `json:"disk"`
 		Tests []struct {
@@ -249,9 +260,13 @@ func smartResults(ctx context.Context, b Backend) map[string]smartSummary {
 		} `json:"tests"`
 	}
 	if err := query(ctx, b, &raw, "smart.test.results"); err != nil {
-		obs.Logger(ctx).Debug("SMART results unavailable; reporting disks without a SMART summary",
+		// 25.10 removed the whole smart.* namespace, so this is the normal
+		// answer on a current appliance rather than a fault. Reporting it as
+		// "unavailable" is the point: the previous code turned this failure
+		// into "SMART: disabled" on every disk.
+		obs.Logger(ctx).Debug("the appliance exposes no SMART API; disks are reported without one",
 			"backend", b.Name, "error", err.Error())
-		return nil
+		return nil, false
 	}
 	out := map[string]smartSummary{}
 	for _, r := range raw {
@@ -266,7 +281,7 @@ func smartResults(ctx context.Context, b Backend) map[string]smartSummary {
 		}
 		out[r.Disk] = smartSummary{status: last.Status, description: last.Description}
 	}
-	return out
+	return out, true
 }
 
 // Alerts reports the appliance's active alerts.

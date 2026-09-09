@@ -86,17 +86,26 @@ Per pool: `Status` and `Healthy` as the appliance reports them, `SizeBytes`,
 
 ### `DiskHealth(ctx, backend) ([]Disk, error)`
 
-Per disk: device name, serial, model, size, the pool it belongs to, whether
-SMART is enabled, and the last SMART test result where the appliance exposes
-one.
+Per disk: device name, serial, model, size, the pool it belongs to, whether the
+appliance exposes SMART at all, and the last SMART test result where it does.
 
-`smart.test.results` is not available everywhere — TrueNAS CORE, a controller
-without SMART passthrough, and NVMe namespaces all legitimately report nothing.
-A missing SMART surface is therefore **not** an error: the disk inventory is
-still returned, with `SMARTStatus: "UNKNOWN"`. A disk is reported unhealthy only
-when the appliance explicitly says `FAILED`; `RUNNING` and "no result" both mean
-"nothing is known to be wrong", so an appliance without SMART does not page you
-every night.
+The pool comes from `disk.query` with `extra: {pools: true}`. Without that
+option the field is present and **null** on every disk, so nothing fails and the
+report simply shows a blank column.
+
+**TrueNAS 25.10 and later expose no SMART API.** The whole `smart.*` namespace
+was removed from the middleware and `disk.query` no longer carries a
+`togglesmart` field, so `SMARTAvailable` is false and `SMARTStatus` is
+`"UNKNOWN"` on every disk of a current appliance; the table prints
+`unavailable`. That is a statement about the API, not about the hardware —
+"unavailable" and "disabled" are different claims, and only the first one is
+ours to make. Older appliances that do expose `smart.test.results` are reported
+from it as before.
+
+A missing SMART surface is **not** an error: the disk inventory is still
+returned in full. A disk is reported unhealthy only when the appliance
+explicitly says `FAILED`; `RUNNING` and "no result" both mean "nothing is known
+to be wrong", so an appliance without SMART does not page you every night.
 
 ### `Alerts(ctx, backend) ([]Alert, error)`
 

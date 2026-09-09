@@ -931,3 +931,15 @@ tried — none of which name the caller's mistake. Verified: 1073741823 refused,
 1073741824 accepted. A zvol has no equivalent floor; `volsize` of 64 MiB was
 accepted. So NFS and SMB volumes must be rounded up to 1 GiB, iSCSI and
 NVMe/TCP need not be.
+
+## 25.10 has no SMART API, and disk.query hides the pool by default
+
+`core.get_methods` on 25.10.6 lists 769 methods and NOT ONE in the `smart.*`
+namespace: `smart.test.results` and `smart.config` both return jsonrpc -32601.
+`disk.query` no longer returns a `togglesmart` field either. Any code that
+infers "SMART is disabled" from those absences is asserting something about the
+operator's hardware that it never checked.
+
+`disk.query` also returns `"pool": null` for every disk unless called with
+`{"extra": {"pools": true}}`. The field is present, so nothing errors — the
+answer is just empty.
