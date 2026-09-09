@@ -457,3 +457,58 @@ func TestCreateVolumeRefusesWhenTheLimitIsBelowTheMinimum(t *testing.T) {
 		t.Fatalf("code = %s, want OutOfRange (got %v)", status.Code(err), err)
 	}
 }
+
+// TestExpandRequiresNodeActionForBlockDevices pins which volumes need a
+// node-side step after the controller grows them.
+//
+// The old rule was "is this a filesystem volume?", on the reasoning that a raw
+// block volume has no filesystem to resize. True, and beside the point: an
+// iSCSI or NVMe initiator caches the device size, so a block volume that is
+// never rescanned keeps presenting the old one. Measured on hardware -- a Block
+// PVC grown 1Gi to 3Gi reported 3Gi to Kubernetes while the pod's device stayed
+// at 1073741824 bytes, which is the size the application actually gets.
+func TestExpandRequiresNodeActionForBlockDevices(t *testing.T) {
+	for _, tc := range []struct {
+		protocol string
+		want     bool
+		why      string
+	}{
+		{"iscsi", true, "the initiator caches the device size until it is rescanned"},
+		{"nvme", true, "the namespace size is cached until the controller is rescanned"},
+		{"nfs", false, "the size a pod sees is the dataset refquota, changed on the appliance"},
+		{"smb", false, "same as nfs"},
+	} {
+		t.Run(tc.protocol, func(t *testing.T) {
+			if got := nodeExpansionRequired(tc.protocol); got != tc.want {
+				t.Errorf("nodeExpansionRequired(%q) = %v, want %v: %s",
+					tc.protocol, got, tc.want, tc.why)
+			}
+		})
+	}
+}
+
+// TestExpandOfABlockVolumeStillAsksTheNode drives the whole RPC for a raw block
+// volume, so the wiring between the capability and the answer cannot regress
+// without a test noticing.
+func TestExpandOfABlockVolumeStillAsksTheNode(t *testing.T) {
+	shared = newCounting()
+	c, _ := ctlWith(t)
+	resp, err := c.ControllerExpandVolume(context.Background(),
+		&csipb.ControllerExpandVolumeRequest{
+			VolumeId:      "nas1/counting/Pool0/k8s/pvc-expand",
+			CapacityRange: &csipb.CapacityRange{RequiredBytes: 3 << 30},
+			VolumeCapability: &csipb.VolumeCapability{
+				AccessType: &csipb.VolumeCapability_Block{
+					Block: &csipb.VolumeCapability_BlockVolume{}},
+				AccessMode: &csipb.VolumeCapability_AccessMode{
+					Mode: csipb.VolumeCapability_AccessMode_SINGLE_NODE_WRITER},
+			},
+		})
+	if err != nil {
+		t.Fatalf("ControllerExpandVolume: %v", err)
+	}
+	if !resp.GetNodeExpansionRequired() {
+		t.Error("a raw block volume was expanded without asking the node to rescan " +
+			"the device, so the pod keeps seeing the old size")
+	}
+}

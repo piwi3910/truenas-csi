@@ -462,9 +462,37 @@ func (c *controller) ControllerExpandVolume(ctx context.Context, req *csipb.Cont
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	// Filesystem volumes need a node-side grow; raw block volumes do not.
-	needsNode := req.GetVolumeCapability().GetBlock() == nil
-	return &csipb.ControllerExpandVolumeResponse{CapacityBytes: got, NodeExpansionRequired: needsNode}, nil
+	// Node expansion is about the DEVICE, not about the filesystem, so it is
+	// decided by the protocol and not by whether the volume is raw block.
+	//
+	// A raw block volume has no filesystem to grow, and that is what the old
+	// test read: block => nothing for the node to do. But an iSCSI or NVMe
+	// initiator caches the device's size, so without a node-side rescan the pod
+	// keeps seeing the OLD size while the PersistentVolumeClaim reports the new
+	// one. Measured on hardware: a Block PVC grown 1Gi -> 3Gi reported 3Gi to
+	// Kubernetes while blockdev --getsize64 in the pod still said 1073741824,
+	// and stayed that way until the volume was re-attached. The node plugin has
+	// always handled the block case correctly -- rescan, then skip the
+	// filesystem resize -- it was simply never asked.
+	//
+	// NFS and SMB genuinely need nothing: the size a pod sees is the dataset's
+	// refquota, which changed on the appliance.
+	return &csipb.ControllerExpandVolumeResponse{
+		CapacityBytes:         got,
+		NodeExpansionRequired: nodeExpansionRequired(id.Protocol),
+	}, nil
+}
+
+// nodeExpansionRequired reports whether the node must act after the controller
+// has grown a volume. See ControllerExpandVolume for why this is a question
+// about the protocol and not about the access type.
+func nodeExpansionRequired(protocol string) bool {
+	switch protocol {
+	case node.ProtocolNFS, node.ProtocolSMB:
+		return false
+	default:
+		return true
+	}
 }
 
 // ControllerPublishVolume grants one node appliance-side access to a volume.
