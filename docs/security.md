@@ -7,6 +7,33 @@ bug from deleting data it did not create.
 
 ---
 
+## Where the iSCSI CHAP credential lives
+
+CHAP is on by default, and the driver generates the credential itself: it is
+stored on the appliance and never in a Kubernetes `Secret` you have to invent.
+That has a consequence worth stating plainly.
+
+The node needs the credential to log in, and it reaches the node through the
+attachment. So it is present, in plaintext, in the `VolumeAttachment`'s
+`status.attachmentMetadata` — a **cluster-scoped** object with none of a
+Secret's protections: no encryption at rest, and readable by anything holding
+`get volumeattachments`. One credential serves a whole backend's shared target,
+so reading one attachment yields access to every iSCSI volume on that appliance
+from any host that can reach the portal.
+
+It is **not** in the `PersistentVolume`. It used to be, in
+`spec.csi.volumeAttributes.chapSecret`, which is worse in every way — a longer
+lifetime and a far more commonly granted read. The publish context is now
+filtered before it becomes the volume context; `chapSecretRef`, which names the
+credential on the appliance rather than being one, is still carried.
+
+If `get volumeattachments` is granted more widely than you would grant `get
+secrets`, treat that as the exposure it is. The node prefers a node-stage Secret
+over the attachment when one is configured (`chapCredentials` in
+`internal/node/iscsi.go`), so a deployment that wants CHAP in a Secret can
+supply one through the StorageClass's reserved
+`csi.storage.k8s.io/node-stage-secret-name` parameters, exactly as SMB does.
+
 ## Per-node access control is opt-in, and off unless you set it
 
 The driver can restrict a volume to the nodes that should hold it, and it knows

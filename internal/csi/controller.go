@@ -334,6 +334,20 @@ func (c *controller) CreateVolume(ctx context.Context, req *csipb.CreateVolumeRe
 	}
 	if pc, pcErr := b.PublishContext(ctx, vol.ID); pcErr == nil {
 		for k, v := range pc {
+			// A credential is not a locator, and this map becomes the
+			// PersistentVolume's volumeAttributes -- a cluster-scoped object,
+			// stored unencrypted, readable by anything holding `get pv`, and
+			// kept for the life of the volume. The CHAP secret was landing
+			// there in plaintext, and because one CHAP credential serves a
+			// whole backend's shared target, a single PV read exposed every
+			// iSCSI volume on that appliance.
+			//
+			// The node does not need it here: it reads the publish context
+			// delivered with the attachment, and prefers a node-stage Secret
+			// over both. See chapCredentials in internal/node/iscsi.go.
+			if sensitivePublishKeys[k] {
+				continue
+			}
 			vctx[k] = v
 		}
 	}
@@ -905,6 +919,18 @@ func snapshotNameOf(id string) string {
 // opposed to the ones a backend reads.
 var commonParameters = []string{
 	"backend", "protocol", "pool", "parentDataset", "fsType", "multipath",
+}
+
+// sensitivePublishKeys are publish-context entries that must never be copied
+// into the volume context, because that map is persisted verbatim in the
+// PersistentVolume.
+//
+// Membership is by what the value IS, not by what it is called: chapSecretRef
+// is a tag naming the credential on the appliance and is safe to persist, while
+// chapSecret is the credential itself and is not.
+var sensitivePublishKeys = map[string]bool{
+	"chapSecret": true,
+	"password":   true,
 }
 
 // CommonParameters is the set the CSI layer itself reads, exported so a test

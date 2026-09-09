@@ -67,7 +67,13 @@ func (b *countingBackend) Expand(_ context.Context, _ volume.ID, n int64) (int64
 }
 
 func (b *countingBackend) PublishContext(context.Context, volume.ID) (map[string]string, error) {
-	return map[string]string{"ok": "1"}, nil
+	return map[string]string{
+		"ok": "1",
+		// A locator and a credential, so the filter can be told apart from a
+		// blanket "drop everything with 'secret' in the name".
+		"chapSecretRef": "3",
+		"chapSecret":    "not-a-real-secret",
+	}, nil
 }
 
 func (b *countingBackend) live() int {
@@ -643,5 +649,47 @@ func TestCreateVolumeAcceptsTheKeysKubernetesInjects(t *testing.T) {
 		VolumeCapabilities: testCaps(),
 	}); err != nil {
 		t.Fatalf("a request carrying only the CO's own keys was refused: %v", err)
+	}
+}
+
+// TestCreateVolumeKeepsCredentialsOutOfThePersistentVolume pins a leak that put
+// a live credential in a cluster-scoped object.
+//
+// The volume context is written verbatim into the PersistentVolume's
+// volumeAttributes: unencrypted, readable by anything holding `get pv`, and
+// kept for the life of the volume. Merging the publish context into it put the
+// iSCSI CHAP secret there in plaintext — observed on a live cluster as
+// spec.csi.volumeAttributes.chapSecret. One CHAP credential serves a whole
+// backend's shared target, so a single PV read exposed every iSCSI volume on
+// that appliance.
+//
+// The node never needed it there: it reads the publish context delivered with
+// the attachment, and prefers a node-stage Secret over both.
+func TestCreateVolumeKeepsCredentialsOutOfThePersistentVolume(t *testing.T) {
+	shared = newCounting()
+	c, _ := ctlWith(t)
+
+	resp, err := c.CreateVolume(context.Background(), &csipb.CreateVolumeRequest{
+		Name: "pvc-chap", Parameters: params(),
+		CapacityRange:      &csipb.CapacityRange{RequiredBytes: 1 << 30},
+		VolumeCapabilities: testCaps(),
+	})
+	if err != nil {
+		t.Fatalf("CreateVolume: %v", err)
+	}
+	vctx := resp.GetVolume().GetVolumeContext()
+
+	if v, ok := vctx["chapSecret"]; ok {
+		t.Errorf("the volume context carries chapSecret=%q, which is persisted in the "+
+			"PersistentVolume for anyone with `get pv` to read", v)
+	}
+	// The tag naming the credential on the appliance is not the credential, and
+	// dropping it would lose a genuine locator.
+	if vctx["chapSecretRef"] != "3" {
+		t.Errorf("chapSecretRef = %q, want it kept: it names the credential rather "+
+			"than being one", vctx["chapSecretRef"])
+	}
+	if vctx["ok"] != "1" {
+		t.Errorf("an ordinary publish-context entry was dropped: %v", vctx)
 	}
 }
