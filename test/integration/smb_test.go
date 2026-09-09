@@ -433,3 +433,62 @@ func redactOutput(out, secret string) string {
 	}
 	return strings.ReplaceAll(out, secret, "[redacted]")
 }
+
+// TestE2ESMBProvision provisions and deletes an SMB volume with the controller
+// alone, mounting nothing.
+//
+// It exists because the only other SMB test needs an SMB USER, which it creates
+// on the appliance and which needs ACCOUNT_WRITE. The driver never creates a
+// user — only shares — so that requirement belongs to the test, not to the
+// driver, and it made the test skip under exactly the account it should have
+// been validating: a least-privilege run went green while sharing.smb.query
+// returned EACCES and no SMB volume could be provisioned at all.
+//
+// This one exercises what the driver actually needs (sharing.smb.create,
+// .query, .update and .delete, which want SHARING_SMB_WRITE) and therefore runs
+// under any account the driver is meant to work with.
+func TestE2ESMBProvision(t *testing.T) {
+	e := requireAppliance(t)
+	c := e.controller(t)
+	ctx := context.Background()
+
+	name := uniqueName("pvc-e2e-smbprov")
+	resp, err := c.CreateVolume(ctx, &csipb.CreateVolumeRequest{
+		Name: name, Parameters: e.params("smb"), VolumeCapabilities: caps(),
+		CapacityRange: &csipb.CapacityRange{RequiredBytes: 1 << 30},
+	})
+	if err != nil {
+		t.Fatalf("CreateVolume(smb/%s): %v", name, err)
+	}
+	id := resp.GetVolume().GetVolumeId()
+	t.Cleanup(func() {
+		if _, err := c.DeleteVolume(ctx, &csipb.DeleteVolumeRequest{VolumeId: id}); err != nil {
+			t.Errorf("cleanup DeleteVolume(%s): %v", id, err)
+		}
+	})
+
+	vctx := resp.GetVolume().GetVolumeContext()
+	if vctx["share"] == "" {
+		t.Errorf("the volume context carries no share name: %v", redactedKeys(vctx))
+	}
+	// Credentials belong in a Kubernetes Secret; the volume context is written
+	// verbatim into the PersistentVolume and read by anyone who can get it.
+	for _, k := range []string{"password", "username"} {
+		if _, ok := vctx[k]; ok {
+			t.Errorf("the controller put %q into the volume context", k)
+		}
+	}
+
+	// The share must really exist on the appliance, not just in the response.
+	var shares []struct {
+		Path string `json:"path"`
+		Name string `json:"name"`
+	}
+	if err := e.client.CallJSON(ctx, &shares, "sharing.smb.query",
+		[]any{[]any{"name", "=", vctx["share"]}}, map[string]any{}); err != nil {
+		t.Fatalf("querying the SMB share back: %v", err)
+	}
+	if len(shares) == 0 {
+		t.Fatalf("no SMB share named %q exists on the appliance", vctx["share"])
+	}
+}

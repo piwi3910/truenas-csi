@@ -165,13 +165,17 @@ func TestDocsListAllStorageClassParameters(t *testing.T) {
 // because an operator copies this list into a TrueNAS privilege and a missing
 // role means a driver call fails in production.
 //
-// It was NOT measured before, and two entries were wrong in ways that fail far
-// from their cause. SHARING_NVME_TARGET_WRITE was absent, so nvmet.global.config
+// It was NOT measured before, and three entries were wrong in ways that fail
+// far from their cause. SHARING_NVME_TARGET_WRITE was absent, so nvmet.global.config
 // returned EACCES and no NVMe volume could be created. And the set listed
 // SHARING_ISCSI_AUTH_READ, which is worse than missing: TrueNAS answers the
 // query with the CHAP secret MASKED instead of refusing it, so every iSCSI
 // volume provisioned, every claim bound, and every attach then failed on the
-// node with an authorization failure.
+// node with an authorization failure. SHARING_SMB_WRITE was missing too, and
+// was missed on the first pass because the only SMB test needs ACCOUNT_WRITE to
+// create an SMB user and therefore SKIPPED under the very account it should
+// have been validating -- TestE2ESMBProvision now covers the driver's own SMB
+// calls without needing one.
 var roles = []string{
 	"DATASET_WRITE",
 	"DATASET_DELETE",
@@ -188,6 +192,7 @@ var roles = []string{
 	"SHARING_NFS_WRITE",
 	"FILESYSTEM_ATTRS_WRITE",
 	"SHARING_NVME_TARGET_WRITE",
+	"SHARING_SMB_WRITE",
 }
 
 // TestSecurityDocListsAllRoles asserts the security document carries the whole
@@ -196,8 +201,8 @@ func TestSecurityDocListsAllRoles(t *testing.T) {
 	root := repoRoot(t)
 	doc := readDoc(t, root, filepath.Join("docs", "security.md"))
 
-	if len(roles) != 15 {
-		t.Fatalf("the least-privilege set is defined as 15 roles, test lists %d", len(roles))
+	if len(roles) != 16 {
+		t.Fatalf("the least-privilege set is defined as 16 roles, test lists %d", len(roles))
 	}
 	for _, r := range roles {
 		if !strings.Contains(doc, r) {
