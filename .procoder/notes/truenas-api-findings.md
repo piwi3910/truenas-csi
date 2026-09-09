@@ -838,3 +838,49 @@ Two consequences worth remembering:
   old source check. That is no weaker than what they always had, but it cannot
   detect inheritance — so the fallback is legacy-only and every dataset stamped
   from now on carries the id.
+
+## Snapshot properties (verified 2026-09-09 on 25.10.6)
+
+`pool.snapshot.query` returns a `properties` block. Two fields matter and both
+have traps:
+
+- **`creation`** is the only durable snapshot timestamp. Its `parsed` is an
+  OBJECT — `{"$date": <milliseconds>}` — and its `value` is a human string
+  ("Wed Sep  9 11:07 2026"). Only `rawvalue` is machine-readable, and it is unix
+  SECONDS. Any decoder that reads `parsed` as a number or a numeric string gets
+  nothing.
+- **`volsize`** is present on a zvol snapshot and carries the source's
+  PROVISIONED size. On a FILESYSTEM snapshot it is absent — and so is
+  `refquota`, which is not carried on a snapshot at all. A filesystem
+  snapshot's provisioned size can only come from its live dataset.
+
+`pool.snapshot.create` does not return the property block, so a creation time
+has to be read back with a second query.
+
+## Kubernetes protects a snapshot before the driver ever sees the delete
+
+Verified on the live cluster: deleting a VolumeSnapshot that any PVC names in
+`spec.dataSource` never reaches `DeleteSnapshot`. The snapshot-controller holds
+`volumesnapshot-as-source-protection` and events
+`SnapshotDeletePending: Snapshot is being used to restore a PVC` — and it holds
+it even after that PVC is Bound. The driver's own FailedPrecondition for a
+dependent ZFS clone is therefore unreachable from the CO in normal use; it
+still guards static content and direct gRPC callers, and stays unit-tested.
+
+## csi-resizer must match the VolumeAttributesClass API the cluster serves
+
+v1.12.0 lists `*v1beta1.VolumeAttributesClass` only. On 1.34 — which serves
+`storage.k8s.io/v1` — it logs "the server could not find the requested
+resource" forever and never calls ControllerModifyVolume. Nothing fails; the
+feature is simply inert. v2.2.1 uses the v1 informer. Verified end to end:
+after the bump the PVC reached `status.currentVolumeAttributesClassName` and
+the zvol really became `sync=DISABLED compression=ZSTD`.
+
+## The claim name reaches the node only if the controller sends it
+
+Kubernetes passes `csi.storage.k8s.io/pvc/name` to CreateVolume and NOT to
+NodePublishVolume; `podInfoOnMount` supplies pod name and namespace but never
+the claim. Echoing it into the volume context at CreateVolume is the only way
+a node-side metric can carry a `pvc` label without giving the node plugin
+API-server credentials. Verified: `pvc="label-check"` on a volume provisioned
+after the change, empty on one provisioned before it.
