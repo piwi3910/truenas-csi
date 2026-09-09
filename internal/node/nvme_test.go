@@ -309,3 +309,78 @@ func TestNVMeRequiresNVMeCLI(t *testing.T) {
 		t.Fatal("CapNVMe must be advertised as a topology segment")
 	}
 }
+
+// TestNVMeControllerFor pins the mapping that NVMe expansion depends on.
+//
+// `nvme ns-rescan` takes the controller. Given a namespace it prints its usage
+// line and exits 1 — measured on a node, where
+// `nvme ns-rescan /dev/disk/by-id/nvme-TrueNAS_...` exited 1 while
+// `nvme ns-rescan /dev/nvme1` exited 0 and the namespace reported its new size
+// at once. The caller only ever has the by-id link, which points at the
+// namespace, so every NVMe expansion failed: the controller grew the zvol, the
+// node was asked to finish, and the claim stayed at its old size for ever.
+func TestNVMeControllerFor(t *testing.T) {
+	root := t.TempDir()
+	byID := filepath.Join(root, "dev", "disk", "by-id")
+	if err := os.MkdirAll(byID, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "dev", "nvme1n1"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(byID, "nvme-TrueNAS_TVS-1688_2c63f0d7bbe7362fb311")
+	if err := os.Symlink("../../nvme1n1", link); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name   string
+		device string
+		want   string
+	}{
+		{"a by-id link, which is all the caller has", "/dev/disk/by-id/nvme-TrueNAS_TVS-1688_2c63f0d7bbe7362fb311", "/dev/nvme1"},
+		{"a namespace path passed directly", "/dev/nvme1n1", "/dev/nvme1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := nvmeControllerFor(root, tc.device)
+			if err != nil {
+				t.Fatalf("nvmeControllerFor: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("nvmeControllerFor(%q) = %q, want %q", tc.device, got, tc.want)
+			}
+		})
+	}
+
+	if _, err := nvmeControllerFor(root, "/dev/sda"); err == nil {
+		t.Error("a device that is not an NVMe namespace was accepted, so the rescan " +
+			"would run against something else entirely")
+	}
+}
+
+// TestNVMeRescanTargetsTheController checks the command actually issued.
+func TestNVMeRescanTargetsTheController(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "dev"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "dev", "nvme1n1"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rec := &recordingExec{}
+	if err := nvmeRescan(context.Background(), rec, root, "/dev/nvme1n1"); err != nil {
+		t.Fatalf("nvmeRescan: %v", err)
+	}
+	want := "nvme ns-rescan /dev/nvme1"
+	if got := strings.Join(rec.calls, " | "); !strings.Contains(got, want) {
+		t.Errorf("ran %q, want it to contain %q", got, want)
+	}
+}
+
+// recordingExec captures the commands a node action runs.
+type recordingExec struct{ calls []string }
+
+func (r *recordingExec) Run(_ context.Context, name string, args ...string) ([]byte, error) {
+	r.calls = append(r.calls, strings.Join(append([]string{name}, args...), " "))
+	return nil, nil
+}

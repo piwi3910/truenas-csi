@@ -12,7 +12,6 @@ import (
 	csipb "github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/piwi3910/truenas-csi/internal/obs"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
@@ -68,10 +67,17 @@ func interceptor(ctx context.Context, req any, info *grpc.UnaryServerInfo, h grp
 	resp, err := h(ctx, req)
 	obs.ObserveCSI(method, err, time.Since(start))
 	if err != nil {
-		if s, ok := status.FromError(err); ok {
-			return resp, status.Error(s.Code(), obs.Redact(s.Message()))
-		}
-		return resp, status.Error(codes.Internal, obs.Redact(err.Error()))
+		st, _ := status.FromError(err)
+		// Every failing RPC is logged HERE, once, because handlers do not all
+		// log their own failures and the ones that do not were invisible: NVMe
+		// expansion failed eighteen consecutive times on a live cluster with
+		// nothing whatsoever in the driver's logs, and only the error counter
+		// in /metrics showed it had been called at all. The message is already
+		// redacted below for the same reason it is redacted on the wire.
+		obs.Logger(ctx).Warn("CSI call failed",
+			"method", method, "code", st.Code().String(),
+			"error", obs.Redact(st.Message()))
+		return resp, status.Error(st.Code(), obs.Redact(st.Message()))
 	}
 	return resp, nil
 }

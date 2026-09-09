@@ -64,7 +64,7 @@ func (n *Node) Expand(ctx context.Context, req ExpandRequest) (ExpandResponse, e
 		device = d
 		// The namespace rescan is scoped to the device resolved from our own
 		// subsystem serial, so no other controller on the node is disturbed.
-		rescan = func() error { return nvmeRescan(ctx, n.exec, device) }
+		rescan = func() error { return nvmeRescan(ctx, n.exec, n.hostRoot(), device) }
 	default:
 		return resp, fmt.Errorf("%w: publish context names no supported protocol", ErrInvalidRequest)
 	}

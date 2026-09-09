@@ -28,6 +28,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -327,12 +328,43 @@ func udevEncode(s string) string {
 // nvmeRescan asks the kernel to re-read the namespaces of one controller after
 // the controller side grew the zvol. It is scoped to the device we resolved, so
 // no other controller on the node is touched.
-func nvmeRescan(ctx context.Context, e Executor, device string) error {
+func nvmeRescan(ctx context.Context, e Executor, root, device string) error {
 	if device == "" {
 		return fmt.Errorf("%w: nvme rescan needs a device", ErrInvalidRequest)
 	}
-	if _, err := e.Run(ctx, "nvme", "ns-rescan", device); err != nil {
-		return fmt.Errorf("nvme ns-rescan %s: %w", device, err)
+	// ns-rescan takes the CONTROLLER, not the namespace. Given a namespace it
+	// prints its usage line and exits 1, which is how NVMe expansion came to
+	// fail every single time: the caller has a /dev/disk/by-id link, and that
+	// link points at the namespace. Measured on a node -- `nvme ns-rescan
+	// /dev/disk/by-id/nvme-TrueNAS_...` exits 1, `nvme ns-rescan /dev/nvme1`
+	// exits 0 and the namespace reports its new size immediately.
+	ctrl, err := nvmeControllerFor(root, device)
+	if err != nil {
+		return err
+	}
+	if _, err := e.Run(ctx, "nvme", "ns-rescan", ctrl); err != nil {
+		return fmt.Errorf("nvme ns-rescan %s: %w", ctrl, err)
 	}
 	return nil
 }
+
+// nvmeControllerFor maps a namespace device to the controller that owns it:
+// /dev/disk/by-id/nvme-... -> /dev/nvme1n1 -> /dev/nvme1.
+func nvmeControllerFor(root, device string) (string, error) {
+	name := filepath.Base(device)
+	// A by-id path is a symlink to the namespace; a namespace path is already
+	// the answer's input. Resolving is best effort so a caller that passes
+	// /dev/nvme1n1 directly still works.
+	if resolved, err := filepath.EvalSymlinks(filepath.Join(root, strings.TrimPrefix(device, "/"))); err == nil {
+		name = filepath.Base(resolved)
+	}
+	m := nsSuffix.FindStringSubmatch(name)
+	if m == nil {
+		return "", fmt.Errorf("%w: %q does not name an NVMe namespace, so its "+
+			"controller cannot be derived for the rescan", ErrDeviceNotFound, device)
+	}
+	return "/dev/" + m[1], nil
+}
+
+// nsSuffix splits nvme<controller>n<namespace> into its controller.
+var nsSuffix = regexp.MustCompile(`^(nvme\d+)n\d+$`)
