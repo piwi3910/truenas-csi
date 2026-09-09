@@ -134,3 +134,31 @@ func (dependentClonesTransport) Call(context.Context, string, ...any) (json.RawM
 }
 func (dependentClonesTransport) Host() string { return "appliance.invalid" }
 func (dependentClonesTransport) Close() error { return nil }
+
+// TestTranslatedErrorsKeepTheirCause guards the thing that makes these
+// translations safe to add.
+//
+// The driver's own predicates walk the error chain with errors.As, and they are
+// consulted far from here: the reaper decides whether an expired dataset is
+// merely held by a clone or genuinely broken, and answers very differently.
+// A translation built with status.Errorf wraps nothing, so it would silently
+// turn every such caller's answer to "no" while looking correct at the call
+// site.
+func TestTranslatedErrorsKeepTheirCause(t *testing.T) {
+	ops := &Ops{Transport: dependentClonesTransport{}}
+	err := ops.DatasetDelete(context.Background(), "Pool0/k8s/pvc-1", true, false)
+	if err == nil {
+		t.Fatal("expected a refusal")
+	}
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("the gRPC code was lost: %v", status.Code(err))
+	}
+	if !IsHasDependentClones(err) {
+		t.Error("IsHasDependentClones no longer sees through the translation, so " +
+			"the reaper would warn about a dataset that is behaving as designed")
+	}
+	var ce *CallError
+	if !errors.As(err, &ce) {
+		t.Error("the middleware error is no longer reachable with errors.As")
+	}
+}

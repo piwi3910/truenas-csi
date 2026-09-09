@@ -164,15 +164,18 @@ func (r *Reaper) sweep(ctx context.Context, t Target, now time.Time) []string {
 			continue
 		}
 		// Not forced, and not recursive beyond the dataset's own children: a
-		// retired volume that is the ORIGIN of a live clone cannot be destroyed
-		// and the appliance says so with EBUSY. Promoting the clone to break
+		// retired volume that is the ORIGIN of a live clone cannot be destroyed.
+		// The appliance says so with EFAULT and the words "dependent clones" --
+		// NOT with EBUSY, which is what this used to test for, so the quiet path
+		// below never ran and every sweep warned about a dataset that was
+		// behaving exactly as designed. Promoting the clone to break
 		// the dependency is exactly what this codebase already refuses to do —
 		// promote INVERTS the dependency and would make the live volume depend
 		// on a dataset that is queued for destruction. So the reaper waits: the
 		// clone is somebody's running volume, and when it goes away this
 		// dataset becomes destroyable on the next sweep with no further help.
 		if err := t.Client.DatasetDelete(ctx, ds.ID, true, false); err != nil {
-			if truenas.IsBusy(err) {
+			if truenas.IsHasDependentClones(err) || truenas.IsBusy(err) {
 				log.Info("reaper kept an expired dataset: it is still the origin of a clone. "+
 					"It will be destroyed once the volume cloned from it is deleted; nothing "+
 					"is promoted, because promoting would make the LIVE volume depend on this one",

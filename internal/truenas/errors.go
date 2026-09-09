@@ -3,6 +3,8 @@ package truenas
 import (
 	"errors"
 	"fmt"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"strings"
 )
 
@@ -67,6 +69,27 @@ func IsParentMissing(err error) bool {
 	}
 	return strings.Contains(ce.Reason, "Parent dataset") &&
 		strings.Contains(ce.Reason, "does not exist")
+}
+
+// statusError carries a gRPC code AND the middleware error it came from.
+//
+// Both halves are load-bearing. The CSI layer reads the code, so a refusal the
+// CO must not retry has to carry one. And the driver's own predicates --
+// IsBusy, IsHasDependentClones, IsNotFound -- walk the chain with errors.As, so
+// a translation that dropped the cause would silently change how callers far
+// from here behave. status.Errorf alone does exactly that: it wraps nothing.
+type statusError struct {
+	cause error
+	st    *status.Status
+}
+
+func (e *statusError) Error() string              { return e.st.Message() }
+func (e *statusError) Unwrap() error              { return e.cause }
+func (e *statusError) GRPCStatus() *status.Status { return e.st }
+
+// withStatus attaches a gRPC code to a middleware error without hiding it.
+func withStatus(cause error, code codes.Code, format string, args ...any) error {
+	return &statusError{cause: cause, st: status.Newf(code, format, args...)}
 }
 
 // IsHasDependentClones reports whether ZFS refused to destroy a dataset because

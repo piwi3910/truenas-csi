@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 // DatasetSpec describes a dataset or zvol to create.
@@ -77,7 +76,7 @@ func (c *Ops) DatasetCreate(ctx context.Context, spec DatasetSpec) (*Dataset, er
 			if i := strings.LastIndex(parent, "/"); i > 0 {
 				parent = parent[:i]
 			}
-			return nil, status.Errorf(codes.FailedPrecondition,
+			return nil, withStatus(err, codes.FailedPrecondition,
 				"cannot create %s: its parent dataset %s does not exist on the appliance. "+
 					"The driver never creates the configured parentDataset — create it "+
 					"(or correct the backend's pool/parentDataset) and retry.",
@@ -181,7 +180,7 @@ func (c *Ops) DatasetDelete(ctx context.Context, id string, recursive, force boo
 		return nil
 	}
 	if IsHasDependentClones(err) {
-		return status.Errorf(codes.FailedPrecondition,
+		return withStatus(err, codes.FailedPrecondition,
 			"%s cannot be deleted while %s: delete those first. "+
 				"They were created from a snapshot of this volume, so ZFS keeps this "+
 				"one alive to serve them",
