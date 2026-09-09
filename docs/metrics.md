@@ -86,13 +86,18 @@ correct across any scrape interval, where a pre-divided average is not.
   filled in by the kubelet because the CSIDriver sets `podInfoOnMount: true`. A
   pod may only mount a claim from its own namespace, so `namespace` **is** the
   claim's namespace.
-- **`pvc`** — populated only when the publish context carries the claim name.
-  The external-provisioner passes `csi.storage.k8s.io/pvc/name` to
-  _CreateVolume_, on the controller; it does not reach the node. The node plugin
-  deliberately talks to neither the appliance nor the API server, so it does not
-  look the claim up — that would mean giving a privileged DaemonSet on every
-  node credentials it does not otherwise need. Recover the claim name by joining
-  on `persistentvolume` against kube-state-metrics:
+- **`pvc`** — the claim name. Kubernetes passes it to _CreateVolume_ on the
+  controller and **not** to the node, so the controller echoes it into the
+  volume context, which the kubelet then hands back at `NodePublishVolume`. The
+  node plugin deliberately talks to neither the appliance nor the API server, so
+  it never looks the claim up — that would mean giving a privileged DaemonSet on
+  every node credentials it does not otherwise need.
+
+  It is empty for a volume provisioned before this echo existed, and for a
+  hand-written PersistentVolume whose `csi.volumeAttributes` does not carry
+  `csi.storage.k8s.io/pvc/name`. Both keep working; only the label is missing.
+  Recover the claim name for those by joining on `persistentvolume` against
+  kube-state-metrics:
 
   ```promql
   sum by (namespace, persistentvolume) (rate(truenas_csi_volume_read_bytes_total[5m]))

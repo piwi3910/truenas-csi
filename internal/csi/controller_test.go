@@ -342,6 +342,33 @@ func TestTopologyExcludesIncapableNode(t *testing.T) {
 	}
 }
 
+// TestCreateVolumeEchoesClaimName pins the claim name into the volume context.
+//
+// Kubernetes hands the claim name to CreateVolume and NOT to
+// NodePublishVolume, so the node's per-volume I/O metrics can only label a
+// series with its PVC if the controller echoes it here. Losing this leaves the
+// `pvc` label silently empty -- the metrics still work, so nothing fails, and
+// every dashboard has to join through kube-state-metrics instead.
+func TestCreateVolumeEchoesClaimName(t *testing.T) {
+	shared = newCounting()
+	c, _ := ctlWith(t)
+	p := params()
+	p[volume.ParamPVCName] = "my-claim"
+	p[volume.ParamPVCNamespace] = "team-a"
+	resp, err := c.CreateVolume(context.Background(), &csipb.CreateVolumeRequest{
+		Name: "pvc-claimname", Parameters: p,
+		CapacityRange:      &csipb.CapacityRange{RequiredBytes: 1 << 30},
+		VolumeCapabilities: testCaps(),
+	})
+	if err != nil {
+		t.Fatalf("CreateVolume: %v", err)
+	}
+	if got := resp.GetVolume().GetVolumeContext()[node.KeyPVCName]; got != "my-claim" {
+		t.Errorf("volume context %q = %q, want the claim name %q",
+			node.KeyPVCName, got, "my-claim")
+	}
+}
+
 // TestCreateVolumeEchoesNodeParameters fails if a StorageClass parameter the
 // NODE reads stops reaching the volume context.
 //

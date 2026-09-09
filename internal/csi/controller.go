@@ -314,6 +314,15 @@ func (c *controller) CreateVolume(ctx context.Context, req *csipb.CreateVolumeRe
 			vctx[k] = v
 		}
 	}
+	// The claim name, for the node's per-volume I/O metrics. Kubernetes gives
+	// it to CreateVolume but NOT to NodePublishVolume, so without this echo the
+	// `pvc` label was permanently empty and every dashboard had to join through
+	// kube-state-metrics to name the claim a series belongs to. Echoing it
+	// costs one string in the PV's volumeAttributes and gives the node plugin
+	// no new credentials or lookups.
+	if name := volume.IdentityFrom(req.GetParameters()).PVCName; name != "" {
+		vctx[node.KeyPVCName] = name
+	}
 	out := &csipb.Volume{
 		VolumeId:           vol.ID.String(),
 		CapacityBytes:      vol.CapacityBytes,

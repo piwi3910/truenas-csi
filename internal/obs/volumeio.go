@@ -116,13 +116,14 @@ type VolumeIOSample struct {
 //   - Namespace and Pod arrive in the volume context at NodePublishVolume
 //     because the CSIDriver sets podInfoOnMount: true. A pod may only mount a
 //     claim from its own namespace, so Namespace IS the claim's namespace.
-//   - PVC is filled in only when the publish context actually carries the
-//     claim name (a hand-written PersistentVolume, or a future controller that
-//     echoes it into the volume context). The external-provisioner passes the
-//     claim name to CreateVolume, not to the node, and inventing a lookup for it
-//     would mean giving every node plugin API-server or appliance credentials.
-//     When it is empty, join on `persistentvolume` against kube-state-metrics'
-//     kube_persistentvolume_claim_ref — see docs/metrics.md.
+//   - PVC is the claim name, which Kubernetes passes to CreateVolume and not to
+//     the node. The controller echoes it into the volume context so it arrives
+//     here; inventing a lookup instead would mean giving every node plugin
+//     API-server or appliance credentials. It is empty for a volume provisioned
+//     before that echo existed and for a hand-written PersistentVolume that
+//     omits the attribute — join on `persistentvolume` against
+//     kube-state-metrics' kube_persistentvolume_claim_ref there, see
+//     docs/metrics.md.
 type VolumeIOLabels struct {
 	VolumeID         string
 	PersistentVolume string
