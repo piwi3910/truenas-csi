@@ -48,6 +48,27 @@ func IsNotFound(err error) bool {
 	return len(ce.Reason) >= 8 && ce.Reason[:8] == "[ENOENT]"
 }
 
+// IsParentMissing reports whether the appliance refused a dataset creation
+// because the dataset's PARENT does not exist.
+//
+// This is the shape a mis-typed parentDataset takes, and it deserves its own
+// answer because the operator's mistake is nowhere near the failure: the driver
+// starts, reports healthy, every sidecar goes green and the StorageClass
+// validates — and then every single PVC fails. Recognising it lets the driver
+// say which dataset has to exist instead of forwarding a middleware string.
+//
+// The middleware reports it as EINVAL with the real cause only in the text
+// ("pool_dataset_create.name: Parent dataset (Pool0/k8s) does not exist"),
+// which is why this matches on Reason. Verified on 25.10.6.
+func IsParentMissing(err error) bool {
+	var ce *CallError
+	if !errors.As(err, &ce) {
+		return false
+	}
+	return strings.Contains(ce.Reason, "Parent dataset") &&
+		strings.Contains(ce.Reason, "does not exist")
+}
+
 // IsBusy reports whether the appliance refused an operation because ZFS
 // considers the dataset busy: a mount or a zvol device the kernel has not
 // released yet, or a snapshot that still has dependent clones.

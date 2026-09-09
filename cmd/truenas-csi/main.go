@@ -222,6 +222,12 @@ func run(o options) error {
 			return err
 		}
 		defer func() { _ = reg.Close() }()
+
+		// Say at STARTUP whether each backend's parent dataset is really there.
+		// See verifyParentDatasets: without this the answer arrives one deploy
+		// later, on every PersistentVolumeClaim at once.
+		verifyParentDatasets(ctx, reg)
+
 		ctrl = csi.NewController(reg, cfg)
 		// Group snapshots are a controller-side capability: the node plugin has
 		// no part in them.

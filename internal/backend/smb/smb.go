@@ -392,6 +392,12 @@ func (b *Backend) create(ctx context.Context, dsPath string, r backend.CreateReq
 			},
 		})
 		if err != nil {
+			// A create that already carries a code chose it deliberately -- a
+			// missing parentDataset is FailedPrecondition with the path to
+			// create, and flattening it to Internal threw that away.
+			if code := status.Code(err); code != codes.OK && code != codes.Unknown {
+				return nil, err
+			}
 			return nil, status.Errorf(codes.Internal, "create dataset %s: %v", dsPath, err)
 		}
 		return ds, nil

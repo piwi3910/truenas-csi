@@ -4,6 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // DatasetSpec describes a dataset or zvol to create.
@@ -46,9 +50,28 @@ func (s DatasetSpec) payload() map[string]any {
 }
 
 // DatasetCreate creates a dataset or zvol.
+//
+// A missing PARENT is translated here rather than forwarded. Nothing verifies
+// that the configured parentDataset exists — the appliance is only asked at the
+// first provision — so a typo in it, or a pool imported without that dataset,
+// surfaces as a failure on every PersistentVolumeClaim long after the deploy
+// that caused it. FailedPrecondition with the path to create says what to do;
+// the raw middleware text ("pool_dataset_create.name: Parent dataset (...) does
+// not exist") does not, and arrived as a bare Internal error.
 func (c *Ops) DatasetCreate(ctx context.Context, spec DatasetSpec) (*Dataset, error) {
 	var ds Dataset
 	if err := c.CallJSON(ctx, &ds, "pool.dataset.create", spec.payload()); err != nil {
+		if IsParentMissing(err) {
+			parent := spec.Name
+			if i := strings.LastIndex(parent, "/"); i > 0 {
+				parent = parent[:i]
+			}
+			return nil, status.Errorf(codes.FailedPrecondition,
+				"cannot create %s: its parent dataset %s does not exist on the appliance. "+
+					"The driver never creates the configured parentDataset — create it "+
+					"(or correct the backend's pool/parentDataset) and retry.",
+				spec.Name, parent)
+		}
 		return nil, err
 	}
 	return &ds, nil
