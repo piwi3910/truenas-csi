@@ -17,12 +17,17 @@ const RenewAgeUnknown = -1
 // the only trustworthy one during a fence: the node's own kernel may be wedged,
 // unreachable, or lying, but the target knows who is holding a connection.
 //
-// UNVERIFIED: iscsi.global.sessions was confirmed on hardware to exist and to
-// answer, but the appliance had nothing attached, so it returned an empty list.
-// These field names come from the published schema at
-// https://192.168.10.253/api/docs/current/api_methods_iscsi.global.sessions.html
-// (initiator, initiator_addr, target, target_alias) and still need one run with
-// a LUN actually attached to confirm a populated element.
+// VERIFIED on 25.10.6 with a LUN attached. A populated element carries, among
+// a dozen negotiated-parameter fields this driver ignores:
+//
+//	"initiator":      "iqn.2004-10.com.ubuntu:01:6203ea03ca9",
+//	"initiator_addr": "192.168.10.105",
+//	"target":         "iqn.2005-10.org.freenas.ctl:csi-pool0-k8s",
+//	"target_alias":   "csi-pool0-k8s"
+//
+// initiator_addr is a bare address with no port, and target_alias is the short
+// name the driver created the target with, without the iscsi.global basename —
+// both as assumed here.
 type ISCSISession struct {
 	// Initiator is the initiator's IQN, matching the node's InitiatorName.
 	Initiator string

@@ -1009,3 +1009,14 @@ With a node attached to an exported subsystem:
 `host_traddr` is a BARE address, not the "host:port" that `nfs.get_nfs4_clients`
 uses. This was the last unverified shape on the fencing path; all three session
 sources (iSCSI, NFSv4, NVMe) now decode correctly against live payloads.
+
+## iscsi.global.sessions, populated (verified 25.10.6)
+
+    {"initiator":"iqn.2004-10.com.ubuntu:01:6203ea03ca9",
+     "initiator_addr":"192.168.10.105",
+     "target":"iqn.2005-10.org.freenas.ctl:csi-pool0-k8s",
+     "target_alias":"csi-pool0-k8s", ...a dozen negotiated-parameter fields...}
+
+`initiator_addr` is a bare address with no port. `target_alias` is the short
+target name without the `iscsi.global` basename prefix. Both as the driver
+assumed, so the fence's iSCSI signal is now measured rather than inferred.
