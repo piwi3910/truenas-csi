@@ -2,11 +2,13 @@ package backend
 
 import (
 	"context"
+	"fmt"
 	"path"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/piwi3910/truenas-csi/internal/obs"
 	"github.com/piwi3910/truenas-csi/internal/truenas"
 	"github.com/piwi3910/truenas-csi/internal/volume"
 	"google.golang.org/grpc/codes"
@@ -56,6 +58,9 @@ func (r *Registry) CreateGroupSnapshot(ctx context.Context, sources []volume.ID,
 		if _, err := c.SnapshotCreateRecursive(ctx, parent, name); err != nil {
 			return nil, err
 		}
+		if err := trimNonMembers(ctx, c, parent, name, sources); err != nil {
+			return nil, err
+		}
 		existing, _ = c.SnapshotQuery(ctx, groupZFS)
 	}
 	// The creation time is ZFS's, not this process's: a retry must report the
@@ -89,6 +94,56 @@ func (r *Registry) CreateGroupSnapshot(ctx context.Context, sources []volume.ID,
 		})
 	}
 	return g, nil
+}
+
+// trimNonMembers removes the snapshots the recursive create took of datasets
+// that are not in the group.
+//
+// ZFS offers no way to snapshot a SUBSET of a parent's children atomically:
+// pool.snapshot.create with recursive:true takes the parent and everything
+// beneath it in one transaction group, which is exactly the atomicity the group
+// needs and also more datasets than it asked for. Verified on hardware — a
+// group snapshot of two volumes created four snapshots, one of them on a
+// bystander volume that was never a member, and the CO was shown two.
+//
+// Left alone those snapshots are invisible to the CO and destroyed by a later
+// DeleteVolumeGroupSnapshot, so an unrelated volume silently gains and loses a
+// snapshot, holds space for it meanwhile, and reports it through ListSnapshots.
+// On a backend with a flat layout that is every volume on the appliance.
+//
+// Atomicity is not weakened: the members were captured in one transaction
+// group before anything is removed here. A failure to trim fails the whole
+// create, because a group that quietly snapshotted the rest of the pool is not
+// the group the caller asked for.
+func trimNonMembers(ctx context.Context, c truenas.API, parent, name string, sources []volume.ID) error {
+	keep := map[string]bool{parent: true} // the anchor IS the group
+	for _, s := range sources {
+		keep[s.DatasetPath()] = true
+	}
+	snaps, err := c.SnapshotList(ctx, parent)
+	if err != nil {
+		return fmt.Errorf("listing the recursive snapshot's members: %w", err)
+	}
+	for i := range snaps {
+		s := &snaps[i]
+		if snapshotName(s.ID) != name {
+			continue
+		}
+		ds := s.Dataset
+		if ds == "" {
+			ds, _ = splitSnapshotID(s.ID)
+		}
+		if keep[ds] || (ds != parent && !strings.HasPrefix(ds, parent+"/")) {
+			continue
+		}
+		if err := c.SnapshotDelete(ctx, s.ID); err != nil {
+			return fmt.Errorf("removing %s, which the recursive snapshot took of "+
+				"%s -- a dataset that is not a member of this group: %w", s.ID, ds, err)
+		}
+		obs.Logger(ctx).Info("removed a non-member snapshot the recursive create took",
+			"snapshot", s.ID, "dataset", ds, "group", parent+"@"+name)
+	}
+	return nil
 }
 
 // CheckGroupSources reports whether these volumes can be snapshotted in one
@@ -131,7 +186,14 @@ func (r *Registry) groupParent(sources []volume.ID) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if want := cfgB.Pool + "/" + cfgB.ParentDataset; parent != want {
+	want := cfgB.Pool + "/" + cfgB.ParentDataset
+	// The parent is either the configured dataset itself (flat volumes) or one
+	// namespace dataset directly beneath it (namespaced volumes). Namespaced
+	// members were REFUSED before this: their shared parent is
+	// <pool>/<parent>/<namespace>, which is not the configured path, so the one
+	// layout that gives a group a dedicated parent was the one layout that
+	// could not be grouped.
+	if parent != want && path.Dir(parent) != want {
 		return "", status.Errorf(codes.InvalidArgument,
 			"group members live under %q, outside backend %q's parent dataset %q",
 			parent, backendName, want)
