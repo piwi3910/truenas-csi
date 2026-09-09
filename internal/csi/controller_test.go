@@ -512,3 +512,63 @@ func TestExpandOfABlockVolumeStillAsksTheNode(t *testing.T) {
 			"the device, so the pod keeps seeing the old size")
 	}
 }
+
+// TestCreateVolumeRefusesAnImpossiblePlacement pins the check that stops the
+// driver creating a volume nothing can mount.
+//
+// With late binding the scheduler picks a node and external-provisioner sends
+// that node's topology in requisite. The driver ignored it and answered with
+// its own AccessibleTopology, so a StorageClass asking for something the node
+// lacks produced a real dataset on the appliance, a Bound claim, and a pod
+// stuck for ever on "node affinity doesn't match node". Reproduced on a live
+// cluster with multipath: "true" against nodes without multipath-tools.
+func TestCreateVolumeRefusesAnImpossiblePlacement(t *testing.T) {
+	shared = newCounting()
+	c, _ := ctlWith(t)
+	p := params()
+	p["multipath"] = "true"
+
+	_, err := c.CreateVolume(context.Background(), &csipb.CreateVolumeRequest{
+		Name: "pvc-impossible", Parameters: p,
+		CapacityRange:      &csipb.CapacityRange{RequiredBytes: 1 << 30},
+		VolumeCapabilities: testCaps(),
+		AccessibilityRequirements: &csipb.TopologyRequirement{
+			Requisite: []*csipb.Topology{{Segments: map[string]string{
+				node.TopologyKey(node.CapMultipath): "false",
+				node.BackendTopologyKey("nas1"):     "true",
+			}}},
+		},
+	})
+	if status.Code(err) != codes.ResourceExhausted {
+		t.Fatalf("code = %s, want ResourceExhausted so the caller can try another "+
+			"node instead of binding a volume that never mounts (got %v)",
+			status.Code(err), err)
+	}
+	if shared.creates.Load() != 0 {
+		t.Errorf("the volume was created anyway: %d creates", shared.creates.Load())
+	}
+}
+
+// TestCreateVolumeAllowsAPlacementTheNodeDoesNotContradict is the other half.
+// A node that simply does not publish a key must not be refused: node plugins
+// roll separately from the controller, so during an upgrade a node may not yet
+// report a newly added capability, and blocking on that would make every
+// volume unschedulable mid-rollout.
+func TestCreateVolumeAllowsAPlacementTheNodeDoesNotContradict(t *testing.T) {
+	shared = newCounting()
+	c, _ := ctlWith(t)
+
+	_, err := c.CreateVolume(context.Background(), &csipb.CreateVolumeRequest{
+		Name: "pvc-quiet-node", Parameters: params(),
+		CapacityRange:      &csipb.CapacityRange{RequiredBytes: 1 << 30},
+		VolumeCapabilities: testCaps(),
+		AccessibilityRequirements: &csipb.TopologyRequirement{
+			Requisite: []*csipb.Topology{{Segments: map[string]string{
+				"kubernetes.io/hostname": "worker-1",
+			}}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("a node that publishes none of the driver's keys was refused: %v", err)
+	}
+}

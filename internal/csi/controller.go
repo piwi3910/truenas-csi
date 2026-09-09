@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -241,6 +242,18 @@ func (c *controller) CreateVolume(ctx context.Context, req *csipb.CreateVolumeRe
 	if err := c.requireRoomInNamespaceQuota(ctx, id, size); err != nil {
 		return nil, err
 	}
+	// What this volume will require of a node, checked against where the CO
+	// asked for it BEFORE anything is created. Without this the driver answered
+	// with topology the chosen node cannot satisfy: the volume was created, the
+	// claim bound, and the pod then failed PreBind for ever with "node affinity
+	// doesn't match node" -- a real dataset on the appliance that nothing can
+	// ever mount. Seen with a multipath StorageClass on nodes without
+	// multipath-tools.
+	topology := requiredTopology(id.Backend, id.Protocol, req.GetParameters())
+	if err := requireTopologyReachable(req.GetAccessibilityRequirements(), topology); err != nil {
+		return nil, err
+	}
+
 	cr := backend.CreateRequest{ID: id, CapacityBytes: size, Params: req.GetParameters()}
 	if src := req.GetVolumeContentSource(); src != nil {
 		if s := src.GetSnapshot(); s != nil {
@@ -347,7 +360,7 @@ func (c *controller) CreateVolume(ctx context.Context, req *csipb.CreateVolumeRe
 		VolumeId:           vol.ID.String(),
 		CapacityBytes:      vol.CapacityBytes,
 		VolumeContext:      vctx,
-		AccessibleTopology: requiredTopology(id.Backend, id.Protocol, req.GetParameters()),
+		AccessibleTopology: topology,
 	}
 	if cr.SourceSnapshot != "" {
 		out.ContentSource = &csipb.VolumeContentSource{Type: &csipb.VolumeContentSource_Snapshot{
@@ -883,6 +896,57 @@ func snapshotNameOf(id string) string {
 // Publishing capability labels from the node is only half of topology: without
 // the matching requirement here, every node looks equally able and the pod is
 // scheduled somewhere that then fails to mount.
+// requireTopologyReachable refuses a volume the CO has asked to place where it
+// cannot work.
+//
+// external-provisioner sends the chosen node's topology in requisite when the
+// StorageClass binds late, which is the only chance to notice that the node
+// lacks something the volume needs. ResourceExhausted is the code the CSI spec
+// reserves for "unable to provision in accessible_topology", and the one that
+// lets the caller retry somewhere else rather than give up.
+//
+// A key the candidate does not mention is NOT treated as a mismatch. Node
+// plugins roll separately from the controller -- the DaemonSet is OnDelete --
+// so a node that has not yet learned to publish a newly added key would
+// otherwise become unschedulable for every volume during an upgrade. Only a key
+// the node publishes with a DIFFERENT value is a refusal, which is exactly the
+// case that matters: multipath=false, xfs=false.
+func requireTopologyReachable(req *csipb.TopologyRequirement, want []*csipb.Topology) error {
+	if req == nil || len(want) == 0 {
+		return nil
+	}
+	candidates := req.GetRequisite()
+	if len(candidates) == 0 {
+		candidates = req.GetPreferred()
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
+	need := want[0].GetSegments()
+	var missing []string
+	for _, c := range candidates {
+		have := c.GetSegments()
+		ok := true
+		for k, v := range need {
+			if got, present := have[k]; present && got != v {
+				ok = false
+				if !slices.Contains(missing, k) {
+					missing = append(missing, k)
+				}
+			}
+		}
+		if ok {
+			return nil
+		}
+	}
+	sort.Strings(missing)
+	return status.Errorf(codes.ResourceExhausted,
+		"no node the scheduler offered can serve this volume: it needs %s. "+
+			"The node plugin publishes what each node supports; a volume created here "+
+			"would bind and then never mount",
+		strings.Join(missing, ", "))
+}
+
 func requiredTopology(backendName, protocol string, params map[string]string) []*csipb.Topology {
 	segments := map[string]string{
 		node.TopologyKey(node.Capability(protocol)): "true",
