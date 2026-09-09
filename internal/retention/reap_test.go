@@ -133,14 +133,14 @@ func TestReapableEnforcesAllFourPreconditions(t *testing.T) {
 			name: "a driver-owned dataset with no deletion timestamp is refused",
 			ds: dataset(t, p.Root()+"/no-timestamp",
 				map[string]string{volume.OwnerProperty: volume.OwnerValue}, nil),
-			want: "no io.truenas.csi:deletedAt property",
+			want: "no io.truenas.csi:deleted-at property",
 		},
 		{
 			name: "a timestamp that only INHERITED down is refused",
 			ds: dataset(t, p.Root()+"/inherited-timestamp",
 				map[string]string{volume.OwnerProperty: volume.OwnerValue},
 				map[string]string{volume.DeletedAtProperty: longAgo}),
-			want: "no io.truenas.csi:deletedAt property",
+			want: "no io.truenas.csi:deleted-at property",
 		},
 		{
 			name: "an unparsable timestamp is refused rather than treated as old",

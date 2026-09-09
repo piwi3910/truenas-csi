@@ -234,14 +234,30 @@ var renameRetryTimeout = 30 * time.Second
 // renameWhenReleased renames, retrying while the appliance reports the dataset
 // busy.
 //
-// force is never passed. A rename the appliance refuses because something still
-// holds the dataset means teardown did not finish, and forcing past that is how
-// a live export ends up pointing at a path that no longer exists.
+// force is passed as TRUE, and the reasoning is worth stating because the
+// opposite looks safer and is not. 25.10 refuses EVERY rename without it:
+//
+//	[EINVAL] pool.dataset.rename.force: No safety checks are performed when
+//	renaming ZFS resources; this may break existing usages. If you understand
+//	the risks, please set force and proceed.
+//
+// It is a mandatory acknowledgement, not a conditional safety gate that passes
+// when the dataset is idle — verified against the appliance, where a rename of
+// a freshly retired dataset with no share, no extent and nothing holding it was
+// refused exactly the same way. Passing false does not make the driver careful;
+// it makes delete protection fail every single time.
+//
+// What actually keeps this safe is the ordering, not the flag: DeleteVolume has
+// already removed the share, the extent and the target mapping before we get
+// here, so by this point there is deliberately nothing left to break. The busy
+// retry below covers the one thing teardown cannot make instantaneous — the
+// kernel releasing a zvol — and a rename still refused after that is returned,
+// not forced past a second time.
 func renameWhenReleased(ctx context.Context, c truenas.API, src, dst string) error {
 	deadline := time.Now().Add(renameRetryTimeout)
 	delay := 200 * time.Millisecond
 	for {
-		err := c.DatasetRename(ctx, src, dst, false)
+		err := c.DatasetRename(ctx, src, dst, true)
 		if err == nil {
 			return nil
 		}

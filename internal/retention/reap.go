@@ -30,7 +30,7 @@ var ErrNotReapable = errors.New("dataset is not reapable")
 //     the graveyard's own marker reaches everything beneath it, and a
 //     presence-only check would clear a dataset a human dropped in there for
 //     destruction.
-//  3. CARRIES A DELETION TIMESTAMP — a LOCAL, parsable io.truenas.csi:deletedAt.
+//  3. CARRIES A DELETION TIMESTAMP — a LOCAL, parsable io.truenas.csi:deleted-at.
 //     No timestamp means the driver has no idea when the grace period started,
 //     and "no idea" is never "expired".
 //  4. PAST ITS GRACE PERIOD — now - deletedAt >= grace, with grace > 0.
@@ -58,15 +58,21 @@ func Reapable(ds *truenas.Dataset, p Policy, now time.Time) error {
 	if err := volume.VerifyOwned(view); err != nil {
 		return fmt.Errorf("%w: %w", ErrNotReapable, err)
 	}
-	// Defence in depth against the one shape ownership cannot exclude: the
-	// graveyard root is driver-owned too, and destroying it recursively would
-	// take every retired volume with it. ConfineToGraveyard already refuses it
-	// by path; this refuses it by marker as well, so neither check alone is
-	// load-bearing.
-	if volume.IsGraveyard(ds.LocalProperty(volume.GraveyardProperty)) {
-		return fmt.Errorf("%w: %q carries the graveyard marker; it is the container, not a retired volume",
-			ErrNotReapable, ds.ID)
-	}
+	// The graveyard root must never be reaped — destroying it recursively would
+	// take every retired volume with it — and ConfineToGraveyard already refuses
+	// it by PATH, exactly and by construction.
+	//
+	// It is deliberately NOT also refused by the graveyard marker, which looks
+	// like free defence in depth and is in fact a bug. Verified against 25.10:
+	// ZFS inherits user properties to children, and TrueNAS reports an INHERITED
+	// user property with source "LOCAL", indistinguishable from one set on the
+	// dataset itself. So every dataset renamed into the graveyard inherits the
+	// root's marker and reads as carrying it locally — and a marker check here
+	// refused every retired volume for ever, which is a feature whose whole
+	// purpose is bounded retention silently becoming unbounded.
+	//
+	// The same fact limits what the ownership check above can promise; see
+	// .procoder/notes/truenas-api-findings.md.
 
 	// 3. Carries a deletion timestamp.
 	deletedAt, err := volume.ParseDeletedAt(ds.LocalProperty(volume.DeletedAtProperty))

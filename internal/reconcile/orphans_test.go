@@ -169,8 +169,8 @@ const graveyardListing = `[
  {"id":"Pool0/k8s/.trash/20260801T000000Z-pvc-dead","type":"FILESYSTEM",
   "user_properties":{"io.truenas.csi:managed":{"value":"truenas-csi","source":"LOCAL"},
                      "io.truenas.csi:graveyard":{"value":"truenas-csi","source":"INHERITED"},
-                     "io.truenas.csi:deletedAt":{"value":"2026-08-01T00:00:00Z","source":"LOCAL"},
-                     "io.truenas.csi:retiredFrom":{"value":"nas1/nfs/Pool0/k8s/pvc-dead","source":"LOCAL"}}},
+                     "io.truenas.csi:deleted-at":{"value":"2026-08-01T00:00:00Z","source":"LOCAL"},
+                     "io.truenas.csi:retired-from":{"value":"nas1/nfs/Pool0/k8s/pvc-dead","source":"LOCAL"}}},
  {"id":"Pool0/k8s/pvc-a","type":"FILESYSTEM","refquota":{"parsed":1073741824},
   "user_properties":{"io.truenas.csi:managed":{"value":"truenas-csi","source":"LOCAL"}}}]`
 

@@ -734,3 +734,63 @@ Three things this settles:
 3. The uppercase enum spellings are what the middleware wants
    (`STANDARD`/`ALWAYS`/`DISABLED`/`INHERIT`), so a `VolumeAttributesClass`
    written in ZFS's natural lowercase has to be normalised, not rejected.
+
+## Delete protection, verified end to end (2026-09-09) — three bugs, one important
+
+Driving the real controller against the appliance found three defects that every
+unit test passed, because the fake is more permissive than the middleware in
+three different ways.
+
+### 1. `pool.dataset.rename` requires `force` on EVERY rename
+
+The method's warning reads like a conditional safety gate:
+
+> No safety checks are performed when renaming ZFS resources... Set Force to
+> continue.
+
+It is not conditional. A freshly retired dataset with no share, no extent and
+nothing holding it is still refused:
+
+    [EINVAL] pool.dataset.rename.force: ... please set force and proceed
+
+So `force: false` does not make a caller careful, it makes the call fail 100% of
+the time. Safety has to come from the ORDER of operations — tear the share and
+extent down first — not from withholding the flag.
+
+### 2. ZFS user property names must be lowercase
+
+`io.truenas.csi:deletedAt` is rejected:
+
+    cannot set property for '<dataset>': invalid property 'io.truenas.csi:deletedAt'
+
+zfs accepts only lowercase letters, digits and `:-._` after the namespace. The
+properties are now `deleted-at` and `retired-from`. Every other property in this
+driver was already lowercase; these two were the outliers.
+`internal/volume/propertyname_test.go` now fails on any illegal spelling.
+
+### 3. An INHERITED user property is reported with `source: "LOCAL"`
+
+This is the one worth remembering. **ZFS inherits user properties to children,
+and TrueNAS does not distinguish the inherited value from a locally-set one** —
+`pool.dataset.query` reports `source: "LOCAL"` for both. Verified deliberately:
+
+    Pool0/inhprobe         managed = truenas-csi  source=LOCAL   (set here)
+    Pool0/inhprobe/child   managed = truenas-csi  source=LOCAL   (INHERITED,
+                                                    never set, never created
+                                                    by the driver)
+
+Immediate consequence: every dataset renamed into the graveyard inherits the
+root's `graveyard` marker, so a "refuse anything carrying the marker" check
+refused every retired volume for ever. The reaper now separates the root from
+its entries by PATH, which is exact.
+
+**Wider consequence, not yet addressed.** `volume.VerifyOwned` requires
+`io.truenas.csi:managed` at `source == LOCAL` specifically to distinguish "this
+driver created it" from "this merely sits under something the driver created".
+On TrueNAS that distinction does not exist for user properties. A dataset an
+operator creates by hand underneath a marked dataset inherits the marker and
+passes the ownership check. The practical exposure today is small — the marked
+datasets with children are the graveyard root and, when namespace quotas are on,
+the namespace datasets — but the guarantee the code documents is stronger than
+what the platform provides, and any future guard built on `source == LOCAL`
+inherits the same weakness.

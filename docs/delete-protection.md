@@ -78,8 +78,8 @@ Rules the driver enforces at startup:
    with `io.truenas.csi:managed` and `io.truenas.csi:graveyard`.
 3. Renames the volume's dataset to
    `<pool>/<parentDataset>/<graveyardDataset>/<YYYYMMDDThhmmssZ>-<volume>`.
-4. Stamps `io.truenas.csi:deletedAt` (RFC 3339 UTC) and
-   `io.truenas.csi:retiredFrom` (the original CSI volume handle) on it.
+4. Stamps `io.truenas.csi:deleted-at` (RFC 3339 UTC) and
+   `io.truenas.csi:retired-from` (the original CSI volume handle) on it.
 5. Returns success, and logs a line saying that the space is not reclaimed.
 
 The ownership marker is not re-stamped: a rename carries a dataset's user
@@ -109,7 +109,7 @@ structurally impossible: a Kubernetes namespace is a DNS-1123 label and a
 PersistentVolume name a DNS-1123 subdomain, and neither may begin with one.
 
 The entry name is a convenience for reading `zfs list`; the identity that
-matters is in `io.truenas.csi:retiredFrom`.
+matters is in `io.truenas.csi:retired-from`.
 
 ### What still resolves, and what does not
 
@@ -123,7 +123,7 @@ matters is in `io.truenas.csi:retiredFrom`.
   the old one.
 - `ListVolumes` and the orphan report skip the graveyard and everything in it,
   recognising them by their local `io.truenas.csi:graveyard` and
-  `io.truenas.csi:deletedAt` markers rather than by the configured graveyard
+  `io.truenas.csi:deleted-at` markers rather than by the configured graveyard
   name — so leftovers stay recognised after the feature is turned off or the
   graveyard renamed.
 - A retired volume's **snapshots travel with it** (ZFS renames a dataset's
@@ -150,7 +150,7 @@ dataset the appliance just returned. All four, every time:
    `LOCAL`**. ZFS user properties are inherited, so the graveyard's own marker
    reaches everything beneath it; a presence-only check would clear a dataset
    somebody dropped in there by hand.
-3. **Carries a deletion timestamp** — a local, parsable `io.truenas.csi:deletedAt`.
+3. **Carries a deletion timestamp** — a local, parsable `io.truenas.csi:deleted-at`.
    A value the driver cannot read is never treated as old.
 4. **Past its grace period** — `now - deletedAt >= gracePeriod`. A timestamp in
    the future reads as "not yet".
@@ -185,16 +185,16 @@ hand on the appliance:
 
 ```sh
 # Find it: the property says which PVC it was.
-zfs get -r io.truenas.csi:retiredFrom Pool0/k8s/.trash
+zfs get -r io.truenas.csi:retired-from Pool0/k8s/.trash
 
 # Move it back to the path its old handle names, and clear the retirement marks.
 zfs rename Pool0/k8s/.trash/20260908T101500Z-pvc-9d1c… Pool0/k8s/pvc-9d1c…
-zfs inherit io.truenas.csi:deletedAt   Pool0/k8s/pvc-9d1c…
-zfs inherit io.truenas.csi:retiredFrom Pool0/k8s/pvc-9d1c…
+zfs inherit io.truenas.csi:deleted-at   Pool0/k8s/pvc-9d1c…
+zfs inherit io.truenas.csi:retired-from Pool0/k8s/pvc-9d1c…
 ```
 
 Then re-create the PersistentVolume with the original `volumeHandle`; the driver
-will re-create the share on the next publish. Clear `io.truenas.csi:deletedAt`
+will re-create the share on the next publish. Clear `io.truenas.csi:deleted-at`
 first — while it is set, `ListVolumes` will not report the volume.
 
 ## Turning it off again

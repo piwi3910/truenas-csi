@@ -243,11 +243,27 @@ func TestRetireRetriesWhileTheZvolIsStillBusy(t *testing.T) {
 	}
 }
 
-// TestRetireDoesNotForceTheRename. force is what the middleware asks for when a
-// share, extent or task still holds the dataset — which is to say, when
-// teardown has NOT finished. Passing it would leave a live export pointing at a
-// path that no longer exists, so a refusal must stay a refusal.
-func TestRetireDoesNotForceTheRename(t *testing.T) {
+// TestRetireForcesTheRename pins that the rename passes force, which is the
+// opposite of what this test asserted when it was written.
+//
+// The middleware's warning ("No safety checks are performed... may cause
+// disruptions or service failures") reads like a conditional gate that would
+// pass on an idle dataset, and the original reasoning followed from that: a
+// refusal means teardown did not finish, so never force. Verified against the
+// appliance, that is simply wrong. 25.10 refuses EVERY rename without force —
+// a freshly retired dataset with no share, no extent and nothing holding it is
+// refused with
+//
+//	[EINVAL] pool.dataset.rename.force: ... please set force and proceed
+//
+// so passing false does not make the driver careful, it makes delete protection
+// fail 100% of the time. The feature was completely non-functional and every
+// unit test passed, because the fake accepted what the appliance does not.
+//
+// Safety comes from ORDER instead: DeleteVolume removes the share, the extent
+// and the target mapping before Retire is reached, so there is deliberately
+// nothing left for the rename to break.
+func TestRetireForcesTheRename(t *testing.T) {
 	n := newNAS(t)
 	p := testPolicy(week)
 	n.put("Pool0/k8s/pvc-1", map[string]string{volume.OwnerProperty: volume.OwnerValue})
@@ -259,7 +275,8 @@ func TestRetireDoesNotForceTheRename(t *testing.T) {
 	if len(forced) != 1 {
 		t.Fatalf("expected exactly one rename, saw %d", len(forced))
 	}
-	if forced[0] {
-		t.Error("the rename was forced; a rename the appliance refuses means teardown did not finish")
+	if !forced[0] {
+		t.Error("the rename was not forced, so the appliance would refuse it and delete " +
+			"protection would fail every time: 25.10 requires force on every rename")
 	}
 }

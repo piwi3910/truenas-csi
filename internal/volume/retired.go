@@ -12,6 +12,18 @@ import (
 // readers are spread across the CSI service, the orphan reporter and the
 // reaper. Only internal/retention writes them.
 const (
+	// ZFS user property NAMES MUST BE LOWERCASE. zfs accepts only lowercase
+	// letters, digits and ":-._" in the part after the namespace, and answers
+	// anything else with
+	//
+	//	cannot set property for '<dataset>': invalid property '<name>'
+	//
+	// These two were written in camelCase and every unit test passed, because
+	// the fake stores whatever key it is handed. On the appliance the stamping
+	// failed, the retired dataset carried no timestamp, and the reaper — which
+	// refuses anything it cannot date — would have kept it for ever. Verified
+	// against 25.10; hyphens are the readable spelling that is actually legal.
+
 	// GraveyardProperty marks the graveyard dataset itself — the container
 	// retired volumes are renamed into. Its presence with source LOCAL is what
 	// says "this is the graveyard root", never "this is a retired volume".
@@ -22,7 +34,7 @@ const (
 	// measured from and, because it is stamped on the dataset rather than held
 	// in the driver, it survives a controller restart, a rescheduled pod and a
 	// driver upgrade.
-	DeletedAtProperty = "io.truenas.csi:deletedAt"
+	DeletedAtProperty = "io.truenas.csi:deleted-at"
 
 	// RetiredFromProperty records the CSI volume handle the dataset served
 	// before it was retired.
@@ -31,7 +43,7 @@ const (
 	// ZFS name component cannot. Recording it is what lets an operator answer
 	// "which PVC was this?" from the appliance alone, and it is the only
 	// evidence that survives once the PersistentVolume is gone.
-	RetiredFromProperty = "io.truenas.csi:retiredFrom"
+	RetiredFromProperty = "io.truenas.csi:retired-from"
 )
 
 // GraveyardValue is the value GraveyardProperty carries. It is a constant

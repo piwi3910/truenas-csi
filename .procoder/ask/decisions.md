@@ -111,6 +111,32 @@ The procoder chain for architectural work goes spec -> plan -> todo/backlog -> b
 - Revisit the shared-iSCSI-target decision before planning around it
 - Start building directly from the spec, skipping the plan
 
+## Hardware verification of the delete-protection rename path
+
+Delete protection shipped in `internal/retention` with the graveyard rename
+exercised only against `internal/truenas/fake`. `pool.dataset.rename`'s
+parameter shape was taken from the appliance's published method page, and its
+own documentation warns it performs no safety checks on a dataset still in use.
+Everything else in the feature — the four reaper preconditions, the clone
+behaviour, the ownership checks — is covered by tests and mutation-checked, but
+the one call that actually moves data has never run against an appliance.
+
+The API key currently in use is live and the appliance is reachable, so this is
+a matter of choosing when, not whether.
+
+**Decided 2026-09-09: verify now, end to end.**
+
+- Verify now: provision a volume through the driver, retire it, read back the
+  renamed dataset and its `deletedAt` / `retiredFrom` properties, then drive the
+  reaper past an expired grace period and confirm the destroy. Costs one live
+  run; settles the only unverified call in the feature.
+- Ship as-is and verify on first real use: the feature is off by default, so
+  nothing is at risk until an operator enables it. The failure mode if the
+  rename shape is wrong is a failed DeleteVolume, which is loud rather than
+  silent.
+- Verify only the rename in isolation, without the reaper, and leave the
+  destroy path to the first real expiry.
+
 ## Superseded decisions
 
 Two decisions recorded earlier were reversed by later instructions ("no more
