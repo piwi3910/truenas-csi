@@ -283,11 +283,8 @@ func (b *Backend) restore(ctx context.Context, snapshot, dsPath string, bytes in
 		}
 		return nil, cause
 	}
-	if err := b.c.SetUserProperty(ctx, dsPath, volume.OwnerIDProperty, dsPath); err != nil {
-		return fail("stamp the owner id on clone %s: %v", dsPath, err)
-	}
-	if err := b.c.SetUserProperty(ctx, dsPath, volume.OwnerProperty, volume.OwnerValue); err != nil {
-		return fail("stamp ownership on clone %s: %v", dsPath, err)
+	if err := backend.StampClone(ctx, b.c, dsPath, Protocol); err != nil {
+		return fail("%v", err)
 	}
 	if _, err := b.c.DatasetUpdate(ctx, dsPath, map[string]any{"refquota": bytes}); err != nil {
 		return fail("set refquota on clone %s: %v", dsPath, err)

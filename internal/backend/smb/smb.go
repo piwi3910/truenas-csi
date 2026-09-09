@@ -444,11 +444,8 @@ func (b *Backend) restore(ctx context.Context, snapshot, dsPath string, bytes in
 		}
 		return nil, cause
 	}
-	if err := b.c.SetUserProperty(ctx, dsPath, volume.OwnerIDProperty, dsPath); err != nil {
-		return fail("stamp the owner id on clone %s: %v", dsPath, err)
-	}
-	if err := b.c.SetUserProperty(ctx, dsPath, volume.OwnerProperty, volume.OwnerValue); err != nil {
-		return fail("stamp ownership on clone %s: %v", dsPath, err)
+	if err := backend.StampClone(ctx, b.c, dsPath, Protocol); err != nil {
+		return fail("%v", err)
 	}
 	// acltype and aclmode are the other two properties a clone does not inherit,
 	// and they are the ones share_type: SMB sets LOCAL on the create path. A

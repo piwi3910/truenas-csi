@@ -130,3 +130,31 @@ func TestISCSICloneDoesNotInheritSourcePVCIdentity(t *testing.T) {
 		t.Fatalf("comments = %q — the clone inherited its origin's description", comments(ds))
 	}
 }
+
+// TestRestoreStampsProtocol pins the protocol marker onto the clone path. Only
+// the create path stamped it, so a cloned volume reached the appliance without
+// one, and both readers that consult it -- the orphan reconciler and
+// per-protocol capacity accounting -- fall back to guessing from the dataset
+// type. A VOLUME guesses "iscsi", so every cloned nvme volume was reported
+// under an iscsi handle that names nothing.
+func TestRestoreStampsProtocol(t *testing.T) {
+	ctx := context.Background()
+	n := newNAS(t)
+	b := n.backend()
+
+	if _, err := b.Create(ctx, createReq("pvc-src", 1<<30, nil)); err != nil {
+		t.Fatalf("Create source: %v", err)
+	}
+	req := createReq("pvc-restored", 1<<30, nil)
+	req.SourceSnapshot = "Pool0/k8s/pvc-src@snap1"
+	if _, err := b.Create(ctx, req); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	ds := n.dataset("Pool0/k8s/pvc-restored")
+	if ds == nil {
+		t.Fatal("the clone was not created")
+	}
+	if got, _ := userProp(t, ds, volume.ProtocolProperty); got != Protocol {
+		t.Fatalf("clone protocol property = %q, want %q", got, Protocol)
+	}
+}

@@ -813,3 +813,27 @@ func TestSMBParamsRejectSecretNameParameter(t *testing.T) {
 		}
 	}
 }
+
+// TestSMBRestoreStampsProtocol pins the protocol marker onto the clone path.
+//
+// Only the create path stamped it, so every cloned or snapshot-restored volume
+// reached the appliance without one. Two readers fall back to a guess when it
+// is missing -- the orphan reconciler and per-protocol capacity accounting --
+// and for a FILESYSTEM the guess is "nfs", so a cloned SMB volume was reported
+// under an nfs volume handle that names nothing.
+func TestSMBRestoreStampsProtocol(t *testing.T) {
+	n := newNAS(t)
+	n.put("Pool0/k8s/pvc-src", &fakeDataset{refquota: gib, marker: volume.OwnerValue, source: "LOCAL"})
+	b := newBackend(t, n)
+
+	r := testRequest("pvc-restored", gib)
+	r.SourceSnapshot = "Pool0/k8s/pvc-src@snap-1"
+	if _, err := b.Create(context.Background(), r); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	ds := n.dataset("Pool0/k8s/pvc-restored")
+	if got := ds.props[volume.ProtocolProperty]; got != "smb" {
+		t.Fatalf("clone protocol property = %q, want \"smb\" — the orphan report "+
+			"and capacity accounting would both call this volume nfs", got)
+	}
+}

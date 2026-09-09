@@ -283,11 +283,8 @@ func (b *iscsiBackend) cloneZvol(ctx context.Context, r backend.CreateRequest, r
 		_ = b.c.DatasetDelete(context.WithoutCancel(ctx), dsPath, true, true)
 	})
 
-	if err := b.c.SetUserProperty(ctx, dsPath, volume.OwnerIDProperty, dsPath); err != nil {
-		return fmt.Errorf("stamping the owner id on %s: %w", dsPath, err)
-	}
-	if err := b.c.SetUserProperty(ctx, dsPath, volume.OwnerProperty, volume.OwnerValue); err != nil {
-		return fmt.Errorf("stamping the restored volume %s: %w", dsPath, err)
+	if err := backend.StampClone(ctx, b.c, dsPath, Protocol); err != nil {
+		return err
 	}
 
 	ds, err := b.c.DatasetQuery(ctx, dsPath)

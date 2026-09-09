@@ -2,6 +2,7 @@ package backend
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/piwi3910/truenas-csi/internal/obs"
 	"github.com/piwi3910/truenas-csi/internal/truenas"
@@ -70,4 +71,28 @@ func RecordIdentity(ctx context.Context, c truenas.API, dsPath string, id volume
 		obs.Logger(ctx).Warn("recording the PVC identity failed; the volume is fine but unlabelled",
 			"dataset", dsPath, "error", err)
 	}
+}
+
+// StampClone writes the markers a ZFS clone does not inherit: the ownership
+// marker, the owner id, and the protocol.
+//
+// A clone takes its properties from its POSITION in the hierarchy, never from
+// its origin, so a freshly cloned volume arrives carrying none of them. The
+// ownership marker and owner id were already written by hand on every clone
+// path; the protocol was not, and it has two readers that silently guess when
+// it is absent -- the orphan reconciler and per-protocol capacity accounting.
+// Both guess from the dataset type alone, so a FILESYSTEM became "nfs" and a
+// VOLUME became "iscsi": every cloned SMB volume was reported under an nfs
+// handle that names nothing, and every cloned NVMe volume under an iscsi one.
+func StampClone(ctx context.Context, c truenas.API, dsPath, protocol string) error {
+	for _, p := range []struct{ key, value string }{
+		{volume.OwnerIDProperty, dsPath},
+		{volume.OwnerProperty, volume.OwnerValue},
+		{volume.ProtocolProperty, protocol},
+	} {
+		if err := c.SetUserProperty(ctx, dsPath, p.key, p.value); err != nil {
+			return fmt.Errorf("stamping %s on clone %s: %w", p.key, dsPath, err)
+		}
+	}
+	return nil
 }
