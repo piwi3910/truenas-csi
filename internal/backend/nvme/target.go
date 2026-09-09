@@ -3,6 +3,7 @@ package nvme
 import (
 	"context"
 	"fmt"
+	"github.com/piwi3910/truenas-csi/internal/obs"
 	"net"
 	"strconv"
 	"strings"
@@ -44,7 +45,20 @@ func (b *nvmeBackend) ensureSubsystem(ctx context.Context, id volume.ID, p Param
 		return existing, nil
 	}
 
-	created, err := b.c.NVMeSubsysCreate(ctx, name, len(p.HostNQNs) == 0)
+	open := len(p.HostNQNs) == 0
+	if open {
+		// Said out loud, once per subsystem, because nothing else says it. An
+		// open subsystem is reachable by ANY initiator that can reach the
+		// portal -- there is no ACL to consult -- and the driver closes one
+		// only when it knows an NQN to admit: either hostNQNs on the
+		// StorageClass, or the node's own csi.truenas.watteel.com/nqn
+		// annotation. With neither, every NVMe volume on this backend is open.
+		obs.Logger(ctx).Warn("creating an OPEN NVMe subsystem: any initiator that can "+
+			"reach the portal may connect to this volume. Set hostNQNs on the "+
+			"StorageClass, or annotate each node with its host NQN, to close it",
+			"subsystem", name, "annotation", "csi.truenas.watteel.com/nqn")
+	}
+	created, err := b.c.NVMeSubsysCreate(ctx, name, open)
 	if err != nil {
 		// A concurrent creator may have won. Establish the state by query
 		// rather than by classifying the error, whose errname is unreliable.

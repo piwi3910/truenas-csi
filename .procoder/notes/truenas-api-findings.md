@@ -1041,3 +1041,17 @@ Measured on 25.10.6 with a live session on the target:
 `iscsi.targetextent.delete(id)` fails as above, `iscsi.targetextent.delete(id,
 true)` succeeds. `iscsi.extent.delete` already took `(id, remove, force)` in
 this codebase; the mapping call did not.
+
+## NVMe subsystems are created OPEN unless an initiator NQN is known
+
+Verified on 25.10.6, both ways:
+
+* No `hostNQNs` and no node annotation -> `nvmet.subsys` has
+  `allow_any_host: true` and `nvmet.host_subsys.query` returns zero entries.
+  Any initiator reaching the portal can connect.
+* With `csi.truenas.watteel.com/nqn` annotated on the node -> the subsystem is
+  created `allow_any_host: false` with exactly one host ACL entry for that NQN.
+
+The mechanism works; nothing sets the annotation. `nvmet.global.sessions`
+reports live controllers regardless of ACLs, so fencing still identifies a
+connected node by `host_traddr` and correctly refuses to fence it.

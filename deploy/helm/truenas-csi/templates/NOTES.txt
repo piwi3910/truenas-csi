@@ -68,3 +68,14 @@ SECURITY NOTE — iSCSI:
   property of the target, not of individual LUNs. Every node logged into the
   target can therefore see every LUN on it. ReadWriteOnce is enforced by
   Kubernetes, not below it. See docs/security.md.
+
+SECURITY NOTE — NVMe/TCP:
+  An NVMe subsystem is created OPEN (allow_any_host) unless the driver knows an
+  initiator NQN to admit. Open means any initiator that can reach the portal may
+  connect to that volume; there is no ACL to consult. Close it either way:
+    * set `hostNQNs` on the StorageClass, or
+    * annotate each node with its own host NQN, which the driver then admits:
+        kubectl annotate node <node> \
+          csi.truenas.watteel.com/nqn="$(cat /etc/nvme/hostnqn)"
+  The equivalent iSCSI annotation is csi.truenas.watteel.com/iqn. Neither is set
+  for you. See docs/security.md.

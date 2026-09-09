@@ -7,6 +7,49 @@ bug from deleting data it did not create.
 
 ---
 
+## Per-node access control is opt-in, and off unless you set it
+
+The driver can restrict a volume to the nodes that should hold it, and it knows
+two ways to learn which those are:
+
+| Where                                                           | Scope                      |
+| --------------------------------------------------------------- | -------------------------- |
+| `hostNQNs` / `nodeIQNs` on the StorageClass                     | every volume of that class |
+| `csi.truenas.watteel.com/nqn` / `.../iqn` annotations on a Node | that node, every class     |
+
+**Nothing sets the annotations for you.** They are read, never written — not by
+the node plugin, not by the chart. A cluster where neither is configured runs
+with:
+
+- **NVMe/TCP subsystems open** (`allow_any_host`). Any initiator that can reach
+  the portal may connect to any CSI-created subsystem and read or write the
+  volume. The driver logs a warning each time it creates one.
+- **No iSCSI initiator group**, so the shared target admits any initiator that
+  can reach the portal — on top of the shared-target exposure described below.
+
+Empty means OPEN rather than CLOSED on purpose: on TrueNAS a subsystem with
+`allow_any_host=false` and an empty ACL admits nobody, so writing that when the
+operator has configured no identities would take the backend silently offline —
+every volume would provision and then fail to attach. The driver will not do
+that; it stays open and says so.
+
+To close it, either set the StorageClass parameter, or annotate the nodes:
+
+```sh
+# On each node, from the node itself:
+kubectl annotate node "$(hostname)" \
+  csi.truenas.watteel.com/nqn="$(cat /etc/nvme/hostnqn)" \
+  csi.truenas.watteel.com/iqn="$(sed -n 's/^InitiatorName=//p' /etc/iscsi/initiatorname.iscsi)"
+```
+
+Verified on hardware: with the annotation present the subsystem is created with
+`allow_any_host=false` and carries an ACL entry for exactly that node's NQN;
+without it the subsystem is open and the ACL is empty.
+
+Fencing is unaffected either way. It decides from the appliance's own session
+lists, not from the ACL, so a node still holding an open subsystem is correctly
+reported as connected and is not fenced.
+
 ## Least privilege on TrueNAS
 
 The driver runs against a **dedicated TrueNAS account with 16 roles**, not `FULL_ADMIN`:
