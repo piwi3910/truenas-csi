@@ -620,9 +620,11 @@ replication:
 # storage target: its NVMe host NQN (/etc/nvme/hostnqn) and its iSCSI initiator
 # name (/etc/iscsi/initiatorname.iscsi), as annotations on its own Node object.
 #
-# WHY YOU MIGHT WANT IT. The controller reads those annotations to create an
-# NVMe subsystem closed to one initiator, and to populate an iSCSI initiator
-# group. With neither them nor `hostNQNs`/`nodeIQNs` on the StorageClass, an
+# WHY YOU MIGHT WANT IT. The driver reads the NQN and closes an NVMe subsystem
+# to exactly that initiator. The IQN is published for you to read rather than
+# consumed: iSCSI ACLs belong to the shared target, so that one is set
+# deliberately through `nodeIQNs`. With neither the NQN annotation nor
+# `hostNQNs`/`nodeIQNs` on the StorageClass, an
 # NVMe subsystem is created OPEN: any initiator that can reach the portal may
 # read or write the volume. (Open rather than closed on purpose — a subsystem
 # with an empty ACL admits nobody and would take the backend silently offline.)

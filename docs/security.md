@@ -61,7 +61,20 @@ every volume would provision and then fail to attach. The driver will not do
 that; it stays open and says so.
 
 The chart can do the annotating for you: `nodeIdentity.enabled=true` makes each
-node plugin publish its own NQN and IQN at startup. It is off by default because
+node plugin publish its own NQN and IQN at startup.
+
+The two are not used the same way. The **NQN is consumed by the driver**: an
+NVMe subsystem is closed to exactly that initiator, which is what turns an open
+subsystem into per-node access control. The **IQN is not**. iSCSI initiator
+ACLs belong to the TARGET, and every volume on a backend shares one target, so
+admitting a node there grants it the whole target rather than one volume — and
+building that group incrementally, as nodes happen to publish, would lock out
+every node that had not yet done so. The IQN is published because it is what you
+need in order to fill in `nodeIQNs` deliberately and all at once:
+
+````sh
+kubectl get nodes -o jsonpath='{range .items[*]}{.metadata.annotations.csi\.truenas\.watteel\.com/iqn}{","}{end}'
+``` It is off by default because
 it needs `nodes: patch`, and Kubernetes RBAC cannot scope that to "your own Node
 object" — NodeRestriction, the admission plugin that does exactly that, applies
 to kubelet identities and not to a ServiceAccount. With it on, every node's
@@ -78,7 +91,7 @@ annotate the nodes by hand:
 kubectl annotate node "$(hostname)" \
   csi.truenas.watteel.com/nqn="$(cat /etc/nvme/hostnqn)" \
   csi.truenas.watteel.com/iqn="$(sed -n 's/^InitiatorName=//p' /etc/iscsi/initiatorname.iscsi)"
-```
+````
 
 Verified on hardware: with the annotation present the subsystem is created with
 `allow_any_host=false` and carries an ACL entry for exactly that node's NQN;

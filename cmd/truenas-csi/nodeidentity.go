@@ -25,9 +25,18 @@ const publishNodeIdentityTimeout = 30 * time.Second
 // initiator name, so the controller can restrict a volume to the nodes that
 // should hold it.
 //
-// WHY THIS IS OPT-IN. The controller reads these annotations
-// (backend.AnnotationNQN / AnnotationIQN) and uses them to create an NVMe
-// subsystem closed to one initiator, and to populate an iSCSI initiator group.
+// WHAT EACH ONE IS FOR. The NQN is consumed by the driver: the NVMe backend
+// closes a subsystem to exactly that initiator, which is what turns an
+// otherwise open subsystem into per-node access control.
+//
+// The IQN is NOT consumed. iSCSI initiator ACLs on TrueNAS belong to the
+// TARGET, and this driver puts every volume on a backend on one shared target,
+// so admitting a node there grants it the whole target rather than one volume
+// -- and building that group incrementally, as nodes happen to publish, would
+// lock out every node that had not yet done so. The annotation is published
+// because it is the thing an operator needs in order to fill in the `nodeIQNs`
+// StorageClass parameter, which is how that ACL is set deliberately and all at
+// once. See docs/security.md.
 // Without them a subsystem is created OPEN -- any initiator that can reach the
 // portal may use it -- which is deliberate, because a subsystem closed with an
 // empty ACL admits nobody and would take the backend silently offline.
