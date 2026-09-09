@@ -239,7 +239,22 @@ skip="$(
 # Run
 # ---------------------------------------------------------------------------
 
-focus="${TRUENAS_E2E_FOCUS:-External.Storage}"
+# TRUENAS_E2E_FOCUS NARROWS the run; it does not redirect it.
+#
+# It used to replace the focus outright, so `TRUENAS_E2E_FOCUS=ephemeral` ran
+# the upstream suite's ephemeral tests for ITS OWN in-tree drivers -- spinning
+# up nfs-provisioner pods, failing on image pulls, and reporting failures that
+# say nothing about this driver. A harness that cannot tell a driver regression
+# from noise is the one thing this directory is not for.
+#
+# Repeated --ginkgo.focus arguments are ORed, not ANDed, so narrowing has to be
+# one regular expression. A spec's text begins with the driver
+# ("External Storage [Driver: csi.truenas.watteel.com] ..."), so anchoring the
+# narrowing after it keeps the run inside this driver.
+focus="External.Storage"
+if [ -n "${TRUENAS_E2E_FOCUS:-}" ]; then
+	focus="External.Storage.*${TRUENAS_E2E_FOCUS}"
+fi
 timeout="${TRUENAS_E2E_TIMEOUT:-4h}"
 
 echo "run.sh: driver definition $rendered"
