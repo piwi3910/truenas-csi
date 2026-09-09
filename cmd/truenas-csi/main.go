@@ -86,6 +86,11 @@ func main() {
 				"array metrics; empty means every replica polls, multiplying load against the "+
 				"appliance's 20-call concurrency ceiling. Deliberately distinct from the CSI "+
 				"sidecars' own election, which elects a writer rather than a poller")
+		publishIdentity = flag.Bool("publish-node-identity", false,
+			"annotate this node with its own NVMe host NQN and iSCSI initiator name, so the "+
+				"controller can restrict a volume to the nodes that should hold it. Off by "+
+				"default because it needs `nodes: patch`, which RBAC cannot scope to the node's "+
+				"own object -- see publishNodeIdentity. Node mode only")
 		showVersion = flag.Bool("version", false, "print version and exit")
 	)
 	flag.Parse()
@@ -111,6 +116,7 @@ func main() {
 		logConfig:        *logConfig,
 		metricsLease:     *metricsLease,
 		replicationLease: *replicationLease,
+		publishIdentity:  *publishIdentity,
 	}); err != nil {
 		slog.Error("driver exited", "error", obs.Redact(err.Error()))
 		os.Exit(1)
@@ -143,6 +149,11 @@ type options struct {
 	fencingLabel    string
 	fencingLease    string
 	fencingInterval time.Duration
+
+	// publishIdentity makes the node plugin annotate its own Node with the
+	// NVMe host NQN and iSCSI initiator name it found. Off by default: it needs
+	// a privilege the default install does not grant. See publishNodeIdentity.
+	publishIdentity bool
 }
 
 // orphanInterval is how often the controller compares appliance state against
@@ -292,6 +303,13 @@ func run(o options) error {
 		}
 		nn := node.NewNode(cfg.NodeID, pf, node.HostExec(hostRoot))
 		nn.Root = hostRoot
+
+		// What this node calls itself to a storage target. Off unless the
+		// operator asked for it: it needs a privilege the default install does
+		// not grant. See publishNodeIdentity.
+		if o.publishIdentity {
+			publishNodeIdentity(ctx, cfg.NodeID, hostRoot)
+		}
 
 		// Which appliances this node can actually reach, probed BEFORE the
 		// plugin registers.

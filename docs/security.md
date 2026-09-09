@@ -33,7 +33,18 @@ operator has configured no identities would take the backend silently offline â€
 every volume would provision and then fail to attach. The driver will not do
 that; it stays open and says so.
 
-To close it, either set the StorageClass parameter, or annotate the nodes:
+The chart can do the annotating for you: `nodeIdentity.enabled=true` makes each
+node plugin publish its own NQN and IQN at startup. It is off by default because
+it needs `nodes: patch`, and Kubernetes RBAC cannot scope that to "your own Node
+object" â€” NodeRestriction, the admission plugin that does exactly that, applies
+to kubelet identities and not to a ServiceAccount. With it on, every node's
+plugin can patch any Node in the cluster. That is the whole trade, and it is
+yours to make; the chart renders the flag and the grant together, and
+`TestNodeIdentityIsTheOnlyNodeWriteGrant` keeps it from growing into anything
+else.
+
+To close it without that grant, either set the StorageClass parameter, or
+annotate the nodes by hand:
 
 ```sh
 # On each node, from the node itself:

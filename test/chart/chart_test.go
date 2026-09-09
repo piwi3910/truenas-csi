@@ -11,6 +11,7 @@ package chart_test
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -564,5 +565,63 @@ func TestChartHonoursKubeletDir(t *testing.T) {
 	}
 	if bytes.Contains(raw, []byte("/var/lib/kubelet")) {
 		t.Error("the default kubelet directory survives an override of node.kubeletDir")
+	}
+}
+
+// TestNodeIdentityIsTheOnlyNodeWriteGrant bounds the one privilege the node
+// plugin can be given.
+//
+// nodeIdentity lets the node plugin annotate its own Node with the NVMe host
+// NQN and iSCSI initiator name it found, which is how per-node access control
+// stops being dormant. It cannot be scoped to the node's own object --
+// NodeRestriction applies to kubelet identities, not to a ServiceAccount -- so
+// turning it on lets every node's plugin patch ANY Node in the cluster.
+//
+// That is a deliberate trade, and this test is what keeps it from quietly
+// growing: with the flag off the node role stays read-only, and with it on the
+// ONLY thing added is patch on nodes.
+func TestNodeIdentityIsTheOnlyNodeWriteGrant(t *testing.T) {
+	writesIn := func(extra ...string) map[string][]string {
+		out := map[string][]string{}
+		role := findOne(t, render(t, testValues, extra...), "ClusterRole", "-node")
+		for _, rule := range listOf(role["rules"]) {
+			r := mapOf(rule)
+			for _, verb := range strings_(r["verbs"]) {
+				if !writeVerbs[strings.ToLower(verb)] {
+					continue
+				}
+				for _, res := range strings_(r["resources"]) {
+					out[res] = append(out[res], strings.ToLower(verb))
+				}
+			}
+		}
+		return out
+	}
+
+	if got := writesIn(); len(got) != 0 {
+		t.Errorf("the node ClusterRole grants %v by default; it must be read-only "+
+			"cluster-wide unless an operator asks otherwise", got)
+	}
+
+	const enable = "--set=nodeIdentity.enabled=true"
+	got := writesIn(enable)
+	want := map[string][]string{"nodes": {"patch"}}
+	if len(got) != len(want) || len(got["nodes"]) != 1 || got["nodes"][0] != "patch" {
+		t.Errorf("with nodeIdentity on the node ClusterRole grants %v, want exactly %v: "+
+			"this is the one privilege that feature is allowed to add", got, want)
+	}
+
+	// And the flag must actually be passed, or the grant buys nothing.
+	var sawFlag bool
+	for _, doc := range render(t, testValues, enable) {
+		if kindOf(doc) != "DaemonSet" {
+			continue
+		}
+		if strings.Contains(fmt.Sprint(doc), "-publish-node-identity") {
+			sawFlag = true
+		}
+	}
+	if !sawFlag {
+		t.Error("nodeIdentity grants nodes: patch but the node plugin is not told to use it")
 	}
 }

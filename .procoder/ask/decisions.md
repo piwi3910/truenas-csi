@@ -137,6 +137,41 @@ a matter of choosing when, not whether.
 - Verify only the rename in isolation, without the reaper, and leave the
   destroy path to the first real expiry.
 
+## Wiring the per-node NQN/IQN annotations
+
+The driver reads two Node annotations — `csi.truenas.watteel.com/nqn` and
+`.../iqn` — to close an NVMe subsystem to one initiator and to populate the
+iSCSI initiator group. Verified on hardware: with the annotation present a
+subsystem is created `allow_any_host: false` with exactly one ACL entry for that
+NQN; without it, `allow_any_host: true` and no ACL, so any initiator that can
+reach the portal may read or write the volume.
+
+Nothing writes them. Not the node plugin, not the chart, and until now no
+document mentioned them, so every deployment ran with the mechanism dormant.
+Fencing is unaffected — it reads the appliance's session lists, not the ACL —
+so this is an access-control gap, not a corruption one.
+
+The node plugin could set them itself: it can read `/etc/nvme/hostnqn` and
+`/etc/iscsi/initiatorname.iscsi` from the host root it already mounts. The cost
+is RBAC — the node DaemonSet would need `nodes: patch`, cluster-wide, on every
+node, because a Kubernetes RBAC rule cannot be scoped to "your own Node object"
+without the NodeRestriction admission plugin, which applies to kubelet
+identities and not to this ServiceAccount.
+
+- Wire it: the node plugin annotates its own Node at startup, and the chart
+  grants the node DaemonSet cluster-wide `nodes: patch`. Per-node access control
+  then works by default, with no manual step. The cost is that a compromised
+  node plugin could patch any Node object in the cluster.
+- Leave it manual and documented (current state): the operator annotates each
+  node, or sets `hostNQNs` / `nodeIQNs` on the StorageClass. No new privilege,
+  but the default stays open and depends on someone doing it.
+- **CHOSEN — wire it behind an opt-in chart value, default off**: operators who
+  want it accept the privilege deliberately, and the default install grants
+  nothing new. `nodeIdentity.enabled=true` makes the node plugin publish its own
+  NQN and IQN as annotations on its own Node, and renders `nodes: patch` for the
+  node DaemonSet only then. With it off nothing changes and no privilege is
+  added.
+
 ## Superseded decisions
 
 Two decisions recorded earlier were reversed by later instructions ("no more

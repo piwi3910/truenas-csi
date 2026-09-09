@@ -222,6 +222,21 @@ rules:
   - apiGroups: [""]
     resources: ["nodes"]
     verbs: ["get", "list", "watch"]
+  {{- if .Values.nodeIdentity.enabled }}
+  # nodeIdentity: the node plugin annotates its OWN Node with the NVMe host NQN
+  # and iSCSI initiator name it found, which the controller then uses to close a
+  # subsystem or an initiator group to that node.
+  #
+  # This grant cannot be narrowed to "your own Node object". The admission
+  # plugin that does exactly that, NodeRestriction, applies to kubelet
+  # identities and not to a ServiceAccount, so enabling this lets every node's
+  # plugin patch ANY Node in the cluster. It is rendered only when an operator
+  # asks for it, and the driver works without it — volumes are then open to any
+  # initiator that can reach the appliance, which is what they were before.
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["patch"]
+  {{- end }}
   - apiGroups: [""]
     resources: ["persistentvolumes"]
     verbs: ["get", "list", "watch"]

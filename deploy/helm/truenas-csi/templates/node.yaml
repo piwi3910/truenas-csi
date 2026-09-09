@@ -58,6 +58,13 @@ spec:
             - -endpoint=$(CSI_ENDPOINT)
             - -config=/etc/truenas-csi/config.yaml
             - -node-id=$(KUBE_NODE_NAME)
+            {{- if .Values.nodeIdentity.enabled }}
+            # Publish this node's own NVMe host NQN and iSCSI initiator name as
+            # annotations, so the controller can restrict a volume to the nodes
+            # that should hold it. Rendered together with the `nodes: patch`
+            # grant it needs — see values.yaml for what that grant costs.
+            - -publish-node-identity
+            {{- end }}
             {{- if .Values.dynamicLogging.enabled }}
             # Log level and format, re-read live from a mounted ConfigMap. The
             # node plugin is where a mount problem is actually visible, so it

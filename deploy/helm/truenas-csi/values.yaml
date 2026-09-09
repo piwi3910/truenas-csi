@@ -616,6 +616,29 @@ replication:
   # Name of the Lease electing the single reconciling replica.
   lease: truenas-csi-replication
 
+# nodeIdentity makes the node plugin publish what this node calls itself to a
+# storage target: its NVMe host NQN (/etc/nvme/hostnqn) and its iSCSI initiator
+# name (/etc/iscsi/initiatorname.iscsi), as annotations on its own Node object.
+#
+# WHY YOU MIGHT WANT IT. The controller reads those annotations to create an
+# NVMe subsystem closed to one initiator, and to populate an iSCSI initiator
+# group. With neither them nor `hostNQNs`/`nodeIQNs` on the StorageClass, an
+# NVMe subsystem is created OPEN: any initiator that can reach the portal may
+# read or write the volume. (Open rather than closed on purpose — a subsystem
+# with an empty ACL admits nobody and would take the backend silently offline.)
+#
+# WHAT IT COSTS. The node plugin needs `nodes: patch`, and Kubernetes RBAC
+# cannot scope that to "your own Node object": NodeRestriction, the admission
+# plugin that does exactly that, applies to kubelet identities and not to a
+# ServiceAccount. So with this on, every node's plugin can patch ANY Node in the
+# cluster. That is why it is off by default and why the RBAC is rendered with
+# it rather than always.
+#
+# The alternative, which grants nothing: annotate the nodes yourself, or set
+# hostNQNs / nodeIQNs on the StorageClass. See docs/security.md.
+nodeIdentity:
+  enabled: false
+
 podmon:
   enabled: false
   port: 9820
