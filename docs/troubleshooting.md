@@ -362,6 +362,35 @@ they are operator policy, not a redirect.
 
 ---
 
+## A backend was removed while its volumes still existed
+
+**Symptom.** `VolumeAttachment` objects never go away, a node cannot be drained, and the
+driver logs `CSI call failed method=ControllerUnpublishVolume` with
+`storage class names a backend that is not configured` on a loop. The PersistentVolumes
+sit in `Released` and will not delete.
+
+**Cause.** Every volume handle names the backend that serves it. Once that key is gone
+from `backends`, the driver cannot say which appliance the volume is on — so it refuses
+every call for it, including the revoke that would let the attachment go. Refusing is
+deliberate: acting on the wrong appliance is far worse than failing.
+
+**Fix.** Put the backend back in the configuration, delete the workloads and claims
+normally, and remove it afterwards. Removing a backend is only safe once nothing
+references it — check with:
+
+```sh
+kubectl get pv -o json | jq -r '.items[]
+  | select(.spec.csi.driver == "csi.truenas.watteel.com")
+  | "\(.metadata.name)\t\(.spec.csi.volumeHandle)"'
+```
+
+If the appliance is genuinely gone for good, the objects have to be released by hand:
+clear the `finalizers` on the stuck `VolumeAttachment`s and then on the
+PersistentVolumes. Do that only when you are certain no node still holds the volumes,
+because it tells Kubernetes an attachment is gone without anything having revoked it.
+
+---
+
 ## Expansion is rejected
 
 **Symptom.** Editing a PVC to a smaller size fails; the resizer reports an invalid argument.
