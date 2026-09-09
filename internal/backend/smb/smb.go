@@ -338,7 +338,15 @@ func (b *Backend) Create(ctx context.Context, r backend.CreateRequest) (*backend
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "query dataset %s: %v", dsPath, err)
 	}
-	if existing != nil {
+	// A controller that died between the clone and its repairs left a dataset
+	// with no marker and no refquota. Resuming it is unambiguous rather than a
+	// guess: it sits at exactly the path this request would use, carries no
+	// ownership marker, and its origin is exactly the snapshot this request
+	// asked to restore. Without this the retry compared refquota 0 against the
+	// requested size and answered AlreadyExists -- forever, because the
+	// provisioner retries a deterministic failure.
+	resuming := existing != nil && backend.AbandonedCloneOf(existing, r)
+	if existing != nil && !resuming {
 		// CSI requires an identical repeat to succeed and a conflicting one to
 		// be reported, not silently reconciled.
 		if existing.RefQuota.Parsed != r.CapacityBytes {
@@ -352,8 +360,13 @@ func (b *Backend) Create(ctx context.Context, r backend.CreateRequest) (*backend
 		return b.volumeFor(r.ID, r.CapacityBytes, name, p), nil
 	}
 
-	ds, err := b.provision(ctx, dsPath, r)
-	if err != nil {
+	var ds *truenas.Dataset
+	if resuming {
+		if ds, err = b.repairClone(ctx, dsPath, r.CapacityBytes); err != nil {
+			return nil, err
+		}
+		backend.RecordIdentity(ctx, b.c, dsPath, volume.IdentityFrom(r.Params))
+	} else if ds, err = b.provision(ctx, dsPath, r); err != nil {
 		return nil, err
 	}
 	mountpoint := mountpointOf(ds, dsPath)
@@ -435,6 +448,14 @@ func (b *Backend) restore(ctx context.Context, snapshot, dsPath string, bytes in
 	if err := b.c.SnapshotClone(ctx, snapshot, dsPath, nil); err != nil {
 		return nil, status.Errorf(codes.Internal, "clone snapshot %s into %s: %v", snapshot, dsPath, err)
 	}
+	return b.repairClone(ctx, dsPath, bytes)
+}
+
+// repairClone applies everything a fresh clone did not inherit. It is separate
+// from restore because it must also run on a RETRY: a controller that died
+// between the clone and these repairs left a dataset behind, and the retry
+// resumes it here rather than starting a second clone.
+func (b *Backend) repairClone(ctx context.Context, dsPath string, bytes int64) (*truenas.Dataset, error) {
 	fail := func(format string, args ...any) (*truenas.Dataset, error) {
 		cause := status.Errorf(codes.Internal, format, args...)
 		if delErr := b.c.DatasetDelete(ctx, dsPath, true, true); delErr != nil {

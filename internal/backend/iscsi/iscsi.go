@@ -229,6 +229,19 @@ func (b *iscsiBackend) ensureZvol(ctx context.Context, r backend.CreateRequest, 
 		return fmt.Errorf("querying zvol %s: %w", dsPath, err)
 	}
 	if ds != nil {
+		// An existing zvol is normally a retry of a volume this driver already
+		// finished. But a controller that died between the clone and its
+		// stamping left one behind carrying NO ownership marker, and accepting
+		// that as finished produced a working volume the delete guard would
+		// then refuse to remove for the rest of its life. Finish the stamping
+		// instead -- see backend.AbandonedCloneOf for why this cannot be
+		// anything else.
+		if backend.AbandonedCloneOf(ds, r) {
+			if err := backend.StampClone(ctx, b.c, dsPath, Protocol); err != nil {
+				return err
+			}
+			backend.RecordIdentity(ctx, b.c, dsPath, volume.IdentityFrom(r.Params))
+		}
 		return nil
 	}
 

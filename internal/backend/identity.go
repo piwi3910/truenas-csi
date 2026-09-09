@@ -96,3 +96,22 @@ func StampClone(ctx context.Context, c truenas.API, dsPath, protocol string) err
 	}
 	return nil
 }
+
+// AbandonedCloneOf reports whether an existing dataset is a clone THIS request
+// made and then failed to finish, rather than a volume that genuinely already
+// exists or something an operator put there.
+//
+// All three conditions must hold: the dataset carries no ownership marker, this
+// request is a restore, and the dataset's origin is exactly the snapshot this
+// request asked to restore. A dataset an operator created at a PV's generated
+// path would not be a clone of that particular snapshot, and a volume this
+// driver finished would carry the marker.
+func AbandonedCloneOf(ds *truenas.Dataset, r CreateRequest) bool {
+	if ds == nil || r.SourceSnapshot == "" {
+		return false
+	}
+	if _, marked := ds.UserProperties[volume.OwnerProperty]; marked {
+		return false
+	}
+	return ds.Origin.Value == r.SourceSnapshot
+}

@@ -1042,3 +1042,44 @@ func TestNVMeThickRestoreKeepsItsReservation(t *testing.T) {
 		t.Fatalf("clone refreservation = %v, want \"auto\"", got)
 	}
 }
+
+// TestNVMeCrashMidCloneDoesNotLeak: a controller that dies between the clone and
+// the stamping leaves a zvol carrying no ownership marker. The retry used to
+// see a zvol at the right path, treat the volume as already finished, and go on
+// to publish it -- producing a WORKING volume that the delete guard would then
+// refuse to remove for the rest of its life, because VerifyOwned finds no
+// marker. Silent success and a permanent leak is the worst of the three
+// possible outcomes here.
+func TestNVMeCrashMidCloneDoesNotLeak(t *testing.T) {
+	ctx := context.Background()
+	n := newNAS(t)
+	b := n.backend()
+
+	if _, err := b.Create(ctx, createReq("pvc-src", 1<<30, nil)); err != nil {
+		t.Fatalf("Create source: %v", err)
+	}
+	// The abandoned clone: cloned from this request's snapshot, never stamped.
+	n.putDataset(map[string]any{
+		"id": "Pool0/k8s/pvc-restored", "type": "VOLUME",
+		"volsize":         map[string]any{"parsed": int64(1 << 30)},
+		"origin":          map[string]any{"value": "Pool0/k8s/pvc-src@snap1", "source": "LOCAL"},
+		"user_properties": map[string]any{},
+	})
+
+	req := createReq("pvc-restored", 1<<30, nil)
+	req.SourceSnapshot = "Pool0/k8s/pvc-src@snap1"
+	if _, err := b.Create(ctx, req); err != nil {
+		t.Fatalf("retry after a crash mid-clone: %v", err)
+	}
+	ds := n.dataset("Pool0/k8s/pvc-restored")
+	if ds == nil {
+		t.Fatal("the volume disappeared")
+	}
+	if got, _ := userProp(ds, volume.OwnerProperty); got != volume.OwnerValue {
+		t.Fatalf("resumed clone marker = %q — the delete guard would refuse to "+
+			"remove this volume forever", got)
+	}
+	if got, _ := userProp(ds, volume.ProtocolProperty); got != Protocol {
+		t.Errorf("resumed clone protocol = %q, want %q", got, Protocol)
+	}
+}

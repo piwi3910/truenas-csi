@@ -68,6 +68,7 @@ func (s *fakeShare) hostList(key string) []string {
 }
 
 type fakeDataset struct {
+	origin    string
 	acltype   string
 	refquota  int64
 	marker    string
@@ -90,6 +91,7 @@ func (d *fakeDataset) json(id string) map[string]any {
 		"type":            "FILESYSTEM",
 		"mountpoint":      "/mnt/" + id,
 		"refquota":        map[string]any{"parsed": d.refquota},
+		"origin":          map[string]any{"value": d.origin, "source": "LOCAL"},
 		"user_properties": props,
 		"comments":        map[string]any{"value": d.comments, "source": "LOCAL"},
 	}
@@ -195,13 +197,14 @@ func newNAS(t *testing.T) *nas {
 		var payload map[string]any
 		mustJSON(t, p[0], &payload)
 		dst, _ := payload["dataset_dst"].(string)
+		snap, _ := payload["snapshot"].(string)
 		n.mu.Lock()
 		defer n.mu.Unlock()
 		// A ZFS clone takes acltype from its POSITION in the hierarchy, never
 		// from its origin: share_type SMB sets acltype LOCAL on the source, and
 		// the clone lands under the parent dataset and inherits POSIX from it.
 		// Verified on a real appliance.
-		n.datasets[dst] = &fakeDataset{acltype: "POSIX"}
+		n.datasets[dst] = &fakeDataset{acltype: "POSIX", origin: snap}
 		return true, nil
 	})
 
@@ -835,5 +838,50 @@ func TestSMBRestoreStampsProtocol(t *testing.T) {
 	if got := ds.props[volume.ProtocolProperty]; got != "smb" {
 		t.Fatalf("clone protocol property = %q, want \"smb\" — the orphan report "+
 			"and capacity accounting would both call this volume nfs", got)
+	}
+}
+
+// TestSMBRestoreResumesAfterACrashMidClone: a controller that dies between the
+// clone and the stamping leaves a dataset with no marker and no refquota, and
+// CreateVolume is retried forever after that.
+//
+// The retry used to find the half-built clone, compare its refquota (0, because
+// a clone inherits none — verified on a real appliance) against the requested
+// size, and answer AlreadyExists. That is permanent: the provisioner retries a
+// deterministic failure, so the claim never binds and an operator has to find
+// and destroy the dataset by hand.
+//
+// Recognising it is unambiguous rather than a guess: the dataset sits at
+// exactly the path this request would use, carries no ownership marker, and its
+// origin is exactly the snapshot this request asked to restore. Nothing an
+// operator made could satisfy all three.
+func TestSMBRestoreResumesAfterACrashMidClone(t *testing.T) {
+	n := newNAS(t)
+	n.put("Pool0/k8s/pvc-src", &fakeDataset{refquota: gib, marker: volume.OwnerValue, source: "LOCAL"})
+	// The abandoned clone: cloned, never stamped, never given a quota.
+	n.put("Pool0/k8s/pvc-restored", &fakeDataset{origin: "Pool0/k8s/pvc-src@snap-1", acltype: "POSIX"})
+	b := newBackend(t, n)
+
+	r := testRequest("pvc-restored", gib)
+	r.SourceSnapshot = "Pool0/k8s/pvc-src@snap-1"
+	vol, err := b.Create(context.Background(), r)
+	if err != nil {
+		t.Fatalf("retry after a crash mid-clone: %v", err)
+	}
+	if vol.CapacityBytes != gib {
+		t.Fatalf("CapacityBytes = %d, want %d", vol.CapacityBytes, gib)
+	}
+	ds := n.dataset("Pool0/k8s/pvc-restored")
+	if ds.marker != volume.OwnerValue {
+		t.Errorf("resumed clone still unmarked — it would leak forever")
+	}
+	if ds.refquota != gib {
+		t.Errorf("resumed clone refquota = %d, want %d", ds.refquota, gib)
+	}
+	if ds.acltype != "NFSV4" {
+		t.Errorf("resumed clone acltype = %q, want NFSV4", ds.acltype)
+	}
+	if ds.props[volume.ProtocolProperty] != "smb" {
+		t.Errorf("resumed clone protocol = %q, want smb", ds.props[volume.ProtocolProperty])
 	}
 }

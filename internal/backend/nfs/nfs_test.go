@@ -38,6 +38,7 @@ type nas struct {
 }
 
 type fakeDataset struct {
+	origin   string
 	refquota int64
 	marker   string // "" when unmarked
 	source   string
@@ -69,6 +70,7 @@ func (d *fakeDataset) json(id string) map[string]any {
 		"type":            "FILESYSTEM",
 		"mountpoint":      "/mnt/" + id,
 		"refquota":        map[string]any{"parsed": d.refquota},
+		"origin":          map[string]any{"value": d.origin, "source": "LOCAL"},
 		"user_properties": props,
 		"comments":        map[string]any{"value": d.comments, "source": "LOCAL"},
 	}
@@ -197,10 +199,11 @@ func newNAS(t *testing.T) *nas {
 		var payload map[string]any
 		mustJSON(t, p[0], &payload)
 		dst, _ := payload["dataset_dst"].(string)
+		snap, _ := payload["snapshot"].(string)
 		n.mu.Lock()
 		defer n.mu.Unlock()
 		// A real ZFS clone inherits NEITHER the marker NOR refquota.
-		n.datasets[dst] = &fakeDataset{}
+		n.datasets[dst] = &fakeDataset{origin: snap}
 		return true, nil
 	})
 
@@ -710,5 +713,34 @@ func TestNFSPublishContextAfterRestart(t *testing.T) {
 	}
 	if pc["server"] == "" {
 		t.Fatal("server must fall back to the appliance host, not stay empty")
+	}
+}
+
+// TestNFSRestoreResumesAfterACrashMidClone: a controller that dies between the
+// clone and the stamping leaves a dataset with no marker and no refquota, and
+// the retry used to compare that refquota (0 — a clone inherits none, verified
+// on a real appliance) against the requested size and answer AlreadyExists.
+// That is permanent, because the provisioner retries a deterministic failure,
+// so the claim never bound and an operator had to destroy the dataset by hand.
+func TestNFSRestoreResumesAfterACrashMidClone(t *testing.T) {
+	n := newNAS(t)
+	n.put("Pool0/k8s/pvc-src", &fakeDataset{refquota: gib, marker: volume.OwnerValue, source: "LOCAL"})
+	n.put("Pool0/k8s/pvc-restored", &fakeDataset{origin: "Pool0/k8s/pvc-src@snap-1"})
+
+	b := newBackend(t, n)
+	r := testRequest("pvc-restored", gib)
+	r.SourceSnapshot = "Pool0/k8s/pvc-src@snap-1"
+	if _, err := b.Create(context.Background(), r); err != nil {
+		t.Fatalf("retry after a crash mid-clone: %v", err)
+	}
+	ds := n.dataset("Pool0/k8s/pvc-restored")
+	if ds.marker != volume.OwnerValue {
+		t.Errorf("resumed clone still unmarked — it would leak forever")
+	}
+	if ds.refquota != gib {
+		t.Errorf("resumed clone refquota = %d, want %d", ds.refquota, gib)
+	}
+	if ds.props[volume.ProtocolProperty] != "nfs" {
+		t.Errorf("resumed clone protocol = %q, want nfs", ds.props[volume.ProtocolProperty])
 	}
 }
