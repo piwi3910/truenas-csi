@@ -547,3 +547,10 @@ func (b *iscsiBackend) publishContext(ctx context.Context, p Params, iqn, naa st
 // MinimumCapacityBytes is 0: a zvol has no lower bound the appliance enforces.
 // Verified on hardware down to 64 MiB.
 func (b *iscsiBackend) MinimumCapacityBytes() int64 { return 0 }
+
+// AcceptedParameters is every StorageClass parameter this backend reads. The
+// common ones (backend, protocol, pool, parentDataset, fsType, multipath) are
+// added by the CSI layer, which owns them.
+func (b *iscsiBackend) AcceptedParameters() []string {
+	return []string{"portalID", "chap", "initiatorACL", "nodeIQNs", "sparse", "volblocksize"}
+}

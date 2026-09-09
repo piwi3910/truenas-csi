@@ -5,6 +5,7 @@ import (
 	"github.com/piwi3910/truenas-csi/internal/node"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -570,5 +571,77 @@ func TestCreateVolumeAllowsAPlacementTheNodeDoesNotContradict(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("a node that publishes none of the driver's keys was refused: %v", err)
+	}
+}
+
+func (*countingBackend) AcceptedParameters() []string { return []string{"server"} }
+
+// TestCreateVolumeRefusesUnknownParameters pins the check that turns a typo in
+// a StorageClass into a failure instead of a silent default.
+//
+// A StorageClass is immutable and its parameters were ignored when unrecognised.
+// Reproduced on a live cluster: a class carrying nfsVersionn: "3" provisioned
+// an NFSv4 volume and reported success. The same typo in maproot, mode or
+// networks silently drops a security setting the operator believes is applied,
+// and nothing anywhere says so.
+func TestCreateVolumeRefusesUnknownParameters(t *testing.T) {
+	shared = newCounting()
+	c, _ := ctlWith(t)
+	p := params()
+	p["nfsVersionn"] = "3"
+
+	_, err := c.CreateVolume(context.Background(), &csipb.CreateVolumeRequest{
+		Name: "pvc-typo", Parameters: p,
+		CapacityRange:      &csipb.CapacityRange{RequiredBytes: 1 << 30},
+		VolumeCapabilities: testCaps(),
+	})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("code = %s, want InvalidArgument (got %v)", status.Code(err), err)
+	}
+	if !strings.Contains(err.Error(), "nfsVersionn") {
+		t.Errorf("the error does not name the offending key: %v", err)
+	}
+	if shared.creates.Load() != 0 {
+		t.Errorf("a volume was provisioned from a class the driver could not read: %d creates",
+			shared.creates.Load())
+	}
+}
+
+// TestUnknownParameterSuggestsTheNearestKey checks the half that makes the
+// refusal useful: a typo gets an answer, an unrelated word does not get a
+// misleading guess.
+func TestUnknownParameterSuggestsTheNearestKey(t *testing.T) {
+	accepted := []string{"backend", "protocol", "server", "nfsVersion", "maproot", "mode"}
+	for _, tc := range []struct{ got, want string }{
+		{"nfsVersionn", "nfsVersion"},
+		{"maprot", "maproot"},
+		{"protocl", "protocol"},
+		{"completelyunrelatedthing", ""},
+	} {
+		if s := nearestParameter(tc.got, accepted); s != tc.want {
+			t.Errorf("nearestParameter(%q) = %q, want %q", tc.got, s, tc.want)
+		}
+	}
+}
+
+// TestCreateVolumeAcceptsTheKeysKubernetesInjects guards against the refusal
+// rejecting the CO's own parameters, which no operator sets and which grow with
+// Kubernetes rather than with this driver.
+func TestCreateVolumeAcceptsTheKeysKubernetesInjects(t *testing.T) {
+	shared = newCounting()
+	c, _ := ctlWith(t)
+	p := params()
+	p["csi.storage.k8s.io/pvc/name"] = "claim"
+	p["csi.storage.k8s.io/pvc/namespace"] = "team-a"
+	p["csi.storage.k8s.io/pv/name"] = "pvc-123"
+	p["csi.storage.k8s.io/provisioner-secret-name"] = "creds"
+	p["fsType"] = "ext4"
+
+	if _, err := c.CreateVolume(context.Background(), &csipb.CreateVolumeRequest{
+		Name: "pvc-injected", Parameters: p,
+		CapacityRange:      &csipb.CapacityRange{RequiredBytes: 1 << 30},
+		VolumeCapabilities: testCaps(),
+	}); err != nil {
+		t.Fatalf("a request carrying only the CO's own keys was refused: %v", err)
 	}
 }

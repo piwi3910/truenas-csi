@@ -45,6 +45,14 @@ type Backend interface {
 	Expand(ctx context.Context, id volume.ID, bytes int64) (int64, error)
 	// PublishContext is the map handed to the node plugin to attach the volume.
 	PublishContext(ctx context.Context, id volume.ID) (map[string]string, error)
+	// AcceptedParameters lists the StorageClass parameters this backend reads,
+	// so CreateVolume can refuse the ones it does not.
+	//
+	// A StorageClass is immutable, and an unknown key was silently ignored: a
+	// class saying nfsVersionn: "3" provisioned NFSv4 and said nothing. The
+	// same typo in maproot, mode or networks silently drops a security setting
+	// the operator believes is applied.
+	AcceptedParameters() []string
 	// MinimumCapacityBytes is the smallest volume this backend can actually
 	// create, 0 when it has no floor.
 	//

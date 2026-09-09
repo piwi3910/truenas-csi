@@ -589,3 +589,10 @@ func publishContext(s *truenas.NVMeSubsystem, portal, trtype string) map[string]
 // MinimumCapacityBytes is 0: a zvol has no lower bound the appliance enforces.
 // Verified on hardware down to 64 MiB.
 func (b *nvmeBackend) MinimumCapacityBytes() int64 { return 0 }
+
+// AcceptedParameters is every StorageClass parameter this backend reads. The
+// common ones (backend, protocol, pool, parentDataset, fsType, multipath) are
+// added by the CSI layer, which owns them.
+func (b *nvmeBackend) AcceptedParameters() []string {
+	return []string{"portalID", "portAddress", "port", "transport", "hostNQNs", "sparse", "volblocksize"}
+}

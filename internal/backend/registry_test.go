@@ -132,3 +132,5 @@ func indexOf(s, sub string) int {
 }
 
 func (stubBackend) MinimumCapacityBytes() int64 { return 0 }
+
+func (stubBackend) AcceptedParameters() []string { return nil }

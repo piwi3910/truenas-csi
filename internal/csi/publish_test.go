@@ -393,3 +393,5 @@ func TestPublisherIsRequiredOfEveryBackend(t *testing.T) {
 }
 
 func (*fencingBackend) MinimumCapacityBytes() int64 { return 0 }
+
+func (*fencingBackend) AcceptedParameters() []string { return nil }

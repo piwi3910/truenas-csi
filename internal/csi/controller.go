@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -249,6 +250,10 @@ func (c *controller) CreateVolume(ctx context.Context, req *csipb.CreateVolumeRe
 	// doesn't match node" -- a real dataset on the appliance that nothing can
 	// ever mount. Seen with a multipath StorageClass on nodes without
 	// multipath-tools.
+	if err := requireKnownParameters(b, req.GetParameters()); err != nil {
+		return nil, err
+	}
+
 	topology := requiredTopology(id.Backend, id.Protocol, req.GetParameters())
 	if err := requireTopologyReachable(req.GetAccessibilityRequirements(), topology); err != nil {
 		return nil, err
@@ -896,6 +901,113 @@ func snapshotNameOf(id string) string {
 // Publishing capability labels from the node is only half of topology: without
 // the matching requirement here, every node looks equally able and the pod is
 // scheduled somewhere that then fails to mount.
+// commonParameters are the StorageClass keys the CSI layer itself reads, as
+// opposed to the ones a backend reads.
+var commonParameters = []string{
+	"backend", "protocol", "pool", "parentDataset", "fsType", "multipath",
+}
+
+// CommonParameters is the set the CSI layer itself reads, exported so a test
+// can check the accepted set against what the sources actually read.
+func CommonParameters() []string { return append([]string(nil), commonParameters...) }
+
+// requireKnownParameters refuses a StorageClass carrying a key nothing reads.
+//
+// An unknown key used to be ignored in silence, and a StorageClass is
+// immutable: a class saying nfsVersionn: "3" provisioned NFSv4 and reported
+// success, and the same typo in maproot, mode or networks drops a security
+// setting the operator believes is in force. The failure is deliberately at the
+// first claim rather than in a log line nobody reads.
+func requireKnownParameters(b backend.Backend, params map[string]string) error {
+	known := map[string]bool{}
+	for _, k := range commonParameters {
+		known[k] = true
+	}
+	for _, k := range b.AcceptedParameters() {
+		known[k] = true
+	}
+	for _, k := range node.NodeParameterKeys {
+		known[k] = true
+	}
+
+	var unknown []string
+	for k := range params {
+		// Everything the CO injects lives under this prefix -- the claim's name
+		// and namespace, the provisioner's own identity, the node-stage secret
+		// references. None of it comes from the operator, and the set grows
+		// with Kubernetes rather than with this driver.
+		if strings.HasPrefix(k, "csi.storage.k8s.io/") || known[k] {
+			continue
+		}
+		unknown = append(unknown, k)
+	}
+	if len(unknown) == 0 {
+		return nil
+	}
+	sort.Strings(unknown)
+
+	accepted := make([]string, 0, len(known))
+	for k := range known {
+		accepted = append(accepted, k)
+	}
+	sort.Strings(accepted)
+
+	msg := fmt.Sprintf("storage class sets %s, which this driver does not read",
+		strings.Join(quoteAll(unknown), ", "))
+	if s := nearestParameter(unknown[0], accepted); s != "" {
+		msg += fmt.Sprintf(" (did you mean %q?)", s)
+	}
+	return status.Errorf(codes.InvalidArgument, "%s. Accepted: %s",
+		msg, strings.Join(accepted, ", "))
+}
+
+func quoteAll(in []string) []string {
+	out := make([]string, len(in))
+	for i, s := range in {
+		out[i] = strconv.Quote(s)
+	}
+	return out
+}
+
+// nearestParameter suggests the accepted key closest to a rejected one, so the
+// common case -- a typo -- is answered rather than merely reported. It returns
+// "" when nothing is close enough to be worth guessing at.
+func nearestParameter(got string, accepted []string) string {
+	best, bestDist := "", 0
+	for _, cand := range accepted {
+		d := editDistance(strings.ToLower(got), strings.ToLower(cand))
+		if best == "" || d < bestDist {
+			best, bestDist = cand, d
+		}
+	}
+	// A third of the length, so "nfsVersionn" finds "nfsVersion" and an
+	// unrelated word suggests nothing.
+	if bestDist > 0 && bestDist <= 1+len(got)/3 {
+		return best
+	}
+	return ""
+}
+
+func editDistance(a, b string) int {
+	prev := make([]int, len(b)+1)
+	cur := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		cur[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			cur[j] = min(min(cur[j-1]+1, prev[j]+1), prev[j-1]+cost)
+		}
+		prev, cur = cur, prev
+	}
+	return prev[len(b)]
+}
+
 // requireTopologyReachable refuses a volume the CO has asked to place where it
 // cannot work.
 //

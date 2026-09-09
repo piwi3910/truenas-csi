@@ -6,6 +6,13 @@
 package docs_test
 
 import (
+	"github.com/piwi3910/truenas-csi/internal/backend"
+	"github.com/piwi3910/truenas-csi/internal/backend/iscsi"
+	"github.com/piwi3910/truenas-csi/internal/backend/nfs"
+	"github.com/piwi3910/truenas-csi/internal/backend/nvme"
+	"github.com/piwi3910/truenas-csi/internal/backend/smb"
+	"github.com/piwi3910/truenas-csi/internal/csi"
+	"github.com/piwi3910/truenas-csi/internal/node"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -239,4 +246,51 @@ func findAllParamKeys(src string) []string {
 		}
 	}
 	return out
+}
+
+// TestEveryParameterIsAccepted fails when the code reads a StorageClass
+// parameter that CreateVolume would refuse.
+//
+// The driver now rejects a class carrying a key nothing reads, which is what
+// turns a typo into a failure instead of a silent default. That refusal is only
+// safe while the accepted set really is every key the backends read: a
+// parameter added to a backend without being declared would make every class
+// using it fail to provision.
+//
+// It reuses the same discovery the documentation check uses, so a new parameter
+// is caught by whichever of the two is wrong.
+func TestEveryParameterIsAccepted(t *testing.T) {
+	root := repoRoot(t)
+
+	accepted := map[string]bool{}
+	for _, k := range csi.CommonParameters() {
+		accepted[k] = true
+	}
+	for _, b := range []backend.Backend{
+		nfs.New(nil, backend.Options{}),
+		iscsi.New(nil, backend.Options{}),
+		nvme.New(nil, backend.Options{}),
+		smb.New(nil, backend.Options{}),
+	} {
+		for _, k := range b.AcceptedParameters() {
+			accepted[k] = true
+		}
+	}
+	for _, k := range node.NodeParameterKeys {
+		accepted[k] = true
+	}
+
+	// "key" and "value" are the field names of the user_properties payload, not
+	// StorageClass parameters; the discovery regexes cannot tell them apart.
+	notParameters := map[string]bool{"key": true, "value": true, "password": true}
+
+	for p, where := range paramsFromSources(t, root) {
+		if notParameters[p] || strings.HasPrefix(p, "csi.storage.k8s.io/") {
+			continue
+		}
+		if !accepted[p] {
+			t.Errorf("%s reads the StorageClass parameter %q, but CreateVolume "+
+				"rejects it: add it to the backend's AcceptedParameters", where, p)
+		}
+	}
 }

@@ -710,3 +710,10 @@ var (
 // MinimumCapacityBytes is the appliance's refquota floor. See
 // truenas.MinRefQuotaBytes.
 func (b *Backend) MinimumCapacityBytes() int64 { return truenas.MinRefQuotaBytes }
+
+// AcceptedParameters is every StorageClass parameter this backend reads. The
+// common ones (backend, protocol, pool, parentDataset, fsType, multipath) are
+// added by the CSI layer, which owns them.
+func (b *Backend) AcceptedParameters() []string {
+	return []string{"server", "shareName", "secretName", "secretNamespace", "dirMode", "fileMode", "mode", "uid", "gid"}
+}
