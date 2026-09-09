@@ -62,15 +62,20 @@ func TestE2ERecoverRetiredVolume(t *testing.T) {
 		t.Fatal(err)
 	}
 	original := id.DatasetPath()
-	t.Cleanup(func() {
-		_, _ = ctrl.DeleteVolume(ctx, &csipb.DeleteVolumeRequest{VolumeId: handle})
-	})
+	// Destroy the dataset outright rather than going through DeleteVolume: this
+	// test runs with delete protection ON, so DeleteVolume would RETIRE the
+	// volume into the graveyard and leave it there for the 24h grace period
+	// this test configures. The path is whichever one the recovery reached, so
+	// both are tried.
+	t.Cleanup(func() { _ = e.client.DatasetDelete(ctx, original, true, true) })
 
 	// Retire it, the way a PVC deletion does.
 	if _, err := ctrl.DeleteVolume(ctx, &csipb.DeleteVolumeRequest{VolumeId: handle}); err != nil {
 		t.Fatalf("DeleteVolume: %v", err)
 	}
 	retired := findRetired(ctx, t, e.client, e.prefix, handle)
+	// The rename below moves it out of the graveyard, so this only fires when
+	// the test fails before that.
 	t.Cleanup(func() { _ = e.client.DatasetDelete(ctx, retired, true, true) })
 
 	// ---- the documented recovery, step for step ----
