@@ -252,12 +252,24 @@ func diag(t *testing.T, ns string) {
 // directory. Only looking at the export from outside catches it.
 func assertDataIsOnTheAppliance(t *testing.T, ns, sc string) {
 	t.Helper()
-	node := os.Getenv("TRUENAS_E2E_NODE")
 	server := os.Getenv("TRUENAS_DATA_ADDRESS")
-	if node == "" || server == "" {
-		t.Log("TRUENAS_E2E_NODE or TRUENAS_DATA_ADDRESS unset: skipping the " +
-			"out-of-band check that the data really reached the appliance")
+	if server == "" {
+		t.Log("TRUENAS_DATA_ADDRESS unset: skipping the out-of-band check that " +
+			"the data really reached the appliance")
 		return
+	}
+	// Verify from the node the WORKLOAD landed on, not from a node named by the
+	// environment.
+	//
+	// The export is fenced: ControllerPublishVolume grants exactly the node the
+	// volume was published to, and nobody else. A verification pod pinned
+	// elsewhere is a host outside the access list, and an NFS server answers
+	// such a client with a bare "No such file or directory" — which reads like
+	// the data is missing and is really the fence working correctly.
+	node := strings.TrimSpace(mustRun(t, time.Minute, "kubectl", "get", "pod", "-n", ns,
+		"e2e-user", "-o", "jsonpath={.spec.nodeName}"))
+	if node == "" {
+		t.Fatal("the workload pod reports no node, so there is nowhere to verify from")
 	}
 	pv := strings.TrimSpace(mustRun(t, time.Minute, "kubectl", "get", "pvc", "-n", ns,
 		"e2e-pvc", "-o", "jsonpath={.spec.volumeName}"))

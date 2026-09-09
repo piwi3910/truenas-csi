@@ -507,7 +507,11 @@ storageClasses:
 #   * Kubernetes >= 1.31 with the VolumeAttributesClass feature gate on and
 #     storage.k8s.io/v1beta1 served (kube-apiserver --runtime-config). The API
 #     graduates to storage.k8s.io/v1 in 1.34; set apiVersion accordingly.
-#   * csi-provisioner >= v5.0 and csi-resizer >= v1.11. Both are pinned above.
+#   * csi-provisioner >= v5.0 and csi-resizer >= v2.0. Both are pinned above.
+#     v1.12 watches the v1beta1 VolumeAttributesClass ONLY, so on a 1.34
+#     cluster - which serves storage.k8s.io/v1 - it never sees a class, never
+#     calls ControllerModifyVolume, and logs 'could not find the requested
+#     resource' forever. Verified on a live 1.34.4 cluster.
 #   * enabled: true here, which turns on those sidecars' feature gate and adds
 #     a read-only RBAC grant on volumeattributesclasses.
 #
@@ -520,9 +524,14 @@ storageClasses:
 # zvol has no filenames. See docs/volume-attributes.md.
 volumeAttributesClass:
   enabled: false
-  # The API version this cluster serves. v1beta1 for Kubernetes 1.31-1.33,
-  # storage.k8s.io/v1 from 1.34.
-  apiVersion: storage.k8s.io/v1beta1
+  # The API version THIS cluster serves. storage.k8s.io/v1 from 1.34, which is
+  # the default because it is what a current cluster has; set it back to
+  # storage.k8s.io/v1beta1 on 1.31-1.33.
+  #
+  # Getting it wrong is quiet rather than loud: the class simply does not apply
+  # ("no matches for kind VolumeAttributesClass"), or applies and is never
+  # watched. Check with `kubectl api-resources | grep volumeattributesclass`.
+  apiVersion: storage.k8s.io/v1
   # Example classes, disabled by default exactly as the StorageClasses above
   # are: what an operator wants here is site-specific, and one of them trades
   # away durability.
@@ -663,7 +672,7 @@ sidecars:
     image: registry.k8s.io/sig-storage/csi-attacher:v4.7.0
     extraArgs: []
   resizer:
-    image: registry.k8s.io/sig-storage/csi-resizer:v1.12.0
+    image: registry.k8s.io/sig-storage/csi-resizer:v2.2.1
     extraArgs: []
   snapshotter:
     image: registry.k8s.io/sig-storage/csi-snapshotter:v8.1.0
