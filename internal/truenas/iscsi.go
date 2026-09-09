@@ -148,8 +148,31 @@ func (c *Ops) TargetExtentCreate(ctx context.Context, targetID, extentID, lun in
 }
 
 // TargetExtentDelete removes a LUN mapping.
+//
+// force is not optional here, the way it is not optional for ExtentDelete. The
+// appliance refuses to unmap a LUN while the ASSOCIATED TARGET has any session
+// -- "[EFAULT] Associated target iqn...:csi-pool0-k8s is in use." -- and this
+// driver puts every volume on a backend on one shared target, so that target is
+// in use whenever any volume anywhere on the backend is attached. Without force
+// the unmap could only succeed when the entire backend was idle.
+//
+// The consequences were not subtle. ControllerUnpublishVolume failed and the
+// attacher retried it for ever: VolumeAttachments were never removed, so
+// PersistentVolumes could not be deleted and claims sat in Terminating, and
+// nodes could not be drained. Worse, the per-publish LUN mapping is the
+// appliance-side fence for iSCSI -- an unmap that never succeeds is a grant
+// that is never revoked.
+//
+// Forcing is safe at this point in the protocol: CSI guarantees
+// NodeUnstageVolume has completed for this volume on this node before
+// ControllerUnpublishVolume is called, so the node has already flushed and
+// stopped using the device. What the appliance objects to is the target being
+// busy, not this LUN.
+//
+// Measured on 25.10.6 with a live session on the shared target: delete without
+// force returns EFAULT, delete with force succeeds.
 func (c *Ops) TargetExtentDelete(ctx context.Context, id int) error {
-	err := c.CallJSON(ctx, nil, "iscsi.targetextent.delete", id)
+	err := c.CallJSON(ctx, nil, "iscsi.targetextent.delete", id, true)
 	if err != nil && IsNotFound(err) {
 		return nil
 	}

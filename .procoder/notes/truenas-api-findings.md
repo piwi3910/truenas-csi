@@ -1027,3 +1027,17 @@ Measured on 25.10.6: lunid 254, 255, 256, 1023 and 1024 were all accepted on an
 existing target. The driver's `maxLUNs = 255` is therefore its own conservative
 ceiling — the largest LUN every initiator addresses without peripheral-device
 addressing — and not a middleware limit, which is what the comment used to say.
+
+## iscsi.targetextent.delete needs force while the TARGET has any session
+
+    [EFAULT] Associated target iqn.2005-10.org.freenas.ctl:csi-pool0-k8s is in use.
+
+The check is on the associated TARGET, not on the LUN being unmapped. This
+driver puts every volume on a backend on one shared target, so the target is in
+use whenever any volume anywhere on that backend is attached — meaning the
+unmap could only ever succeed when the whole backend was idle.
+
+Measured on 25.10.6 with a live session on the target:
+`iscsi.targetextent.delete(id)` fails as above, `iscsi.targetextent.delete(id,
+true)` succeeds. `iscsi.extent.delete` already took `(id, remove, force)` in
+this codebase; the mapping call did not.
