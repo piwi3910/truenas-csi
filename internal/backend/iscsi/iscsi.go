@@ -256,6 +256,7 @@ func (b *iscsiBackend) ensureZvol(ctx context.Context, r backend.CreateRequest, 
 		VolBlockSize: blocksize,
 		UserProperties: map[string]string{
 			volume.OwnerProperty:    volume.OwnerValue,
+			volume.OwnerIDProperty:  dsPath,
 			volume.ProtocolProperty: "iscsi",
 		},
 	}); err != nil {
@@ -282,6 +283,9 @@ func (b *iscsiBackend) cloneZvol(ctx context.Context, r backend.CreateRequest, r
 		_ = b.c.DatasetDelete(context.WithoutCancel(ctx), dsPath, true, true)
 	})
 
+	if err := b.c.SetUserProperty(ctx, dsPath, volume.OwnerIDProperty, dsPath); err != nil {
+		return fmt.Errorf("stamping the owner id on %s: %w", dsPath, err)
+	}
 	if err := b.c.SetUserProperty(ctx, dsPath, volume.OwnerProperty, volume.OwnerValue); err != nil {
 		return fmt.Errorf("stamping the restored volume %s: %w", dsPath, err)
 	}

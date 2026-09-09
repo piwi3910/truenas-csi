@@ -319,6 +319,7 @@ func (b *nvmeBackend) ensureZvol(ctx context.Context, r backend.CreateRequest, p
 		VolBlockSize: blocksize,
 		UserProperties: map[string]string{
 			volume.OwnerProperty:    volume.OwnerValue,
+			volume.OwnerIDProperty:  dsPath,
 			volume.ProtocolProperty: "nvme",
 		},
 	}); err != nil {
@@ -345,6 +346,9 @@ func (b *nvmeBackend) cloneZvol(ctx context.Context, r backend.CreateRequest, ro
 		_ = b.c.DatasetDelete(context.WithoutCancel(ctx), dsPath, true, true)
 	})
 
+	if err := b.c.SetUserProperty(ctx, dsPath, volume.OwnerIDProperty, dsPath); err != nil {
+		return fmt.Errorf("stamping the owner id on %s: %w", dsPath, err)
+	}
 	if err := b.c.SetUserProperty(ctx, dsPath, volume.OwnerProperty, volume.OwnerValue); err != nil {
 		return fmt.Errorf("stamping the restored volume %s: %w", dsPath, err)
 	}

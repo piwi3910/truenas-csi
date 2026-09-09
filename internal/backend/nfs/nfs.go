@@ -247,6 +247,7 @@ func (b *Backend) create(ctx context.Context, dsPath string, r backend.CreateReq
 			RefQuota: r.CapacityBytes,
 			UserProperties: map[string]string{
 				volume.OwnerProperty:    volume.OwnerValue,
+				volume.OwnerIDProperty:  dsPath,
 				volume.ProtocolProperty: "nfs",
 			},
 		})
@@ -275,6 +276,9 @@ func (b *Backend) restore(ctx context.Context, snapshot, dsPath string, bytes in
 				cause, dsPath, delErr)
 		}
 		return nil, cause
+	}
+	if err := b.c.SetUserProperty(ctx, dsPath, volume.OwnerIDProperty, dsPath); err != nil {
+		return fail("stamp the owner id on clone %s: %v", dsPath, err)
 	}
 	if err := b.c.SetUserProperty(ctx, dsPath, volume.OwnerProperty, volume.OwnerValue); err != nil {
 		return fail("stamp ownership on clone %s: %v", dsPath, err)

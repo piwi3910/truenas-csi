@@ -794,3 +794,47 @@ datasets with children are the graveyard root and, when namespace quotas are on,
 the namespace datasets — but the guarantee the code documents is stronger than
 what the platform provides, and any future guard built on `source == LOCAL`
 inherits the same weakness.
+
+## Ownership cannot be established from a property's source (fixed 2026-09-09)
+
+`pool.dataset.query` reports **every** user property with `source: "LOCAL"`,
+inherited or not. `zfs.dataset.query`, over the same datasets, reports it
+correctly:
+
+    Pool0/p     managed=truenas-csi   pool.dataset.query: LOCAL   zfs.dataset.query: LOCAL
+    Pool0/p/c   managed=truenas-csi   pool.dataset.query: LOCAL   zfs.dataset.query: INHERITED
+
+`volume.VerifyOwned` was written around the source field, so on TrueNAS a
+dataset an operator created by hand underneath a driver-owned one inherited the
+marker, read as LOCAL, and passed the guard that stands in front of every
+destructive path.
+
+### Why not just call zfs.dataset.query
+
+It is the accurate answer, and it was rejected on cost: correcting the sources
+means a second middleware call on every dataset query, against an appliance with
+a hardware-verified 20-call concurrency ceiling — and it would make correctness
+depend on a call 23 test files would have to script, i.e. on the fake being
+honest, which is precisely what failed here.
+
+### What is used instead
+
+`io.truenas.csi:owner-id`, carrying the id of the dataset the marker was stamped
+on. A child inherits its ANCESTOR's id, which is not its own, so inheritance is
+visible in the VALUE and no source field is consulted. Verified on the appliance
+against the real failure:
+
+    Pool0/k8s/pvc-own-…                 owner-id=Pool0/k8s/pvc-own-…   VerifyOwned: owned
+    Pool0/k8s/pvc-own-…/operator-data   owner-id=Pool0/k8s/pvc-own-…   VerifyOwned: REFUSED
+                                        (both report source=LOCAL)
+
+Two consequences worth remembering:
+
+- **`Retire` must re-stamp the owner id after the rename.** The property names
+  the dataset it was set on, and a rename changes that name; left alone the
+  retired dataset's id names its original path, the guard reads the mismatch as
+  inheritance, and the reaper refuses it for ever.
+- Datasets stamped before this existed have no owner id and fall back to the
+  old source check. That is no weaker than what they always had, but it cannot
+  detect inheritance — so the fallback is legacy-only and every dataset stamped
+  from now on carries the id.

@@ -81,11 +81,18 @@ func Retire(ctx context.Context, c truenas.API, p Policy, id volume.ID, now Cloc
 	// that the dataset has no deletion timestamp, so the reaper will refuse it
 	// for ever and an operator must remove it by hand — which is the safe
 	// direction for this to fail in, and is why it is logged loudly.
+	//
+	// The owner id is re-stamped here for a reason that is easy to miss: it
+	// names the dataset the marker was set on, and the rename has just changed
+	// that name. Left alone it would still name the volume's ORIGINAL path,
+	// which is not the retired dataset's path, and the ownership guard would
+	// read the mismatch as an inherited marker and refuse to reap it — for ever.
 	stamp := map[string]string{
 		volume.DeletedAtProperty:   volume.FormatDeletedAt(deletedAt),
 		volume.RetiredFromProperty: id.String(),
+		volume.OwnerIDProperty:     dst,
 	}
-	for _, key := range []string{volume.DeletedAtProperty, volume.RetiredFromProperty} {
+	for _, key := range []string{volume.OwnerIDProperty, volume.DeletedAtProperty, volume.RetiredFromProperty} {
 		if err := c.SetUserProperty(ctx, dst, key, stamp[key]); err != nil {
 			obs.Logger(ctx).Error("retired volume could not be stamped; the reaper will never "+
 				"destroy it and it must be removed by hand once you no longer need it",
@@ -133,6 +140,7 @@ func ensureGraveyard(ctx context.Context, c truenas.API, p Policy) error {
 		Type: "FILESYSTEM",
 		UserProperties: map[string]string{
 			volume.OwnerProperty:     volume.OwnerValue,
+			volume.OwnerIDProperty:   root,
 			volume.GraveyardProperty: volume.GraveyardValue,
 		},
 	}); err != nil {

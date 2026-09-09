@@ -597,7 +597,7 @@ func (m *Manager) TestFailover(ctx context.Context, g Group) (*State, error) {
 		if err := createDataset(ctx, guarded, map[string]any{
 			"name":            root,
 			"type":            "FILESYSTEM",
-			"user_properties": volume.StampProperties(),
+			"user_properties": volume.StampProperties(root),
 		}); err != nil {
 			return nil, fmt.Errorf("scratch dataset %s: %w", root, err)
 		}
@@ -625,7 +625,7 @@ func (m *Manager) TestFailover(ctx context.Context, g Group) (*State, error) {
 		// an unstamped scratch clone could never be cleaned up by the guard
 		// that tears this down again.
 		if err := updateDataset(ctx, guarded, clone, map[string]any{
-			"user_properties_update": volume.StampProperties(),
+			"user_properties_update": volume.StampProperties(clone),
 		}); err != nil {
 			return nil, fmt.Errorf("stamping %s: %w", clone, err)
 		}
@@ -917,7 +917,7 @@ func (m *Manager) CreateRemoteVolume(ctx context.Context, g Group, id volume.ID)
 	payload := map[string]any{
 		"name":            target,
 		"type":            source.Type,
-		"user_properties": volume.StampProperties(),
+		"user_properties": volume.StampProperties(target),
 	}
 	if source.Type == "VOLUME" {
 		payload["volsize"] = source.VolSize.Parsed
