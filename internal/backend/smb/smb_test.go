@@ -68,6 +68,7 @@ func (s *fakeShare) hostList(key string) []string {
 }
 
 type fakeDataset struct {
+	acltype   string
 	refquota  int64
 	marker    string
 	source    string
@@ -168,6 +169,9 @@ func newNAS(t *testing.T) *nas {
 		if c, ok := patch["comments"].(string); ok {
 			ds.comments = c
 		}
+		if a, ok := patch["acltype"].(string); ok {
+			ds.acltype = a
+		}
 		if props, ok := patch["user_properties_update"].([]any); ok {
 			for _, raw := range props {
 				m, _ := raw.(map[string]any)
@@ -193,16 +197,27 @@ func newNAS(t *testing.T) *nas {
 		dst, _ := payload["dataset_dst"].(string)
 		n.mu.Lock()
 		defer n.mu.Unlock()
-		n.datasets[dst] = &fakeDataset{}
+		// A ZFS clone takes acltype from its POSITION in the hierarchy, never
+		// from its origin: share_type SMB sets acltype LOCAL on the source, and
+		// the clone lands under the parent dataset and inherits POSIX from it.
+		// Verified on a real appliance.
+		n.datasets[dst] = &fakeDataset{acltype: "POSIX"}
 		return true, nil
 	})
 
 	n.Handle("filesystem.setacl", func(p []json.RawMessage) (any, error) {
 		var payload map[string]any
 		mustJSON(t, p[0], &payload)
+		path, _ := payload["path"].(string)
 		n.mu.Lock()
+		defer n.mu.Unlock()
+		// An NFSv4 dacl on a dataset whose acltype is POSIX fails the job with
+		// a bare KeyError, which the middleware reports as "job N FAILED:
+		// 'default'". Reproduced against a real appliance (job 31203).
+		if ds := n.datasets[strings.TrimPrefix(path, "/mnt/")]; ds != nil && ds.acltype == "POSIX" {
+			return nil, &fake.RPCError{Code: -32602, ErrName: "EFAULT", Reason: "job 31203 FAILED: 'default'"}
+		}
 		n.setacls = append(n.setacls, payload)
-		n.mu.Unlock()
 		return 1, nil
 	})
 	// Registered deliberately: a backend that wrongly used setperm must fail the
@@ -719,6 +734,10 @@ func TestSMBRestoreStampsClone(t *testing.T) {
 	}
 	if ds.refquota != 4*gib {
 		t.Fatalf("clone refquota = %d, want %d — the share would report the whole pool", ds.refquota, 4*gib)
+	}
+	if ds.acltype != "NFSV4" {
+		t.Fatalf("clone acltype = %q, want NFSV4 — an SMB share on a POSIX dataset "+
+			"cannot carry the NFSv4 ACL the share needs", ds.acltype)
 	}
 	if got := n.CallsTo("filesystem.setacl"); got != 1 {
 		t.Fatalf("filesystem.setacl ran %d times on the clone, want 1", got)

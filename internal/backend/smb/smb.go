@@ -450,8 +450,19 @@ func (b *Backend) restore(ctx context.Context, snapshot, dsPath string, bytes in
 	if err := b.c.SetUserProperty(ctx, dsPath, volume.OwnerProperty, volume.OwnerValue); err != nil {
 		return fail("stamp ownership on clone %s: %v", dsPath, err)
 	}
-	if _, err := b.c.DatasetUpdate(ctx, dsPath, map[string]any{"refquota": bytes}); err != nil {
-		return fail("set refquota on clone %s: %v", dsPath, err)
+	// acltype and aclmode are the other two properties a clone does not inherit,
+	// and they are the ones share_type: SMB sets LOCAL on the create path. A
+	// clone lands under the parent dataset and takes POSIX from it, and
+	// filesystem.setacl then rejects the NFSv4 ACL the SMB share needs with a
+	// bare KeyError -- "job N FAILED: 'default'". Every attempt to clone an SMB
+	// volume failed that way, forever, because the provisioner retries a
+	// deterministic failure. Verified against a real appliance.
+	if _, err := b.c.DatasetUpdate(ctx, dsPath, map[string]any{
+		"refquota": bytes,
+		"acltype":  "NFSV4",
+		"aclmode":  "RESTRICTED",
+	}); err != nil {
+		return fail("set refquota and acl type on clone %s: %v", dsPath, err)
 	}
 	ds, err := b.c.DatasetQuery(ctx, dsPath)
 	if err != nil {

@@ -25,8 +25,14 @@ DriverInfo:
   SupportedFsType:
     "": {}
 
+  # The suite does not merely pass a mount option through -- its reader pod
+  # re-reads /proc/mounts and asserts the option is listed there. The cifs
+  # client echoes back only what it represents positively, so a negative option
+  # such as noserverino is applied correctly and still fails the assertion,
+  # because it shows up as the ABSENCE of serverino. actimeo=30 is honoured and
+  # echoed verbatim, so it tests the same thing and can actually be verified.
   SupportedMountOption:
-    noserverino: {}
+    actimeo=30: {}
 
   # EVERY key the node plugin publishes, not just this protocol's.
   #
