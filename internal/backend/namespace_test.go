@@ -296,3 +296,94 @@ func TestReclaimNamespaceNeverForcesOrRecurses(t *testing.T) {
 		t.Fatalf("delete options = %s, want recursive=false and force=false", opts)
 	}
 }
+
+// volDataset is one of this driver's volumes under a namespace dataset: a thin
+// filesystem whose refquota is a promise and whose `used` is nearly nothing.
+func volDataset(id string, refquota int64) map[string]any {
+	return map[string]any{
+		"id": id, "type": "FILESYSTEM",
+		"used":     map[string]any{"parsed": 0},
+		"refquota": map[string]any{"parsed": refquota},
+		"user_properties": map[string]any{
+			volume.OwnerProperty: map[string]any{
+				"value": volume.OwnerValue, "source": "LOCAL"},
+			volume.OwnerIDProperty: map[string]any{
+				"value": id, "source": "LOCAL"},
+		},
+	}
+}
+
+// TestNamespaceQuotaBoundsThinVolumes pins the ceiling the documentation
+// promises and the implementation did not have.
+//
+// A namespace quota measured against ZFS `used` alone cannot bound thin
+// volumes: ZFS charges nothing for a refquota until a byte is written into it,
+// so a 2 GiB quota admitted an unlimited number of 1 GiB claims. Verified on
+// hardware before the fix — three 1 GiB claims all bound under a 2 GiB quota,
+// and the tenant would have met the limit as write failures spreading across
+// workloads that were already running.
+func TestNamespaceQuotaBoundsThinVolumes(t *testing.T) {
+	const path = "Pool0/k8s/team-a"
+	s := fake.Start(t, fake.Options{})
+	s.HandleValue("system.info", map[string]any{"version": "25.10.6"})
+	s.Handle("pool.dataset.query", datasetQuery(t,
+		nsDataset(path, "team-a", "LOCAL", "2147483648", 0),
+		[]any{
+			volDataset(path+"/pvc-1", 1<<30),
+			volDataset(path+"/pvc-2", 1<<30),
+		}))
+	c := clientWith(t, s)
+
+	ns, err := EnsureNamespace(context.Background(), c, "Pool0", "k8s", "team-a", 2<<30)
+	if err != nil {
+		t.Fatalf("EnsureNamespace: %v", err)
+	}
+	if ns.UsedBytes != 0 {
+		t.Fatalf("UsedBytes = %d, want 0 — the volumes are thin and empty", ns.UsedBytes)
+	}
+	if ns.ProvisionedBytes != 2<<30 {
+		t.Errorf("ProvisionedBytes = %d, want %d (two 1 GiB refquotas)",
+			ns.ProvisionedBytes, int64(2)<<30)
+	}
+	room, limited := ns.Room()
+	if !limited {
+		t.Fatal("Room reported no limit for a namespace with a 2 GiB quota")
+	}
+	if room != 0 {
+		t.Errorf("Room = %d, want 0: the quota is fully promised even though "+
+			"nothing has been written, so a third 1 GiB claim must be refused",
+			room)
+	}
+}
+
+// TestNamespaceQuotaCountsOnlyItsOwnDirectChildren guards the total against the
+// three things that are not volumes of this namespace: a dataset the driver
+// does not own, one nested deeper than a direct child, and the namespace
+// dataset itself, which carries the quota rather than consuming it.
+func TestNamespaceQuotaCountsOnlyItsOwnDirectChildren(t *testing.T) {
+	const path = "Pool0/k8s/team-a"
+	foreign := map[string]any{
+		"id": path + "/not-ours", "type": "FILESYSTEM",
+		"refquota":        map[string]any{"parsed": int64(500) << 30},
+		"user_properties": map[string]any{},
+	}
+	s := fake.Start(t, fake.Options{})
+	s.HandleValue("system.info", map[string]any{"version": "25.10.6"})
+	s.Handle("pool.dataset.query", datasetQuery(t,
+		nsDataset(path, "team-a", "LOCAL", "10737418240", 0),
+		[]any{
+			volDataset(path+"/pvc-1", 1<<30),
+			volDataset(path+"/pvc-1/nested", 8<<30), // deeper than a direct child
+			foreign,
+		}))
+	c := clientWith(t, s)
+
+	ns, err := EnsureNamespace(context.Background(), c, "Pool0", "k8s", "team-a", 10<<30)
+	if err != nil {
+		t.Fatalf("EnsureNamespace: %v", err)
+	}
+	if ns.ProvisionedBytes != 1<<30 {
+		t.Errorf("ProvisionedBytes = %d, want %d — only the one owned direct child counts",
+			ns.ProvisionedBytes, int64(1)<<30)
+	}
+}

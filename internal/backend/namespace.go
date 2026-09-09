@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/piwi3910/truenas-csi/internal/obs"
 	"github.com/piwi3910/truenas-csi/internal/truenas"
@@ -30,6 +31,19 @@ type NamespaceDataset struct {
 	// which is what makes it stronger than a ledger the driver maintains.
 	UsedBytes int64
 
+	// ProvisionedBytes is the sum of what the namespace's volumes were
+	// PROMISED — refquota for a filesystem, volsize for a zvol — regardless of
+	// how much of it has been written.
+	//
+	// It exists because UsedBytes cannot bound thin volumes, which is the thing
+	// this quota is for. A ZFS quota charges nothing for a 1 TiB refquota until
+	// a byte is written into it, so measuring only usage lets a namespace with
+	// a 2 GiB quota bind a hundred 1 GiB claims; every one of them succeeds,
+	// and the tenant discovers the limit as write failures spread across
+	// workloads that were already running. Verified on hardware: three 1 GiB
+	// claims all bound under a 2 GiB quota before this was counted.
+	ProvisionedBytes int64
+
 	// QuotaBytes is the configured quota, 0 for unlimited.
 	QuotaBytes int64
 
@@ -40,14 +54,77 @@ type NamespaceDataset struct {
 
 // Room returns how many more bytes may be provisioned into the namespace, and
 // whether a limit applies at all.
+//
+// It measures against whichever of usage and provisioned size is LARGER, so
+// both failure modes are covered by one number: a namespace whose volumes are
+// full is bounded by UsedBytes, and a namespace that has promised more than it
+// has written is bounded by ProvisionedBytes. Taking usage alone would let thin
+// volumes past the ceiling; taking provisioned alone would miss bytes written
+// by anything that did not provision through this driver — a restored
+// replication stream, a snapshot growing, an operator copying data in over SSH.
 func (n *NamespaceDataset) Room() (bytes int64, limited bool) {
 	if n == nil || n.QuotaBytes <= 0 {
 		return 0, false
 	}
-	if room := n.QuotaBytes - n.UsedBytes; room > 0 {
+	charged := n.UsedBytes
+	if n.ProvisionedBytes > charged {
+		charged = n.ProvisionedBytes
+	}
+	if room := n.QuotaBytes - charged; room > 0 {
 		return room, true
 	}
 	return 0, true
+}
+
+// Charged is the figure Room measured against, for error messages that have to
+// explain which of the two limits was hit.
+func (n *NamespaceDataset) Charged() int64 {
+	if n == nil {
+		return 0
+	}
+	if n.ProvisionedBytes > n.UsedBytes {
+		return n.ProvisionedBytes
+	}
+	return n.UsedBytes
+}
+
+// provisionedUnder sums what the namespace's volumes were promised.
+//
+// Only the namespace's DIRECT children count, and only those this driver owns:
+// a snapshot is not a volume, a nested dataset an operator made by hand is not
+// this driver's to charge for, and the namespace dataset itself carries the
+// quota rather than consuming it. A listing failure returns 0 rather than an
+// error — losing the thin ceiling is better than refusing to provision at all
+// when the appliance is merely slow to answer a secondary question.
+func provisionedUnder(ctx context.Context, c truenas.API, path string) int64 {
+	children, err := c.DatasetList(ctx, path+"/")
+	if err != nil {
+		obs.Logger(ctx).Warn("could not total the namespace's provisioned bytes; "+
+			"the quota is measured against usage alone for this request",
+			"dataset", path, "error", obs.Redact(err.Error()))
+		return 0
+	}
+	var total int64
+	for i := range children {
+		d := &children[i]
+		if strings.Contains(strings.TrimPrefix(d.ID, path+"/"), "/") {
+			continue // deeper than a direct child
+		}
+		view := &volume.Dataset{ID: d.ID, UserProperties: map[string]volume.Property{}}
+		for k, v := range d.UserProperties {
+			view.UserProperties[k] = volume.Property{Value: v.Value, Source: v.Source}
+		}
+		if volume.VerifyOwned(view) != nil {
+			continue
+		}
+		switch {
+		case d.VolSize.Parsed > 0:
+			total += d.VolSize.Parsed
+		case d.RefQuota.Parsed > 0:
+			total += d.RefQuota.Parsed
+		}
+	}
+	return total
 }
 
 // EnsureNamespace creates the namespace's parent dataset if it is missing and
@@ -94,6 +171,10 @@ func EnsureNamespace(ctx context.Context, c truenas.API, pool, parent, namespace
 	}
 
 	out := &NamespaceDataset{Path: path, UsedBytes: ds.Used.Parsed, QuotaBytes: quota}
+	if quota > 0 {
+		// Only worth the listing when there is a ceiling to hit.
+		out.ProvisionedBytes = provisionedUnder(ctx, c, path)
+	}
 
 	if quota > 0 && ds.Used.Parsed > quota {
 		out.QuotaDeferred = true

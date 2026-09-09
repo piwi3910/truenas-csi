@@ -112,16 +112,32 @@ volume.
 
 Two layers, and the second is the real one:
 
-1. `CreateVolume` refuses with `ResourceExhausted` when `used + requested`
-   exceeds the namespace's configured quota. This is what turns a middleware
-   `EDQUOT` into a clear error, and it is what bounds **thin** volumes, whose
-   provisioned size ZFS does not charge against the quota until the data is
-   written.
+1. `CreateVolume` refuses with `ResourceExhausted` when
+   `max(used, provisioned) + requested` exceeds the namespace's configured
+   quota. This is what turns a middleware `EDQUOT` into a clear error, and it is
+   what bounds **thin** volumes, whose provisioned size ZFS does not charge
+   against the quota until the data is written.
 2. The ZFS `quota` on the namespace dataset. This is the one that holds against
    writes the driver never saw.
 
 `used` is ZFS's own figure for the dataset and everything beneath it: volumes,
-their snapshots and every byte written into them.
+their snapshots and every byte written into them. `provisioned` is what the
+namespace's volumes were promised — `refquota` for a filesystem, `volsize` for a
+zvol — counting only this driver's own direct children of the namespace dataset.
+
+The two are measured together and the LARGER one binds, because neither alone is
+enough. Usage alone cannot bound thin volumes: a ZFS quota charges nothing for a
+1 GiB `refquota` until a byte is written into it, so a namespace with a 2 GiB
+quota would bind an unlimited number of 1 GiB claims and the tenant would meet
+the limit as write failures spreading across workloads that were already
+running. Provisioned alone would miss every byte that did not arrive through
+this driver — a restored replication stream, a snapshot growing, an operator
+copying data in over SSH — which is what a ledger gets wrong and a ZFS quota
+gets right.
+
+Over-provisioning is therefore **not** permitted: the sum of a namespace's
+volume sizes cannot exceed its quota, the way `requests.storage` behaves in a
+Kubernetes `ResourceQuota`.
 
 ## Lowering a quota below current usage
 
