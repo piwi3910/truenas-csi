@@ -884,3 +884,39 @@ the claim. Echoing it into the volume context at CreateVolume is the only way
 a node-side metric can carry a `pvc` label without giving the node plugin
 API-server credentials. Verified: `pvc="label-check"` on a volume provisioned
 after the change, empty on one provisioned before it.
+
+## A missing destination PARENT is reported as ENOENT naming the SOURCE
+
+`pool.dataset.rename` into a path whose parent does not exist fails with
+`[ENOENT] Dataset '<SOURCE>' not found` — naming the dataset that does exist.
+Verified while recovering a retired volume whose namespace dataset had been
+reclaimed. Anyone reading the error concludes the source is gone.
+
+`pool.dataset.create` is clearer about the same condition:
+`[EINVAL] pool_dataset_create.name: Parent dataset (<parent>) does not exist.`
+EINVAL, with the real cause only in the text — matched by `IsParentMissing`.
+
+## A recursive snapshot takes the whole subtree, and there is no subset form
+
+`pool.snapshot.create` with `recursive: true` snapshots the dataset and EVERY
+descendant in one transaction group. There is no way to snapshot a subset
+atomically. Measured: a group snapshot of two volumes produced four snapshots
+(anchor, two members, one bystander). The driver now deletes the non-member
+snapshots immediately after the recursive create — atomicity is unaffected,
+because the members were already captured in one transaction group.
+
+## Graveyard markers are inherited, not set
+
+`io.truenas.csi:graveyard` lives on the graveyard dataset, so an entry inside it
+merely INHERITS the marker. A `zfs rename` out of the graveyard drops it, and
+trying to remove it explicitly fails the whole property update with
+`[EINVAL] properties.<key>: Property does not exist and cannot be inherited` —
+a `user_properties_update` is applied atomically, so one bad key discards the
+others in the same call.
+
+## Namespace quotas: a ZFS quota does not bound thin volumes
+
+A `quota` on a namespace dataset charges nothing for a child's `refquota` until
+data is written. Verified: three 1 GiB claims all bound under a 2 GiB namespace
+quota. Bounding over-provisioning needs the driver to total the children's
+`refquota`/`volsize` itself; the appliance will not do it.
