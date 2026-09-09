@@ -69,6 +69,22 @@ func IsParentMissing(err error) bool {
 		strings.Contains(ce.Reason, "does not exist")
 }
 
+// IsHasDependentClones reports whether ZFS refused to destroy a dataset because
+// something was cloned from one of its snapshots.
+//
+// The middleware reports it as EFAULT with the real cause only in the text, and
+// the text helpfully suggests `use '-R' to destroy the following datasets` --
+// advice that, followed literally, destroys the volumes doing the depending.
+// Recognising the condition lets the driver answer FailedPrecondition and name
+// what has to go first, instead of forwarding that.
+func IsHasDependentClones(err error) bool {
+	var ce *CallError
+	if !errors.As(err, &ce) {
+		return false
+	}
+	return strings.Contains(ce.Reason, "dependent clones")
+}
+
 // IsBusy reports whether the appliance refused an operation because ZFS
 // considers the dataset busy: a mount or a zvol device the kernel has not
 // released yet, or a snapshot that still has dependent clones.

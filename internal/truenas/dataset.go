@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"google.golang.org/grpc/codes"
@@ -163,13 +164,69 @@ func (c *Ops) DatasetRename(ctx context.Context, id, newName string, force bool)
 }
 
 // DatasetDelete removes a dataset. A dataset that is already gone is success.
+// A destroy blocked by a dependent clone is translated here rather than
+// forwarded. It is the ordinary end of the most ordinary snapshot workflow --
+// restore a snapshot, check the copy, delete the original -- and ZFS refuses,
+// because the restored volume is a clone of the original's snapshot. Forwarded
+// raw it arrives as codes.Internal, which the CO retries for ever: the claim
+// sits in Terminating with no indication of what is holding it, while the
+// message quotes ZFS suggesting `-R`, which would destroy the restored volume.
 func (c *Ops) DatasetDelete(ctx context.Context, id string, recursive, force bool) error {
 	err := c.CallJSON(ctx, nil, "pool.dataset.delete", id,
 		map[string]any{"recursive": recursive, "force": force})
-	if err != nil && IsNotFound(err) {
+	if err == nil {
 		return nil
 	}
+	if IsNotFound(err) {
+		return nil
+	}
+	if IsHasDependentClones(err) {
+		return status.Errorf(codes.FailedPrecondition,
+			"%s cannot be deleted while %s: delete those first. "+
+				"They were created from a snapshot of this volume, so ZFS keeps this "+
+				"one alive to serve them",
+			id, describeClones(c.clonesOf(ctx, id)))
+	}
 	return err
+}
+
+// clonesOf finds the datasets whose origin is a snapshot of id.
+//
+// It answers on a best effort: this runs only on an error path, and a failure
+// to enumerate must not replace a clear refusal with a listing error.
+func (c *Ops) clonesOf(ctx context.Context, id string) []string {
+	pool := id
+	if i := strings.Index(pool, "/"); i > 0 {
+		pool = pool[:i]
+	}
+	all, err := c.DatasetList(ctx, pool)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for i := range all {
+		origin := all[i].Origin.Value
+		if origin == "" {
+			continue
+		}
+		if ds, _, found := strings.Cut(origin, "@"); found && ds == id {
+			out = append(out, all[i].ID)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// describeClones renders the dependants for the refusal message, and says so
+// honestly when it could not name them.
+func describeClones(clones []string) string {
+	if len(clones) == 0 {
+		return "volumes cloned from its snapshots still exist"
+	}
+	if len(clones) == 1 {
+		return "volume " + clones[0] + " still exists"
+	}
+	return "volumes " + strings.Join(clones, ", ") + " still exist"
 }
 
 // RecommendedZvolBlocksize asks the appliance rather than guessing.

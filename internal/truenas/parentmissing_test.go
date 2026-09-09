@@ -75,3 +75,62 @@ func parentMissingErr() error {
 		Reason: "[EINVAL] pool_dataset_create.name: Parent dataset (Pool0/k8s) does not exist.",
 	}
 }
+
+// TestDatasetDeleteNamesTheDependentClones pins the translation of the refusal
+// that ends the most ordinary snapshot workflow there is: restore a snapshot,
+// check the copy, delete the original.
+//
+// The reason string is verbatim from a live 25.10.6 appliance. Forwarded raw it
+// reaches Kubernetes as codes.Internal, which external-provisioner retries for
+// ever — the claim sits in Terminating with no indication of what is holding
+// it, and the message quotes ZFS suggesting `-R`, which would destroy the
+// restored volume the operator had just made.
+func TestDatasetDeleteNamesTheDependentClones(t *testing.T) {
+	err := &CallError{
+		Method: "pool.dataset.delete", Code: -32001, ErrName: "EFAULT",
+		Reason: "[EFAULT] Failed to delete dataset: cannot destroy 'Pool0/k8s/pvc-1': " +
+			"filesystem has dependent clones\nuse '-R' to destroy the following datasets:\n" +
+			"Pool0/k8s/pvc-restored",
+	}
+	if !IsHasDependentClones(err) {
+		t.Fatal("IsHasDependentClones did not recognise the appliance's own wording")
+	}
+	if IsHasDependentClones(errors.New("some other failure")) {
+		t.Error("IsHasDependentClones matched an unrelated error")
+	}
+
+	ops := &Ops{Transport: dependentClonesTransport{}}
+	derr := ops.DatasetDelete(context.Background(), "Pool0/k8s/pvc-1", true, false)
+	if got := status.Code(derr); got != codes.FailedPrecondition {
+		t.Fatalf("code = %s, want FailedPrecondition (got %v)", got, derr)
+	}
+	if !strings.Contains(derr.Error(), "Pool0/k8s/pvc-1") {
+		t.Errorf("the message must name the volume being deleted, got: %v", derr)
+	}
+	if strings.Contains(derr.Error(), "-R") {
+		t.Errorf("the message repeats ZFS's -R suggestion, which destroys the "+
+			"dependent volumes: %v", derr)
+	}
+}
+
+// dependentClonesTransport refuses the delete the way the appliance does, and
+// answers the follow-up listing that finds what is holding the dataset.
+type dependentClonesTransport struct{}
+
+func (dependentClonesTransport) CallJSON(_ context.Context, out any, method string, _ ...any) error {
+	if method == "pool.dataset.query" {
+		return json.Unmarshal([]byte(`[{"id":"Pool0/k8s/pvc-restored",
+		  "origin":{"parsed":"Pool0/k8s/pvc-1@snap1","value":"Pool0/k8s/pvc-1@snap1","source":"NONE"}}]`), out)
+	}
+	return &CallError{
+		Method: "pool.dataset.delete", Code: -32001, ErrName: "EFAULT",
+		Reason: "[EFAULT] Failed to delete dataset: cannot destroy 'Pool0/k8s/pvc-1': " +
+			"filesystem has dependent clones",
+	}
+}
+
+func (dependentClonesTransport) Call(context.Context, string, ...any) (json.RawMessage, error) {
+	return nil, errors.New("not used")
+}
+func (dependentClonesTransport) Host() string { return "appliance.invalid" }
+func (dependentClonesTransport) Close() error { return nil }

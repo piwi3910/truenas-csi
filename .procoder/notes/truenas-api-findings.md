@@ -968,3 +968,21 @@ Verified method: create a local group, a user in it, a `privilege` granting
 exactly the documented roles to that group, and an `api_key` for the user, then
 run the whole integration suite as that account. `privilege.roles` lists all 141
 role names the appliance knows.
+
+## Destroying a dataset whose snapshot has a clone
+
+`pool.dataset.delete` fails with EFAULT and the cause only in the text:
+
+    [EFAULT] Failed to delete dataset: cannot destroy '<ds>': filesystem has
+    dependent clones
+    use '-R' to destroy the following datasets:
+    <the clone>
+
+Note what the appliance suggests. Following that `-R` destroys the restored
+volume. `recursive: true` in the middleware call is `zfs destroy -r` (children
+and snapshots) and does NOT imply `-R`, so the driver cannot destroy a clone by
+accident — but forwarding the message invites an operator to.
+
+This is the end of the most ordinary snapshot workflow: restore a snapshot,
+check the copy, delete the original. Raw, it reaches Kubernetes as
+codes.Internal, which the CO retries for ever.

@@ -371,6 +371,12 @@ func (b *Backend) Delete(ctx context.Context, id volume.ID) error {
 	if err := retention.Dispose(ctx, b.c, b.retire, id, func(ctx context.Context) error {
 		return b.c.DatasetDelete(ctx, dsPath, true, false)
 	}); err != nil {
+		if code := status.Code(err); code != codes.OK && code != codes.Unknown {
+			// A delete that already chose a code chose it deliberately: a
+			// dependent clone is FailedPrecondition naming what to remove
+			// first, and flattening it to Internal makes the CO retry for ever.
+			return err
+		}
 		return status.Errorf(codes.Internal, "delete dataset %s: %v", dsPath, err)
 	}
 	b.forget(id)
