@@ -245,7 +245,18 @@ func isSharedISCSIObject(obj string) bool {
 }
 
 // TestLeastPrivilegeAccount runs the same flow with an account holding only the
-// 14 documented roles.
+// documented roles.
+//
+// Running the WHOLE suite against such an account is what this is really for,
+// and how docs/security.md's list is checked:
+//
+//	TRUENAS_USERNAME=<least-privilege user> TRUENAS_API_KEY=<its key> go test ./test/integration/
+//
+// Doing that found two roles the documented set was missing, both of which fail
+// far from their cause: SHARING_NVME_TARGET_WRITE (without it nvmet.global.config
+// returns EACCES) and SHARING_ISCSI_AUTH_WRITE, where the read-only role makes
+// TrueNAS answer with the CHAP secret MASKED rather than refuse, so every iSCSI
+// volume provisions and then fails to attach on the node.
 func TestLeastPrivilegeAccount(t *testing.T) {
 	if os.Getenv("TRUENAS_LEASTPRIV_API_KEY") == "" {
 		t.Skip("TRUENAS_LEASTPRIV_API_KEY is not set: skipping the least-privilege run")

@@ -943,3 +943,28 @@ operator's hardware that it never checked.
 `disk.query` also returns `"pool": null` for every disk unless called with
 `{"extra": {"pools": true}}`. The field is present, so nothing errors — the
 answer is just empty.
+
+## TrueNAS MASKS secrets it will not let you read, it does not refuse
+
+`iscsi.auth.query` from an account holding only `SHARING_ISCSI_AUTH_READ`
+returns the entry with `"secret": "********"` — eight asterisks — and no error.
+An account with `SHARING_ISCSI_AUTH_WRITE` gets the real 12-16 character value.
+
+This is the most dangerous appliance behaviour found so far, because the
+failure lands nowhere near its cause: the driver reads the mask, puts it in the
+publish context as the CHAP password, the volume provisions, the claim binds,
+and every attach then fails on the NODE with
+`iscsi login failed due to authorization failure` while the controller's logs
+show nothing wrong. A real CHAP secret can never look like the mask (12-16
+characters required, and the mask is 8 asterisks), so it can be detected.
+
+## The documented least-privilege role set was missing NVMe
+
+`nvmet.global.config` returns `[EACCES] Not authorized` without
+`SHARING_NVME_TARGET_WRITE`. 25.10 exposes `SHARING_NVME_TARGET_READ` and
+`SHARING_NVME_TARGET_WRITE`; the driver needs the write role.
+
+Verified method: create a local group, a user in it, a `privilege` granting
+exactly the documented roles to that group, and an `api_key` for the user, then
+run the whole integration suite as that account. `privilege.roles` lists all 141
+role names the appliance knows.

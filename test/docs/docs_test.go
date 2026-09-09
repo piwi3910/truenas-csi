@@ -152,9 +152,19 @@ func TestDocsListAllStorageClassParameters(t *testing.T) {
 	}
 }
 
-// roles is the least-privilege set measured against the live appliance. Every
-// name must appear in docs/security.md: an operator copies this list into the
-// TrueNAS privilege, and a missing role means a driver call fails in production.
+// roles is the least-privilege set measured against the live appliance: an
+// account holding exactly these, and nothing else, runs the whole
+// test/integration suite green. Every name must appear in docs/security.md,
+// because an operator copies this list into a TrueNAS privilege and a missing
+// role means a driver call fails in production.
+//
+// It was NOT measured before, and two entries were wrong in ways that fail far
+// from their cause. SHARING_NVME_TARGET_WRITE was absent, so nvmet.global.config
+// returned EACCES and no NVMe volume could be created. And the set listed
+// SHARING_ISCSI_AUTH_READ, which is worse than missing: TrueNAS answers the
+// query with the CHAP secret MASKED instead of refusing it, so every iSCSI
+// volume provisioned, every claim bound, and every attach then failed on the
+// node with an authorization failure.
 var roles = []string{
 	"DATASET_WRITE",
 	"DATASET_DELETE",
@@ -167,19 +177,20 @@ var roles = []string{
 	"SHARING_ISCSI_GLOBAL_READ",
 	"SHARING_ISCSI_PORTAL_READ",
 	"SHARING_ISCSI_INITIATOR_READ",
-	"SHARING_ISCSI_AUTH_READ",
+	"SHARING_ISCSI_AUTH_WRITE",
 	"SHARING_NFS_WRITE",
 	"FILESYSTEM_ATTRS_WRITE",
+	"SHARING_NVME_TARGET_WRITE",
 }
 
 // TestSecurityDocListsAllRoles asserts the security document carries the whole
-// 14-role set, and that the set is still exactly 14 roles.
+// verified set, and that the set is still exactly that size.
 func TestSecurityDocListsAllRoles(t *testing.T) {
 	root := repoRoot(t)
 	doc := readDoc(t, root, filepath.Join("docs", "security.md"))
 
-	if len(roles) != 14 {
-		t.Fatalf("the least-privilege set is defined as 14 roles, test lists %d", len(roles))
+	if len(roles) != 15 {
+		t.Fatalf("the least-privilege set is defined as 15 roles, test lists %d", len(roles))
 	}
 	for _, r := range roles {
 		if !strings.Contains(doc, r) {

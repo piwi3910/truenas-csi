@@ -207,8 +207,33 @@ func findAuth(ctx context.Context, c truenas.API, user string) (*rawAuth, error)
 	if len(out) == 0 {
 		return nil, nil
 	}
+	// TrueNAS REDACTS the secret for an account that may not read it, replacing
+	// the value with a run of asterisks rather than refusing the query. Handing
+	// that to the node produces the worst failure this driver has: the volume
+	// provisions, the claim binds, and every attach then fails with "iSCSI
+	// login failed due to authorization failure" -- on the node, at pod start,
+	// with nothing in the controller's logs. Verified on 25.10.6 with an
+	// account holding SHARING_ISCSI_AUTH_READ.
+	//
+	// A real secret can never look like this: TrueNAS requires 12-16
+	// characters, and the redaction is eight asterisks.
+	if isRedacted(out[0].Secret) {
+		return nil, fmt.Errorf("the appliance redacted the CHAP secret for %q, so this "+
+			"account cannot read it: iSCSI attachment would fail on every node with an "+
+			"authorization failure. Grant the driver's account SHARING_ISCSI_AUTH_WRITE "+
+			"(SHARING_ISCSI_AUTH_READ is not enough -- it returns the secret masked)", user)
+	}
 	obs.Register(out[0].Secret)
 	return &out[0], nil
+}
+
+// isRedacted reports whether the appliance masked a secret instead of returning
+// it. The mask is a run of asterisks and nothing else.
+func isRedacted(secret string) bool {
+	if secret == "" {
+		return false
+	}
+	return strings.Trim(secret, "*") == ""
 }
 
 func nextAuthTag(ctx context.Context, c truenas.API) (int, error) {

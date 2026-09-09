@@ -9,8 +9,7 @@ bug from deleting data it did not create.
 
 ## Least privilege on TrueNAS
 
-The driver runs against a **dedicated TrueNAS account with 14 roles**, not `FULL_ADMIN`.
-The set was derived as a verified cover over every middleware method the driver calls:
+The driver runs against a **dedicated TrueNAS account with 15 roles**, not `FULL_ADMIN`:
 
 ```
 DATASET_WRITE
@@ -24,20 +23,36 @@ SHARING_ISCSI_TARGETEXTENT_WRITE
 SHARING_ISCSI_GLOBAL_READ
 SHARING_ISCSI_PORTAL_READ
 SHARING_ISCSI_INITIATOR_READ
-SHARING_ISCSI_AUTH_READ
+SHARING_ISCSI_AUTH_WRITE
 SHARING_NFS_WRITE
 FILESYSTEM_ATTRS_WRITE
+SHARING_NVME_TARGET_WRITE
 ```
 
-Write roles imply their read counterparts, which is why no `DATASET_READ` or
-`SNAPSHOT_READ` appears: they are already covered. The four `SHARING_ISCSI_*_READ` roles
-are read-only on purpose — the driver reads the global iSCSI configuration (for the target
-base name), the portal, the initiator group and the CHAP auth entries, but the portal and
-initiator objects themselves are cluster-wide state it only creates on first use.
+The whole integration suite is run against an account holding exactly these roles, on
+real hardware, so the list is checked rather than reasoned about.
 
-If you run NFS only, the `SHARING_ISCSI_*` roles can be omitted; if you run iSCSI only,
-`SHARING_NFS_WRITE` and `FILESYSTEM_ATTRS_WRITE` can be. Granting the whole set is simpler
-and still far narrower than any admin role.
+Write roles imply their read counterparts, which is why no `DATASET_READ` or
+`SNAPSHOT_READ` appears: they are already covered. The three `SHARING_ISCSI_*_READ` roles
+are read-only on purpose — the driver reads the global iSCSI configuration (for the target
+base name), the portal and the initiator group, but those objects are cluster-wide state
+it only creates on first use.
+
+**`SHARING_ISCSI_AUTH_WRITE`, not `_READ`.** Two reasons, and the second one is nasty.
+The driver *creates* the target's CHAP credential on first use, which needs the write
+role. And with only the read role TrueNAS does not refuse the query — it answers with the
+secret **masked as asterisks**. The driver would hand that to the node as the CHAP
+password, so every volume would provision cleanly, every claim would bind, and every
+attach would then fail on the node with `iSCSI login failed due to authorization failure`
+and nothing wrong in the controller's logs. The driver now detects the mask and refuses
+with this role named, but the fix is to grant the right role.
+
+`SHARING_NVME_TARGET_WRITE` is needed for the NVMe/TCP protocol; without it
+`nvmet.global.config` returns `EACCES` and no NVMe volume can be created.
+
+If you run NFS only, the `SHARING_ISCSI_*` and `SHARING_NVME_*` roles can be omitted; if
+you run iSCSI only, `SHARING_NFS_WRITE` and `FILESYSTEM_ATTRS_WRITE` can be. Granting the
+whole set is simpler and still far narrower than any admin role.
 
 ### `system.info` is deliberately never called
 
@@ -52,7 +67,7 @@ feature that reintroduces the requirement.
    (`nologin`), no home directory of consequence, and no SMB access. It exists only to own
    an API key.
 2. **Credentials → Privileges → Add** (or edit the user's roles, depending on release).
-   Add exactly the 14 roles listed above. Do not add `FULL_ADMIN` or `READONLY_ADMIN`
+   Add exactly the 15 roles listed above. Do not add `FULL_ADMIN` or `READONLY_ADMIN`
    "temporarily to test" — a key issued under a broad role stays as broad as it was issued.
 3. **Credentials → API Keys → Add.** Name it for the cluster it serves, associate it with
    the `csi` user, and copy the key **once** — TrueNAS does not show it again.

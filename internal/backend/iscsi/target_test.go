@@ -243,3 +243,48 @@ func TestPortalAddressRejectsWildcard(t *testing.T) {
 		}
 	}
 }
+
+// TestFindAuthRefusesARedactedSecret pins the fix for the worst failure this
+// driver had: a volume that provisions cleanly and then cannot be attached
+// anywhere.
+//
+// TrueNAS does not refuse iscsi.auth.query for an account that may not read
+// secrets — it answers, with the secret replaced by asterisks. The driver put
+// that in the publish context, the node logged in with it, and every attach
+// failed with "iSCSI login failed due to authorization failure" on the node, at
+// pod start, with nothing wrong in the controller's logs. Reproduced on 25.10.6
+// with an account holding exactly the roles docs/security.md used to list.
+func TestFindAuthRefusesARedactedSecret(t *testing.T) {
+	n := newNAS(t)
+	n.s.HandleValue("iscsi.auth.query", []any{map[string]any{
+		"id": 1, "tag": 1, "user": "csi-pool0-k8s", "secret": "********",
+	}})
+	c := n.client()
+
+	_, err := findAuth(context.Background(), c, "csi-pool0-k8s")
+	if err == nil {
+		t.Fatal("a redacted CHAP secret was accepted; the node would be handed " +
+			"asterisks and every iSCSI attach would fail")
+	}
+	if !strings.Contains(err.Error(), "SHARING_ISCSI_AUTH_WRITE") {
+		t.Errorf("the error must name the role that fixes it, got: %v", err)
+	}
+}
+
+// TestFindAuthAcceptsARealSecret is the other half: the guard must not reject a
+// legitimate secret, including one an operator set by hand.
+func TestFindAuthAcceptsARealSecret(t *testing.T) {
+	n := newNAS(t)
+	n.s.HandleValue("iscsi.auth.query", []any{map[string]any{
+		"id": 1, "tag": 1, "user": "csi-pool0-k8s", "secret": "5Hf7EAEfYPFa8Wqf",
+	}})
+	c := n.client()
+
+	got, err := findAuth(context.Background(), c, "csi-pool0-k8s")
+	if err != nil {
+		t.Fatalf("findAuth: %v", err)
+	}
+	if got == nil || got.Secret != "5Hf7EAEfYPFa8Wqf" {
+		t.Errorf("findAuth returned %+v, want the real secret", got)
+	}
+}
