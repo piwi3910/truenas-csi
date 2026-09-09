@@ -75,10 +75,18 @@ func NewNodeResolver(selfNodeID string) NodeResolver {
 type KubeNodeResolver struct {
 	lister listersv1.NodeLister
 
-	// synced is closed once the informer's cache is populated. Answering
-	// NotFound from an empty cache would fence a healthy node.
-	syncOnce sync.Once
-	synced   func(context.Context) error
+	// startOnce starts the shared informer exactly once; waitForSync then
+	// blocks until its cache is populated, on EVERY call.
+	//
+	// Answering NotFound from an empty cache would tell the caller a healthy
+	// node does not exist. That is why the wait cannot be behind the same Once
+	// as the start: a sync that failed on the first call -- a control-plane
+	// blip, a slow apiserver, the 30s bound -- would then be skipped by every
+	// later call, which would query an unsynced lister and get NotFound for
+	// every node in the cluster until the process was restarted.
+	startOnce   sync.Once
+	start       func()
+	waitForSync func(context.Context) error
 }
 
 // NewKubeNodeResolverFor builds a resolver over an existing clientset.
@@ -117,12 +125,13 @@ func newKubeNodeResolver(cs kubernetes.Interface) *KubeNodeResolver {
 	informer := nodes.Informer()
 
 	r := &KubeNodeResolver{lister: lister}
-	r.synced = func(ctx context.Context) error {
+	r.start = func() {
 		// The informer outlives every request, so it is started against the
 		// process rather than the caller's context: a publish that is cancelled
 		// must not tear the shared cache down under the next one.
-		stop := make(chan struct{})
-		factory.Start(stop)
+		factory.Start(make(chan struct{}))
+	}
+	r.waitForSync = func(ctx context.Context) error {
 		waitCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
 		if !cacheSync(waitCtx, informer.HasSynced) {
@@ -154,9 +163,9 @@ func (r *KubeNodeResolver) Resolve(ctx context.Context, nodeID string) (NodeRef,
 	if nodeID == "" {
 		return NodeRef{}, fmt.Errorf("%w: empty node id", ErrNodeNotFound)
 	}
-	var syncErr error
-	r.syncOnce.Do(func() { syncErr = r.synced(ctx) })
-	if syncErr != nil {
+	r.startOnce.Do(r.start)
+	// Checked on every call, not once: see the comment on waitForSync.
+	if syncErr := r.waitForSync(ctx); syncErr != nil {
 		// Deliberately NOT ErrNodeNotFound: a cache that never synced says
 		// nothing about whether the node exists, and reporting NotFound would
 		// let a control-plane outage look like a deleted node.

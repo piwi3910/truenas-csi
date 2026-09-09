@@ -3,6 +3,8 @@ package backend
 import (
 	"context"
 	"errors"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/labels"
 	"slices"
 	"testing"
 
@@ -123,4 +125,84 @@ func TestLocalNodeResolverKnowsOnlyItself(t *testing.T) {
 	if _, err := r.Resolve(context.Background(), "worker-22"); !errors.Is(err, ErrNodeNotFound) {
 		t.Fatalf("want ErrNodeNotFound for another node, got %v", err)
 	}
+}
+
+// TestResolveRetriesAFailedCacheSync pins the fix for a transient failure that
+// turned into a permanent one.
+//
+// The sync used to run inside a sync.Once whose error was assigned to a
+// variable declared per call. Once the first attempt had run, later calls
+// skipped the closure entirely, saw a nil error, and queried a lister whose
+// cache had never populated -- so every node in the cluster came back NotFound,
+// for ever, until the process was restarted. A control-plane blip during the
+// first ControllerPublishVolume was enough, and the error told the operator
+// their node did not exist.
+func TestResolveRetriesAFailedCacheSync(t *testing.T) {
+	var attempts int
+	r := &KubeNodeResolver{
+		lister: stubNodeLister{node: &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{Name: "worker-1"},
+			Status: corev1.NodeStatus{Addresses: []corev1.NodeAddress{
+				{Type: corev1.NodeInternalIP, Address: "192.168.10.101"},
+			}},
+		}},
+		start: func() {},
+	}
+	r.waitForSync = func(context.Context) error {
+		attempts++
+		if attempts == 1 {
+			return errors.New("timed out waiting for the node cache to sync")
+		}
+		return nil
+	}
+
+	if _, err := r.Resolve(context.Background(), "worker-1"); err == nil {
+		t.Fatal("the first Resolve must report the sync failure")
+	}
+	ref, err := r.Resolve(context.Background(), "worker-1")
+	if err != nil {
+		t.Fatalf("the second Resolve must retry the sync and succeed, got: %v", err)
+	}
+	if ref.ID != "worker-1" {
+		t.Errorf("resolved %q, want worker-1", ref.ID)
+	}
+	if attempts != 2 {
+		t.Errorf("waitForSync ran %d times, want 2: it must be checked on every call", attempts)
+	}
+}
+
+// TestResolveStartsTheInformerOnce is the other half: the shared informer must
+// not be started again per request.
+func TestResolveStartsTheInformerOnce(t *testing.T) {
+	var starts int
+	r := &KubeNodeResolver{
+		lister:      stubNodeLister{node: &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-1"}}},
+		start:       func() { starts++ },
+		waitForSync: func(context.Context) error { return nil },
+	}
+	for i := 0; i < 3; i++ {
+		if _, err := r.Resolve(context.Background(), "worker-1"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if starts != 1 {
+		t.Errorf("the informer was started %d times, want 1", starts)
+	}
+}
+
+// stubNodeLister is the smallest NodeLister that answers Get.
+type stubNodeLister struct{ node *corev1.Node }
+
+func (s stubNodeLister) Get(name string) (*corev1.Node, error) {
+	if s.node != nil && s.node.Name == name {
+		return s.node, nil
+	}
+	return nil, apierrors.NewNotFound(corev1.Resource("nodes"), name)
+}
+
+func (s stubNodeLister) List(labels.Selector) ([]*corev1.Node, error) {
+	if s.node == nil {
+		return nil, nil
+	}
+	return []*corev1.Node{s.node}, nil
 }
