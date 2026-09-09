@@ -40,17 +40,51 @@ jobs:
         run: mkdocs build --strict
 
       # The chart is published from the same Pages site, so `helm repo add` and
-      # the documentation share one URL. Packaging here rather than in the
-      # release workflow keeps the index in step with what is actually served.
+      # the documentation share one URL.
       - name: Set up Helm
         uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
 
-      - name: Package the chart into the site
+      # The index is built from the RELEASES, not from the working tree.
+      #
+      # Packaging the checked-out chart published main's in-development chart
+      # under whatever version Chart.yaml happened to carry -- which, between
+      # releases, is the version already released. `helm install --version
+      # 0.1.3` from the documented repository then installed unreleased code:
+      # the served 0.1.3 and the v0.1.3 release asset had different digests.
+      #
+      # And because a Pages artifact replaces the whole site, re-indexing one
+      # freshly packaged chart erased every earlier version from the index, so
+      # no released version could be installed except the newest.
+      #
+      # Taking the tarballs from the releases fixes both: every released
+      # version is listed, and each is byte-for-byte the artifact its tag
+      # published. The index is rebuilt from scratch each time, which is safe
+      # precisely because the releases, not this workflow, are the source of
+      # truth.
+      - name: Publish the released charts into the site
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
           mkdir -p site/charts
-          helm package deploy/helm/truenas-csi --destination site/charts
+          tags="$(gh release list --limit 200 --json tagName --jq '.[].tagName')"
+          for tag in $tags; do
+            gh release download "$tag" --pattern 'truenas-csi-*.tgz' \
+              --dir site/charts --clobber || true
+          done
+          if ! ls site/charts/*.tgz >/dev/null 2>&1; then
+            # A repository with no releases yet still gets its documentation;
+            # it simply has no chart to serve, and saying so beats an empty
+            # index that looks like a broken repository.
+            echo "::warning::no released chart tarballs found; the Helm repository index is not published"
+            rm -rf site/charts
+            exit 0
+          fi
           helm repo index site/charts \
             --url https://piwi3910.github.io/truenas-csi/charts
+          echo "published chart versions:"
+          helm show chart site/charts/*.tgz >/dev/null 2>&1 || true
+          ls -1 site/charts/*.tgz
 
       - name: Upload the site
         uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1

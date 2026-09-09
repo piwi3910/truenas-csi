@@ -294,3 +294,38 @@ func TestEveryParameterIsAccepted(t *testing.T) {
 		}
 	}
 }
+
+// TestChartIndexIsBuiltFromReleases guards the Helm repository the
+// documentation tells people to add.
+//
+// The docs workflow used to `helm package` the CHECKED-OUT chart into the site.
+// Two things followed, both observed on the live site. The published chart
+// carried whatever version Chart.yaml said, which between releases is the
+// version already released — so `helm install --version 0.1.3` from the
+// documented repository installed main's in-development chart, and the served
+// 0.1.3 had a different digest from the v0.1.3 release asset. And because a
+// Pages artifact replaces the whole site, re-indexing one freshly packaged
+// chart erased every earlier version: the index listed exactly one.
+//
+// The index must therefore be built from the release artifacts, which are the
+// only things that cannot drift from their tags.
+func TestChartIndexIsBuiltFromReleases(t *testing.T) {
+	root := repoRoot(t)
+	b, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "docs.yaml"))
+	if err != nil {
+		t.Fatalf("read the docs workflow: %v", err)
+	}
+	wf := string(b)
+
+	if strings.Contains(wf, "helm package deploy/helm/truenas-csi") {
+		t.Error("the docs workflow packages the checked-out chart into the site, " +
+			"which publishes unreleased content under a released version number")
+	}
+	if !strings.Contains(wf, "gh release download") {
+		t.Error("the docs workflow does not take the charts from the releases, so " +
+			"the published index can drift from the tags")
+	}
+	if !strings.Contains(wf, "helm repo index site/charts") {
+		t.Error("the docs workflow no longer builds a Helm repository index")
+	}
+}
