@@ -34,6 +34,7 @@ import (
 	"github.com/piwi3910/truenas-csi/internal/volume"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	storagev1 "k8s.io/api/storage/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -331,6 +332,18 @@ func (m *Migrator) endpoint(ctx context.Context, namespace, name string) (Endpoi
 		return Endpoint{}, fmt.Errorf("reading PersistentVolumeClaim %s/%s: %w", namespace, name, err)
 	}
 	if pvc.Status.Phase != corev1.ClaimBound || pvc.Spec.VolumeName == "" {
+		// A claim on a WaitForFirstConsumer StorageClass stays Pending until a
+		// pod schedules against it, and the migration Job would be that pod --
+		// so the check that protects the target is also the thing that blocks
+		// it. That is the driver's OWN default binding mode, so the documented
+		// workflow ("create the target with a normal PVC, then migrate") stops
+		// on its first step for most installs. The claim cannot be bound from
+		// here without creating something, which Plan must never do, so the
+		// error says what to do instead of only what is wrong.
+		if hint := m.bindingHint(ctx, pvc); hint != "" {
+			return Endpoint{}, fmt.Errorf("%w: %s/%s is %s, not Bound. %s",
+				ErrNotEligible, namespace, name, pvc.Status.Phase, hint)
+		}
 		return Endpoint{}, fmt.Errorf("%w: %s/%s is %s, not Bound",
 			ErrNotEligible, namespace, name, pvc.Status.Phase)
 	}
@@ -352,6 +365,29 @@ func (m *Migrator) endpoint(ctx context.Context, namespace, name string) (Endpoi
 		e.CapacityBytes = q.Value()
 	}
 	return e, nil
+}
+
+// bindingHint explains a Pending claim whose StorageClass binds late, and says
+// how to bind it. It returns "" when the delay has some other cause, so the
+// caller falls back to the plain message rather than guessing.
+func (m *Migrator) bindingHint(ctx context.Context, pvc *corev1.PersistentVolumeClaim) string {
+	name := pvc.Spec.StorageClassName
+	if name == nil || *name == "" {
+		return ""
+	}
+	sc, err := m.kube.StorageV1().StorageClasses().Get(ctx, *name, metav1.GetOptions{})
+	if err != nil || sc.VolumeBindingMode == nil ||
+		*sc.VolumeBindingMode != storagev1.VolumeBindingWaitForFirstConsumer {
+		return ""
+	}
+	return fmt.Sprintf("StorageClass %q uses volumeBindingMode: WaitForFirstConsumer, "+
+		"so the claim stays Pending until a pod is scheduled with it -- and "+
+		"migration cannot be that pod, because the target's dataset has to be "+
+		"verified as this driver's before any Job exists. Bind %s/%s first by "+
+		"running any short-lived pod that mounts it, or provision the target from "+
+		"a StorageClass with volumeBindingMode: Immediate. docs/migration.md, "+
+		"\"Preparing the target\", has a manifest to paste.",
+		*name, pvc.Namespace, pvc.Name)
 }
 
 // verifyOwned refuses any target this driver did not create.

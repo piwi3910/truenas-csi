@@ -543,3 +543,7 @@ func (b *iscsiBackend) publishContext(ctx context.Context, p Params, iqn, naa st
 	}
 	return pc, nil
 }
+
+// MinimumCapacityBytes is 0: a zvol has no lower bound the appliance enforces.
+// Verified on hardware down to 64 MiB.
+func (b *iscsiBackend) MinimumCapacityBytes() int64 { return 0 }

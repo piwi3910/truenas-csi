@@ -49,6 +49,16 @@ func (s DatasetSpec) payload() map[string]any {
 	return p
 }
 
+// MinRefQuotaBytes is the smallest refquota TrueNAS will accept on a dataset.
+//
+// Below it, pool.dataset.create fails its whole schema union and reports
+// "[EINVAL] data.PoolDatasetCreateFilesystem.refquota.constrained-int: Input
+// should be greater than or equal to 1073741824" alongside three unrelated
+// complaints about the VOLUME variant it also tried. Nothing in that names the
+// caller's mistake. Verified on 25.10.6: 1073741823 is refused and 1073741824
+// is accepted; zvols have no equivalent floor and were created at 64 MiB.
+const MinRefQuotaBytes = 1 << 30
+
 // DatasetCreate creates a dataset or zvol.
 //
 // A missing PARENT is translated here rather than forwarded. Nothing verifies

@@ -45,6 +45,16 @@ type Backend interface {
 	Expand(ctx context.Context, id volume.ID, bytes int64) (int64, error)
 	// PublishContext is the map handed to the node plugin to attach the volume.
 	PublishContext(ctx context.Context, id volume.ID) (map[string]string, error)
+	// MinimumCapacityBytes is the smallest volume this backend can actually
+	// create, 0 when it has no floor.
+	//
+	// It exists because TrueNAS refuses a refquota below 1 GiB outright, so
+	// every filesystem-backed claim smaller than that failed to provision --
+	// with a Pydantic union error naming neither the limit nor the field the
+	// caller set. CreateVolume rounds up to this and reports the rounded size,
+	// which CSI allows, and refuses only when the claim's limit_bytes puts the
+	// floor out of reach.
+	MinimumCapacityBytes() int64
 }
 
 // Options is everything a backend needs about the appliance it serves beyond

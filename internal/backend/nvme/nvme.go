@@ -585,3 +585,7 @@ func publishContext(s *truenas.NVMeSubsystem, portal, trtype string) map[string]
 		"transport": strings.ToLower(trtype),
 	}
 }
+
+// MinimumCapacityBytes is 0: a zvol has no lower bound the appliance enforces.
+// Verified on hardware down to 64 MiB.
+func (b *nvmeBackend) MinimumCapacityBytes() int64 { return 0 }

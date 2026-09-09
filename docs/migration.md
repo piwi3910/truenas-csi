@@ -31,6 +31,50 @@ looser check in the CLI would be a second answer to the same question.
 The copy runs as a Kubernetes Job, so the command needs cluster access as well
 as the driver configuration.
 
+## Preparing the target
+
+The target claim must already be **Bound** when you plan the migration. That is
+not a formality: the target's dataset is checked for this driver's ownership
+marker before any Job object exists, and an unbound claim has no dataset to
+check.
+
+This bites on the driver's own default binding mode. A StorageClass with
+`volumeBindingMode: WaitForFirstConsumer` — which is what the chart's example
+classes use, and what you want for iSCSI — leaves the claim `Pending` until a
+pod is scheduled with it, and migration cannot be that pod. Bind it first with
+any short-lived pod that mounts it:
+
+```sh
+kubectl -n apps apply -f - <<'YAML'
+apiVersion: v1
+kind: Pod
+metadata:
+  name: prime-new-claim
+spec:
+  restartPolicy: Never
+  containers:
+    - name: prime
+      image: busybox:1.36
+      command: ["true"]
+      volumeMounts:
+        - name: target
+          mountPath: /target
+  volumes:
+    - name: target
+      persistentVolumeClaim:
+        claimName: new-claim
+YAML
+
+kubectl -n apps wait --for=jsonpath='{.status.phase}'=Succeeded pod/prime-new-claim --timeout=5m
+kubectl -n apps delete pod prime-new-claim
+```
+
+The claim stays `Bound` after the pod is gone. Alternatively, provision the
+target from a StorageClass with `volumeBindingMode: Immediate`.
+
+The target must also be **at least as large as the source**; the plan refuses a
+smaller one rather than discovering it half way through a copy.
+
 ## What it does, and what it does not do
 
 Migration copies **data**. It does not:

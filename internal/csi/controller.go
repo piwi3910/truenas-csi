@@ -212,6 +212,26 @@ func (c *controller) CreateVolume(ctx context.Context, req *csipb.CreateVolumeRe
 	if size <= 0 {
 		size = 1 << 30 // 1 GiB default, as CSI permits when no range is given
 	}
+	// Some backends cannot create a volume as small as the claim asks for --
+	// TrueNAS refuses a refquota under 1 GiB, so every filesystem-backed claim
+	// below that failed to provision at all, with a middleware schema error
+	// that named neither the limit nor the field. Rounding up is what CSI
+	// allows (the volume must be AT LEAST required_bytes) and it is honest,
+	// because the reported capacity is what the appliance really applied.
+	if min := b.MinimumCapacityBytes(); size < min {
+		// limit_bytes is a ceiling the CO set deliberately. Silently exceeding
+		// it would make the PV claim a size the user forbade, so a floor above
+		// the ceiling is OutOfRange -- the code CSI reserves for exactly this.
+		if limit := req.GetCapacityRange().GetLimitBytes(); limit > 0 && limit < min {
+			return nil, status.Errorf(codes.OutOfRange,
+				"backend %q cannot create a %s volume smaller than %d bytes, and the "+
+					"request limits it to %d; ask for at least %d",
+				id.Backend, id.Protocol, min, limit, min)
+		}
+		obs.Logger(ctx).Info("rounding the request up to the backend's minimum volume size",
+			"requested", size, "minimum", min, "protocol", id.Protocol)
+		size = min
+	}
 	if err := c.requireRoomOutsideReserve(ctx, id.Backend, size); err != nil {
 		return nil, err
 	}

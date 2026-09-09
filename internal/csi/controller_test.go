@@ -27,6 +27,9 @@ type countingBackend struct {
 	creates atomic.Int64
 	deletes atomic.Int64
 	exist   map[string]int64
+	// minCapacity stands in for a backend whose appliance refuses volumes
+	// below a floor, as TrueNAS does for a filesystem's refquota.
+	minCapacity int64
 }
 
 func newCounting() *countingBackend { return &countingBackend{exist: map[string]int64{}} }
@@ -401,5 +404,56 @@ func TestCreateVolumeEchoesNodeParameters(t *testing.T) {
 					"provisioned volume. Context: %v", key, got, resp.GetVolume().GetVolumeContext())
 			}
 		})
+	}
+}
+
+func (b *countingBackend) MinimumCapacityBytes() int64 { return b.minCapacity }
+
+// TestCreateVolumeRoundsUpToTheBackendMinimum pins the fix for a claim smaller
+// than the appliance can create.
+//
+// TrueNAS refuses a refquota below 1 GiB, so on a live cluster every
+// filesystem-backed PVC under that size stayed Pending for ever while the
+// events showed a Pydantic union error naming neither the limit nor the field
+// the driver had set. CSI permits provisioning MORE than required_bytes, so the
+// request is rounded up and the reported capacity is what the appliance really
+// applied — a PV that claims 512Mi when the dataset holds a 1Gi refquota would
+// be a lie the resizer and the scheduler would both act on.
+func TestCreateVolumeRoundsUpToTheBackendMinimum(t *testing.T) {
+	shared = newCounting()
+	shared.minCapacity = 1 << 30
+	c, _ := ctlWith(t)
+
+	resp, err := c.CreateVolume(context.Background(), &csipb.CreateVolumeRequest{
+		Name: "pvc-small", Parameters: params(),
+		CapacityRange:      &csipb.CapacityRange{RequiredBytes: 512 << 20},
+		VolumeCapabilities: testCaps(),
+	})
+	if err != nil {
+		t.Fatalf("CreateVolume: %v", err)
+	}
+	if got := resp.GetVolume().GetCapacityBytes(); got != 1<<30 {
+		t.Errorf("capacity = %d, want the backend minimum %d", got, int64(1)<<30)
+	}
+}
+
+// TestCreateVolumeRefusesWhenTheLimitIsBelowTheMinimum covers the one case
+// where rounding up is not allowed: limit_bytes is a ceiling the CO set on
+// purpose, and exceeding it silently would make the PersistentVolume claim a
+// size the user forbade.
+func TestCreateVolumeRefusesWhenTheLimitIsBelowTheMinimum(t *testing.T) {
+	shared = newCounting()
+	shared.minCapacity = 1 << 30
+	c, _ := ctlWith(t)
+
+	_, err := c.CreateVolume(context.Background(), &csipb.CreateVolumeRequest{
+		Name: "pvc-capped", Parameters: params(),
+		CapacityRange: &csipb.CapacityRange{
+			RequiredBytes: 256 << 20, LimitBytes: 512 << 20,
+		},
+		VolumeCapabilities: testCaps(),
+	})
+	if status.Code(err) != codes.OutOfRange {
+		t.Fatalf("code = %s, want OutOfRange (got %v)", status.Code(err), err)
 	}
 }

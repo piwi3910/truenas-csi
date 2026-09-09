@@ -391,3 +391,5 @@ func TestPublisherIsRequiredOfEveryBackend(t *testing.T) {
 		t.Fatalf("code = %v, want Internal (err %v)", got, err)
 	}
 }
+
+func (*fencingBackend) MinimumCapacityBytes() int64 { return 0 }

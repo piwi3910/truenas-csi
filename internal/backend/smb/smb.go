@@ -700,3 +700,7 @@ var (
 	_ backend.Backend   = (*Backend)(nil)
 	_ backend.Publisher = (*Backend)(nil)
 )
+
+// MinimumCapacityBytes is the appliance's refquota floor. See
+// truenas.MinRefQuotaBytes.
+func (b *Backend) MinimumCapacityBytes() int64 { return truenas.MinRefQuotaBytes }
