@@ -77,6 +77,19 @@ if [ -z "$version" ]; then
 	[ -n "$version" ] || die "could not read the cluster's server version; set TRUENAS_E2E_VERSION"
 fi
 
+# A distribution's gitVersion is not a release on dl.k8s.io. k3s reports
+# v1.34.4+k3s1 and rke2 v1.34.4+rke2r1; both 404. EKS and friends append a
+# vendor pre-release instead (v1.34.4-eks-1-34-5), which also 404s. Upstream's
+# own pre-releases -- alpha, beta, rc -- are real downloads and must survive.
+#
+# Without this the suite could not run against k3s at all, which is what this
+# repository is developed on, so it had never run.
+version="${version%%+*}"
+case "$version" in
+*-alpha.* | *-beta.* | *-rc.*) ;;
+*-*) version="${version%%-*}" ;;
+esac
+
 case "$(uname -s)" in
 Linux) os=linux ;;
 Darwin) os=darwin ;;

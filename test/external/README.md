@@ -70,7 +70,7 @@ with the same variables set (which is what `make e2e-external` shells into).
 | `TRUENAS_E2E_STORAGECLASS`                       | yes      | an existing StorageClass backed by this driver                                                                 |
 | `TRUENAS_E2E_PROTOCOL`                           | yes      | `nfs`, `iscsi`, `nvme` or `smb` — selects the driver definition                                                |
 | `TRUENAS_E2E_SNAPSHOTCLASS`                      | no       | an existing `VolumeSnapshotClass`. Without it the snapshot and restore tests are dropped, and the run says so. |
-| `TRUENAS_E2E_VERSION`                            | no       | pin the `e2e.test` release. Default: whatever the cluster reports.                                             |
+| `TRUENAS_E2E_VERSION`                            | no       | pin the `e2e.test` release. Default: what the cluster reports, with any distribution suffix stripped (`v1.34.4+k3s1` -> `v1.34.4`), because dl.k8s.io only publishes upstream releases. |                                             |
 | `TRUENAS_E2E_INCLUDE_HEAVY`                      | no       | `true` drops the `[Slow]` and volume-limits skips. Expect hours more.                                          |
 | `TRUENAS_E2E_EXTRA_SKIP`                         | no       | an extra ginkgo skip regex, for triaging one failure without editing the reviewed list                         |
 | `TRUENAS_E2E_FOCUS`                              | no       | narrow the focus below `External.Storage`                                                                      |
