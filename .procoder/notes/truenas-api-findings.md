@@ -920,3 +920,14 @@ A `quota` on a namespace dataset charges nothing for a child's `refquota` until
 data is written. Verified: three 1 GiB claims all bound under a 2 GiB namespace
 quota. Bounding over-provisioning needs the driver to total the children's
 `refquota`/`volsize` itself; the appliance will not do it.
+
+## refquota has a hard 1 GiB floor; volsize has none
+
+`pool.dataset.create` rejects a `refquota` below 1073741824 with
+`[EINVAL] data.PoolDatasetCreateFilesystem.refquota.constrained-int: Input
+should be greater than or equal to 1073741824`, alongside three unrelated
+complaints about the `PoolDatasetCreateVolume` variant the middleware also
+tried — none of which name the caller's mistake. Verified: 1073741823 refused,
+1073741824 accepted. A zvol has no equivalent floor; `volsize` of 64 MiB was
+accepted. So NFS and SMB volumes must be rounded up to 1 GiB, iSCSI and
+NVMe/TCP need not be.
