@@ -2,6 +2,7 @@ package volume
 
 import (
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -90,4 +91,46 @@ func TestGrantsRefuseToOutgrowAProperty(t *testing.T) {
 	if _, err := g.Encode(); !errors.Is(err, ErrGrantsTooLarge) {
 		t.Fatalf("want ErrGrantsTooLarge, got %v", err)
 	}
+}
+
+// TestGrantsRefuseAtTheMiddlewareLimit pins the ledger bound to what the
+// appliance will actually store.
+//
+// It was 4096, taken from ZFS's own 8 KiB user-property limit. The middleware
+// is far stricter: pool.dataset.update refuses any value over 1024 characters
+// with a Pydantic schema error. Measured on 25.10.6 -- exactly 1024 accepted,
+// 1025 refused. So a ledger between 1025 and 4096 bytes passed this check and
+// was then rejected by the appliance, and ErrGrantsTooLarge, which exists to
+// explain precisely this, never fired.
+func TestGrantsRefuseAtTheMiddlewareLimit(t *testing.T) {
+	if maxGrantsBytes != 1024 {
+		t.Fatalf("maxGrantsBytes = %d, want 1024: the middleware refuses a longer "+
+			"user property value, whatever ZFS itself allows", maxGrantsBytes)
+	}
+
+	// Grow a realistic dual-stack ledger until Encode refuses, and check that
+	// everything it DID accept would really have fitted.
+	g := Grants{}
+	for i := 1; i <= 200; i++ {
+		g[fmt.Sprintf("worker-%d", i)] = []string{
+			fmt.Sprintf("192.168.10.%d", 100+i),
+			fmt.Sprintf("fd7c:8f2a:1b3c:4d5e::%x", 0x1000+i),
+		}
+		encoded, err := g.Encode()
+		if err != nil {
+			if !errors.Is(err, ErrGrantsTooLarge) {
+				t.Fatalf("Encode failed with the wrong error at %d nodes: %v", i, err)
+			}
+			if i < 10 {
+				t.Fatalf("the ledger was refused at only %d nodes, which would break "+
+					"ordinary ReadWriteMany use", i)
+			}
+			return
+		}
+		if len(encoded) > maxGrantsBytes {
+			t.Fatalf("Encode accepted %d bytes at %d nodes, which the appliance "+
+				"would refuse", len(encoded), i)
+		}
+	}
+	t.Fatal("the ledger never hit its bound, so the guard cannot be firing")
 }

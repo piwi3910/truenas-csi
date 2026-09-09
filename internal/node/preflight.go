@@ -80,6 +80,11 @@ var requirements = map[Capability]requirement{
 // capabilityOrder fixes the iteration order so labels and log lines are stable.
 var capabilityOrder = []Capability{CapNFS, CapISCSI, CapNVMe, CapSMB, CapExt4, CapXFS, CapMultipath}
 
+// CapabilityOrder is every capability the node plugin probes and publishes a
+// topology label for, in a stable order. Anything that has to agree with the
+// node's published topology reads it from here rather than restating the list.
+func CapabilityOrder() []Capability { return append([]Capability(nil), capabilityOrder...) }
+
 // Preflight is the result of probing one node.
 type Preflight struct {
 	// Found reports, per capability, whether the node can deliver it. Every known

@@ -121,6 +121,11 @@ func loadDefinition(t *testing.T, protocol string) (definition, map[string]any) 
 	return typed, raw
 }
 
+// backendKeyPlaceholder is what the definitions carry in place of the
+// per-backend topology key, which run.sh renders from the StorageClass under
+// test because it is named after the operator's own backend.
+const backendKeyPlaceholder = "__BACKEND_TOPOLOGY_KEY__"
+
 func TestDriverDefinitionsMatchTheDriver(t *testing.T) {
 	for _, protocol := range protocols {
 		t.Run(protocol, func(t *testing.T) {
@@ -206,13 +211,33 @@ func TestDriverDefinitionsMatchTheDriver(t *testing.T) {
 				}
 			}
 
-			// The topology key must be the one the node actually publishes and
-			// the controller actually requires, or the suite pins a
-			// StorageClass to a label nothing carries.
-			want := node.TopologyKey(node.Capability(protocol))
-			if len(def.DriverInfo.TopologyKeys) != 1 || def.DriverInfo.TopologyKeys[0] != want {
-				t.Errorf("TopologyKeys is %v, want [%s] — the label internal/node/topology.go publishes",
-					def.DriverInfo.TopologyKeys, want)
+			// The definition must declare EVERY key the node plugin publishes,
+			// not just this protocol's.
+			//
+			// NodeGetInfo reports one segment per probed capability, so a
+			// CSIStorageCapacity object's NodeTopology carries all of them.
+			// Declaring one key made the upstream capacity suite look for an
+			// object keyed on that alone, find none, and fail a driver that was
+			// behaving correctly. This test asserted the same single key, so it
+			// pinned the mistake rather than catching it.
+			declared := map[string]bool{}
+			for _, k := range def.DriverInfo.TopologyKeys {
+				declared[k] = true
+			}
+			for _, c := range node.CapabilityOrder() {
+				if k := node.TopologyKey(c); !declared[k] {
+					t.Errorf("TopologyKeys omits %s, which the node plugin publishes; "+
+						"the capacity suite then finds no object keyed on it", k)
+				}
+			}
+			// The per-backend key is named after the operator's backend, so the
+			// definition carries a placeholder that run.sh renders.
+			if !declared[backendKeyPlaceholder] {
+				t.Errorf("TopologyKeys omits %s, so the per-backend label the node "+
+					"publishes is never declared", backendKeyPlaceholder)
+			}
+			if own := node.TopologyKey(node.Capability(protocol)); !declared[own] {
+				t.Errorf("TopologyKeys omits this protocol's own key %s", own)
 			}
 			if def.DriverInfo.Capabilities["topology"] && def.DriverInfo.NumAllowedTopologies < 1 {
 				t.Error("topology is claimed but NumAllowedTopologies is unset")

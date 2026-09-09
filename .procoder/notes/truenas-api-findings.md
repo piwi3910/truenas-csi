@@ -986,3 +986,15 @@ accident — but forwarding the message invites an operator to.
 This is the end of the most ordinary snapshot workflow: restore a snapshot,
 check the copy, delete the original. Raw, it reaches Kubernetes as
 codes.Internal, which the CO retries for ever.
+
+## A user property VALUE may be 1024 characters, not 8 KiB
+
+`pool.dataset.update` refuses anything longer with
+`[EINVAL] data.user_properties_update.0.value.constrained-str: String should
+have at most 1024 characters`. Measured on 25.10.6: exactly 1024 is accepted,
+1025 is refused. ZFS itself allows 8 KiB; the middleware does not, and any
+bound derived from the ZFS figure is four times too permissive.
+
+This matters for the publish ledger, which grows with the number of nodes
+holding a volume: a dual-stack entry costs about 60 bytes, so a ReadWriteMany
+volume reaches the limit around 18 nodes.

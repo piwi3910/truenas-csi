@@ -46,8 +46,9 @@ const (
 
 // maxIdentityValue bounds one recorded value.
 //
-// A ZFS user property value may be 8 KiB, so the cap is not about ZFS: it is
-// about what a legal Kubernetes name can be. A namespace is a DNS-1123 label
+// The middleware stores up to 1024 characters in a user property value (see
+// maxGrantsBytes), so the cap is not about that limit either: it is about what
+// a legal Kubernetes name can be. A namespace is a DNS-1123 label
 // (63 characters) and a claim name a DNS-1123 subdomain (253), so 255 accepts
 // every real name while refusing to hand the appliance an unbounded string that
 // arrived in a map anyone with StorageClass edit rights can write.

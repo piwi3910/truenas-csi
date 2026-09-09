@@ -47,10 +47,25 @@ const (
 	NetworksProperty = "io.truenas.csi:networks"
 )
 
-// maxGrantsBytes bounds the encoded ledger. ZFS caps a user property value at
-// 8 KiB; refusing at half of that leaves room for the encoding to grow without
-// a volume ever reaching a state its own bookkeeping cannot be written back in.
-const maxGrantsBytes = 4096
+// maxGrantsBytes bounds the encoded ledger: the largest value the MIDDLEWARE
+// will store in a user property.
+//
+// It is 1024, not the 8 KiB that ZFS itself allows. pool.dataset.update rejects
+// anything longer with
+// "data.user_properties_update.0.value.constrained-str: String should have at
+// most 1024 characters" -- measured on 25.10.6, where exactly 1024 is accepted
+// and 1025 is refused. The bound here used to be 4096 on the strength of the
+// ZFS figure, so a ledger between 1025 and 4096 bytes passed this driver's own
+// check and was then refused by the appliance: ControllerPublishVolume failed
+// with a Pydantic schema error and ErrGrantsTooLarge, which exists to explain
+// exactly this, never fired.
+//
+// It is a real ceiling on how many nodes may hold one volume at once. A
+// dual-stack entry ("worker-25":["192.168.10.102","fd7c:...::1"]) costs about
+// 60 bytes, so a ReadWriteMany volume reaches it somewhere around 18 nodes.
+// Everything below that is unaffected, and above it the refusal now names the
+// cause instead of the appliance's schema.
+const maxGrantsBytes = 1024
 
 // ErrGrantsTooLarge means the ledger no longer fits in a ZFS user property.
 var ErrGrantsTooLarge = fmt.Errorf("publish ledger exceeds %d bytes", maxGrantsBytes)
@@ -91,7 +106,8 @@ func (g Grants) Encode() (string, error) {
 		return "", fmt.Errorf("encoding the publish ledger: %w", err)
 	}
 	if len(b) > maxGrantsBytes {
-		return "", fmt.Errorf("%w: %d nodes", ErrGrantsTooLarge, len(g))
+		return "", fmt.Errorf("%w: %d nodes hold this volume and their addresses "+
+			"no longer fit in the ZFS user property the ledger lives in", ErrGrantsTooLarge, len(g))
 	}
 	return string(b), nil
 }
