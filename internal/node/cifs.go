@@ -143,9 +143,10 @@ func smbCredentialsOf(req StageRequest) (smbCredentials, error) {
 	}
 	if c.username == "" || c.password == "" {
 		return smbCredentials{}, fmt.Errorf(
-			"%w: smb volume needs %q and %q in its node-stage secret; the StorageClass names that "+
-				"Secret with its secretName and secretNamespace parameters, which reach this node "+
-				"as the %q and %q publish-context keys",
+			"%w: smb volume needs %q and %q in its node-stage secret, and this node was handed "+
+				"none; set %q and %q on the StorageClass -- Kubernetes builds the "+
+				"PersistentVolume's nodeStageSecretRef from those reserved parameters alone, and "+
+				"a class that omits them provisions and binds but can never mount",
 			ErrInvalidRequest, KeySMBUsername, KeySMBPassword,
 			KeyNodeStageSecretName, KeyNodeStageSecretNamespace)
 	}

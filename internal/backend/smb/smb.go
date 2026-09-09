@@ -31,7 +31,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
 	"strconv"
 	"strings"
 	"sync"
@@ -61,9 +60,11 @@ const (
 	// a hash suffix to fit the 80-character limit.
 	ParamShareName = "shareName"
 
-	// ParamSecretName / ParamSecretNamespace name the Kubernetes Secret holding
-	// the SMB username and password. Only the reference is published; the
-	// controller never reads, stores or logs the credential itself.
+	// ParamSecretName / ParamSecretNamespace are recognised only so the driver
+	// can reject them by name. They read like they name the Secret holding the
+	// SMB username and password, but nothing consumes them -- Kubernetes builds
+	// the nodeStageSecretRef from the reserved "csi.storage.k8s.io/node-stage-
+	// secret-*" parameters and nowhere else.
 	ParamSecretName      = "secretName"
 	ParamSecretNamespace = "secretNamespace"
 
@@ -142,15 +143,13 @@ func (b *Backend) Protocol() string { return Protocol }
 
 // params is the resolved StorageClass configuration for one request.
 type params struct {
-	server          string
-	sharePrefix     string
-	secretName      string
-	secretNamespace string
-	uid             int
-	gid             int
-	fileMode        string
-	dirMode         string
-	mode            string
+	server      string
+	sharePrefix string
+	uid         int
+	gid         int
+	fileMode    string
+	dirMode     string
+	mode        string
 }
 
 func defaultParams() params {
@@ -163,30 +162,28 @@ func parseParams(p map[string]string) (params, error) {
 
 	out.server = get(ParamServer)
 	out.sharePrefix = get(ParamShareName)
-	out.secretName = get(ParamSecretName)
-	out.secretNamespace = get(ParamSecretNamespace)
 
-	// The credentials reach the node through the PersistentVolume's
-	// nodeStageSecretRef, and ONLY Kubernetes can put them there: the
-	// provisioner reads the reserved parameters below off the StorageClass
-	// before this driver is called, and nothing the driver returns can create
-	// that reference. secretName and secretNamespace were echoed into the
-	// volume context under the reserved names, which Kubernetes does not read
-	// there -- so every SMB volume provisioned, bound, and then failed to mount
-	// with "smb volume needs username and password in its node-stage secret".
+	// The credential reaches the node through the PersistentVolume's
+	// nodeStageSecretRef, and ONLY Kubernetes can put it there: the external
+	// provisioner reads the reserved "csi.storage.k8s.io/node-stage-secret-*"
+	// parameters off the StorageClass, builds the reference from them, and
+	// STRIPS them before calling CreateVolume. This driver therefore never sees
+	// them, and must not gate on them -- a gate here rejects every smb class,
+	// including a correct one, and no volume can be provisioned at all.
 	//
-	// Refusing here turns that into one clear error at the first claim instead
-	// of a mount-time mystery on every pod.
-	if get(nodeStageSecretNameKey) == "" {
-		hint := ""
-		if out.secretName != "" {
-			hint = fmt.Sprintf(" (%q and %q cannot deliver it: Kubernetes reads the "+
-				"reserved names, not these)", ParamSecretName, ParamSecretNamespace)
+	// secretName/secretNamespace are the trap that gate was reaching for: they
+	// look like they name the credential, but nothing consumes them, so a class
+	// written this way provisions and binds and then fails to mount on every
+	// pod. Refusing them turns that into one clear error at the first claim.
+	for _, key := range []string{ParamSecretName, ParamSecretNamespace} {
+		if get(key) == "" {
+			continue
 		}
 		return params{}, status.Errorf(codes.InvalidArgument,
-			"an smb StorageClass must name the Secret holding the SMB user with the "+
-				"reserved parameters %q and %q%s",
-			nodeStageSecretNameKey, nodeStageSecretNamespaceKey, hint)
+			"the %q parameter does nothing: Kubernetes builds the node-stage secret "+
+				"reference from the reserved parameters %q and %q, so name the Secret with "+
+				"those instead",
+			key, nodeStageSecretNameKey, nodeStageSecretNamespaceKey)
 	}
 
 	for _, f := range []struct {

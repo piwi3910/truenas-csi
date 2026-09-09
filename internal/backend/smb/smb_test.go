@@ -761,3 +761,36 @@ func TestDACLOmitsZeroPermissionEntries(t *testing.T) {
 		t.Fatalf("mode 0775 should yield three entries, got %d", got)
 	}
 }
+
+// TestSMBParamsWithoutReservedKeysSucceeds pins the fact that the driver never
+// sees the reserved node-stage-secret parameters at all.
+//
+// The external provisioner consumes every "csi.storage.k8s.io/*" parameter off
+// the StorageClass and strips it before issuing CreateVolume -- it is how the
+// provisioner learns which Secret to reference from the PersistentVolume, and
+// the driver is deliberately not told. A CreateVolume-time gate demanding that
+// key therefore rejects EVERY smb class, including a correctly written one:
+// verified on a real cluster, where a class carrying both reserved keys still
+// failed with "an smb StorageClass must name the Secret holding the SMB user".
+func TestSMBParamsWithoutReservedKeysSucceeds(t *testing.T) {
+	if _, err := parseParams(map[string]string{ParamServer: "nas1.example"}); err != nil {
+		t.Fatalf("parseParams rejected a class the provisioner would have stripped: %v", err)
+	}
+}
+
+// TestSMBParamsRejectSecretNameParameter keeps the operator-facing half of the
+// lesson. secretName/secretNamespace look like they name the credential but
+// nothing consumes them: Kubernetes reads only the reserved keys, so a class
+// written this way provisions, binds, and then fails to mount on every pod.
+// One clear error at the first claim beats that.
+func TestSMBParamsRejectSecretNameParameter(t *testing.T) {
+	for _, key := range []string{ParamSecretName, ParamSecretNamespace} {
+		_, err := parseParams(map[string]string{key: "truenas-smb"})
+		if err == nil {
+			t.Fatalf("parseParams accepted the inert %q parameter", key)
+		}
+		if !strings.Contains(err.Error(), nodeStageSecretNameKey) {
+			t.Errorf("%s: error does not point at the reserved key: %v", key, err)
+		}
+	}
+}
