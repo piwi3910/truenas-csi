@@ -90,11 +90,15 @@ const (
 	KeyFileMode = "fileMode"
 	KeyDirMode  = "dirMode"
 	// KeyNodeStageSecretName and KeyNodeStageSecretNamespace are the external
-	// provisioner's own keys, naming the Secret whose contents the kubelet
-	// resolves and hands back as StageRequest.Secrets. The SMB backend sets them
-	// so that no credential is ever written into the PersistentVolume; the node
-	// never reads them itself, and names them only in the error it raises when
-	// the resolved secret turns out to be empty.
+	// provisioner's own StorageClass parameters, naming the Secret whose
+	// contents the kubelet resolves and hands back as StageRequest.Secrets.
+	//
+	// The operator sets them on the class and the provisioner consumes them:
+	// this driver is never shown either key -- they are stripped before
+	// CreateVolume -- and cannot set them, because nothing it returns can
+	// create a nodeStageSecretRef. That is also why no credential is ever
+	// written into the PersistentVolume. The node names them only in the error
+	// it raises when the resolved secret turns out to be empty.
 	KeyNodeStageSecretName      = "csi.storage.k8s.io/node-stage-secret-name"
 	KeyNodeStageSecretNamespace = "csi.storage.k8s.io/node-stage-secret-namespace"
 )
