@@ -314,14 +314,27 @@ func (c *Ops) SnapshotDelete(ctx context.Context, id string) error {
 	return err
 }
 
-// SnapshotClone creates a dataset from a snapshot.
+// SnapshotClone creates a dataset from a snapshot, applying props to the clone
+// as it is made.
 //
 // The clone is deliberately NOT promoted. Promoting does not free the source —
 // it INVERTS the dependency, leaving the ORIGINAL volume undeletable, which is
 // strictly worse than a snapshot that cannot be deleted while clones exist.
-func (c *Ops) SnapshotClone(ctx context.Context, snapshot, dst string) error {
-	return c.CallJSON(ctx, nil, "pool.snapshot.clone",
-		map[string]any{"snapshot": snapshot, "dataset_dst": dst})
+//
+// props are raw ZFS property names and values, which is what makes them worth
+// having: a clone inherits nothing its origin holds LOCALLY, and setting a
+// property afterwards cannot always recover it. refreservation is the case in
+// point — "auto" is legal here and asks ZFS itself for volsize plus this pool's
+// metadata overhead, a figure that depends on pool geometry and that no caller
+// can compute. pool.dataset.update rejects "auto" outright, and recomputes the
+// reservation only when volsize CHANGES, so a same-size clone could never be
+// repaired after the fact. Verified against a real appliance.
+func (c *Ops) SnapshotClone(ctx context.Context, snapshot, dst string, props map[string]any) error {
+	payload := map[string]any{"snapshot": snapshot, "dataset_dst": dst}
+	if len(props) > 0 {
+		payload["dataset_properties"] = props
+	}
+	return c.CallJSON(ctx, nil, "pool.snapshot.clone", payload)
 }
 
 // ErrDatasetBusy indicates dependent clones or an active mount.

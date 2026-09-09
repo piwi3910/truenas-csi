@@ -233,7 +233,7 @@ func (b *iscsiBackend) ensureZvol(ctx context.Context, r backend.CreateRequest, 
 	}
 
 	if r.SourceSnapshot != "" {
-		if err := b.cloneZvol(ctx, r, rollback); err != nil {
+		if err := b.cloneZvol(ctx, r, p, rollback); err != nil {
 			return err
 		}
 		// Recorded on this path too, from THIS request: a clone gets the
@@ -274,9 +274,26 @@ func (b *iscsiBackend) ensureZvol(ctx context.Context, r backend.CreateRequest, 
 // A ZFS clone inherits NEITHER the ownership marker NOR any size stamp of its
 // own. Both are therefore set explicitly here: an unstamped clone fails the
 // delete guard forever, so every restored volume would leak.
-func (b *iscsiBackend) cloneZvol(ctx context.Context, r backend.CreateRequest, rollback *[]func()) error {
+// cloneProps are the ZFS properties a cloned zvol must be given AS it is
+// created, because a clone inherits nothing its origin holds locally.
+//
+// refreservation is what makes sparse: "false" mean anything. A clone of a
+// thick zvol comes back with refreservation=none (verified on a real
+// appliance), so the guarantee an operator paid for was silently dropped and
+// the volume could meet ENOSPC on write. "auto" asks ZFS for volsize plus this
+// pool's metadata overhead -- a figure that depends on pool geometry, that
+// pool.dataset.update refuses to accept by name, and that it recomputes only
+// when volsize CHANGES, so a same-size clone could not be repaired afterwards.
+func cloneProps(sparse bool) map[string]any {
+	if sparse {
+		return nil
+	}
+	return map[string]any{"refreservation": "auto"}
+}
+
+func (b *iscsiBackend) cloneZvol(ctx context.Context, r backend.CreateRequest, p Params, rollback *[]func()) error {
 	dsPath := r.ID.DatasetPath()
-	if err := b.c.SnapshotClone(ctx, r.SourceSnapshot, dsPath); err != nil {
+	if err := b.c.SnapshotClone(ctx, r.SourceSnapshot, dsPath, cloneProps(p.Sparse)); err != nil {
 		return fmt.Errorf("cloning %s into %s: %w", r.SourceSnapshot, dsPath, err)
 	}
 	*rollback = append(*rollback, func() {

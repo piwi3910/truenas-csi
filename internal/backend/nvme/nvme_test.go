@@ -291,12 +291,22 @@ func (n *nas) install() {
 		}
 		// A clone inherits NEITHER the ownership marker NOR any user property
 		// of its origin — reproducing that here is the point of this handler.
-		n.datasets[dst] = map[string]any{
+		// It inherits no refreservation either, so a thick source yields a THIN
+		// clone unless the caller asks for one at clone time. Verified on a
+		// real appliance: a 1 GiB thick zvol reserved 1246007808 bytes and its
+		// clone reserved nothing.
+		clone := map[string]any{
 			"id": dst, "type": src["type"],
 			"volsize":         src["volsize"],
 			"origin":          map[string]any{"value": snap, "source": "LOCAL"},
 			"user_properties": map[string]any{},
 		}
+		if props, ok := spec["dataset_properties"].(map[string]any); ok {
+			if r, ok := props["refreservation"]; ok {
+				clone["refreservation"] = map[string]any{"value": r, "source": "LOCAL"}
+			}
+		}
+		n.datasets[dst] = clone
 		return true, nil
 	})
 
@@ -992,5 +1002,43 @@ func TestNVMeRDMARefusedWhenUnsupported(t *testing.T) {
 	}
 	if p := n.firstPort(); p == nil || p["addr_trtype"] != "RDMA" {
 		t.Fatalf("want an RDMA port, got %v", n.firstPort())
+	}
+}
+
+// TestNVMeThickRestoreKeepsItsReservation pins thick provisioning across a
+// clone.
+//
+// refreservation is what makes sparse: "false" mean anything, and a ZFS clone
+// inherits it no more than it inherits the ownership marker: verified on a real
+// appliance, a clone of a 1 GiB thick zvol came back with refreservation=none
+// and source=DEFAULT. The volume an operator asked to be guaranteed space was
+// silently thin, and would meet ENOSPC on write -- the exact failure thick
+// provisioning is bought to prevent.
+func TestNVMeThickRestoreKeepsItsReservation(t *testing.T) {
+	ctx := context.Background()
+	n := newNAS(t)
+	b := n.backend()
+
+	thick := map[string]string{ParamSparse: "false"}
+	if _, err := b.Create(ctx, createReq("pvc-src", 1<<30, thick)); err != nil {
+		t.Fatalf("Create source: %v", err)
+	}
+	req := createReq("pvc-restored", 1<<30, thick)
+	req.SourceSnapshot = "Pool0/k8s/pvc-src@snap1"
+	if _, err := b.Create(ctx, req); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	ds := n.dataset("Pool0/k8s/pvc-restored")
+	if ds == nil {
+		t.Fatal("the clone was not created")
+	}
+	res, _ := ds["refreservation"].(map[string]any)
+	if res == nil || res["value"] == "" || res["value"] == nil {
+		t.Fatalf("clone carries no refreservation — sparse:\"false\" was silently lost")
+	}
+	// "auto" is the only value that is right: ZFS computes volsize plus the
+	// metadata overhead for this pool's geometry, which no caller can derive.
+	if got := res["value"]; got != "auto" {
+		t.Fatalf("clone refreservation = %v, want \"auto\"", got)
 	}
 }

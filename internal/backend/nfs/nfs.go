@@ -271,7 +271,7 @@ func (b *Backend) create(ctx context.Context, dsPath string, r backend.CreateReq
 // its origin: without the explicit stamp the delete guard would refuse to remove
 // the volume forever, and without refquota the pod would see the whole pool.
 func (b *Backend) restore(ctx context.Context, snapshot, dsPath string, bytes int64) (*truenas.Dataset, error) {
-	if err := b.c.SnapshotClone(ctx, snapshot, dsPath); err != nil {
+	if err := b.c.SnapshotClone(ctx, snapshot, dsPath, nil); err != nil {
 		return nil, status.Errorf(codes.Internal, "clone snapshot %s into %s: %v", snapshot, dsPath, err)
 	}
 	fail := func(format string, args ...any) (*truenas.Dataset, error) {

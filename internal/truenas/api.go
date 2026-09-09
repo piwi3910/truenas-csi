@@ -99,7 +99,7 @@ type API interface {
 	SnapshotQuery(ctx context.Context, id string) (*Snapshot, error)
 	SnapshotList(ctx context.Context, datasetPrefix string) ([]Snapshot, error)
 	SnapshotDelete(ctx context.Context, id string) error
-	SnapshotClone(ctx context.Context, snapshot, dst string) error
+	SnapshotClone(ctx context.Context, snapshot, dst string, props map[string]any) error
 
 	NFSShareCreate(ctx context.Context, spec NFSShareSpec) (*NFSShare, error)
 	NFSShareByPath(ctx context.Context, path string) (*NFSShare, error)

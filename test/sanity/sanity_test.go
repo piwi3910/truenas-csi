@@ -349,7 +349,7 @@ func TestSanityFakeIsRealistic(t *testing.T) {
 		t.Fatal("creating the same dataset twice must fail, as it does on the appliance")
 	}
 	// And a clone must arrive WITHOUT the ownership marker.
-	if err := c.SnapshotClone(context.Background(), "Pool0/k8s/dup@s", "Pool0/k8s/clone"); err != nil {
+	if err := c.SnapshotClone(context.Background(), "Pool0/k8s/dup@s", "Pool0/k8s/clone", nil); err != nil {
 		t.Fatal(err)
 	}
 	cl, err := c.DatasetQuery(context.Background(), "Pool0/k8s/clone")

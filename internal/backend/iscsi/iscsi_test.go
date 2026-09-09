@@ -322,3 +322,35 @@ func TestDeleteRetriesWhileZvolIsBusy(t *testing.T) {
 			"would turn an idempotent delete into a 30-second stall")
 	}
 }
+
+// TestISCSIThickRestoreKeepsItsReservation: see the nvme test of the same name.
+// refreservation is what makes sparse: "false" mean anything, and a ZFS clone
+// inherits it no more than it inherits the ownership marker -- verified on a
+// real appliance, where a clone of a 1 GiB thick zvol came back with
+// refreservation=none and source=DEFAULT.
+func TestISCSIThickRestoreKeepsItsReservation(t *testing.T) {
+	ctx := context.Background()
+	n := newNAS(t)
+	b := n.backend()
+
+	thick := map[string]string{"sparse": "false"}
+	if _, err := b.Create(ctx, createReq("pvc-src", 1<<30, thick)); err != nil {
+		t.Fatalf("Create source: %v", err)
+	}
+	req := createReq("pvc-restored", 1<<30, thick)
+	req.SourceSnapshot = "Pool0/k8s/pvc-src@snap1"
+	if _, err := b.Create(ctx, req); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	ds := n.dataset("Pool0/k8s/pvc-restored")
+	if ds == nil {
+		t.Fatal("the clone was not created")
+	}
+	res, _ := ds["refreservation"].(map[string]any)
+	if res == nil || res["value"] == nil {
+		t.Fatal("clone carries no refreservation — sparse:\"false\" was silently lost")
+	}
+	if got := res["value"]; got != "auto" {
+		t.Fatalf("clone refreservation = %v, want \"auto\"", got)
+	}
+}

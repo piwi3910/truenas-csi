@@ -274,13 +274,21 @@ func (n *nas) install() {
 			return nil, notFound(snap)
 		}
 		// A clone inherits NEITHER the ownership marker NOR an explicit size
-		// stamp — reproducing that here is the whole point of this handler.
-		n.datasets[dst] = map[string]any{
+		// stamp — reproducing that here is the whole point of this handler. It
+		// inherits no refreservation either, so a thick source yields a THIN
+		// clone unless the caller asks for one at clone time.
+		clone := map[string]any{
 			"id": dst, "type": src["type"],
 			"volsize":         src["volsize"],
 			"origin":          map[string]any{"value": snap, "source": "LOCAL"},
 			"user_properties": map[string]any{},
 		}
+		if props, ok := spec["dataset_properties"].(map[string]any); ok {
+			if r, ok := props["refreservation"]; ok {
+				clone["refreservation"] = map[string]any{"value": r, "source": "LOCAL"}
+			}
+		}
+		n.datasets[dst] = clone
 		return true, nil
 	})
 
