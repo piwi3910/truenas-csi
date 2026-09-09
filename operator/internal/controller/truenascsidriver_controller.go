@@ -287,6 +287,18 @@ func (r *TrueNASCSIDriverReconciler) reconcile(
 			status.CredentialsRevision = desiredFingerprint
 		}
 	}
+	// The controller Deployment is not part of any rollout plan above: the
+	// credential stages consult it only while a rotation is in flight, and
+	// rollNodes describes the DaemonSet. So on an ordinary install nothing
+	// noticed that the component which serves every provisioning call had no
+	// ready replicas -- the node pod came up first, the plan reported Done, and
+	// the CR went Ready=True while both controller pods were still
+	// ContainerCreating. Anything waiting on Ready (OLM, a GitOps sync, a human)
+	// would then create claims that nothing is running to serve.
+	if progressing == "" && !controllerReady {
+		progressing = "waiting for the controller Deployment to have ready replicas"
+	}
+
 	status.Rollout = rolloutStatus
 
 	backendStatus, unreachable := r.backendHealth(ctx, cr, ns)

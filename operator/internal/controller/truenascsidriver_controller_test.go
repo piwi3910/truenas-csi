@@ -192,6 +192,34 @@ func nodeDaemonSet(desired int32) *appsv1.DaemonSet {
 	}
 }
 
+// controllerDeployment is the driver's controller Deployment, rolled out and
+// with all replicas ready.
+//
+// Every test that expects a reconcile to reach its settled state needs one.
+// None of them had it, and that is how the operator came to report Ready=True
+// with zero ready controller replicas: the fixtures modelled only the node
+// DaemonSet, so no test could see that the Deployment was never consulted.
+func controllerDeployment(ready int32) *appsv1.Deployment {
+	replicas := ready
+	if replicas == 0 {
+		replicas = 1
+	}
+	return &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace:  "truenas-csi",
+			Name:       "truenas-csi-controller",
+			Generation: 1,
+			Labels:     map[string]string{"app.kubernetes.io/component": "controller"},
+		},
+		Spec: appsv1.DeploymentSpec{Replicas: &replicas},
+		Status: appsv1.DeploymentStatus{
+			ObservedGeneration: 1,
+			UpdatedReplicas:    replicas,
+			ReadyReplicas:      ready,
+		},
+	}
+}
+
 func reconcileOnce(t *testing.T, r *TrueNASCSIDriverReconciler) *truenasv1alpha1.TrueNASCSIDriver {
 	t.Helper()
 	_, err := r.Reconcile(context.Background(), ctrl.Request{
@@ -445,7 +473,7 @@ func TestStatusReportsBackendHealth(t *testing.T) {
 	// 0 updated of 0 total "done", so the same status said Ready=True and
 	// "waiting for the node DaemonSet to create its pods" at once.
 	pending := newReconciler(t, &recordingApplier{}, probe, driver.DeepCopy(),
-		credentialSecret("1", "1-secret-key"), controllerPod.DeepCopy(), nodeDaemonSet(1))
+		credentialSecret("1", "1-secret-key"), controllerPod.DeepCopy(), nodeDaemonSet(1), controllerDeployment(1))
 	installing := reconcileOnce(t, pending)
 
 	if ready := meta.FindStatusCondition(installing.Status.Conditions, truenasv1alpha1.ConditionReady); ready == nil ||
@@ -466,7 +494,7 @@ func TestStatusReportsBackendHealth(t *testing.T) {
 	// must not be confused with the one above.
 	applier := &recordingApplier{}
 	r := newReconciler(t, applier, probe, driver, credentialSecret("1", "1-secret-key"),
-		controllerPod, nodeDaemonSet(0))
+		controllerPod, nodeDaemonSet(0), controllerDeployment(1))
 	got := reconcileOnce(t, r)
 
 	if probe.url != "http://10.42.0.7:9090/metrics" {
@@ -614,7 +642,7 @@ func TestUpgradePathGating(t *testing.T) {
 			applier := &recordingApplier{}
 			recorder := events.NewFakeRecorder(16)
 			r := newReconciler(t, applier, nil, driver, credentialSecret("1", "1-secret-key"),
-				nodeDaemonSet(0))
+				nodeDaemonSet(0), controllerDeployment(1))
 			r.Recorder = recorder
 			r.UpgradeTable = upgradeTable
 			got := reconcileOnce(t, r)
@@ -696,7 +724,7 @@ func TestSuccessfulUpgradeEmitsAnEvent(t *testing.T) {
 
 	recorder := events.NewFakeRecorder(16)
 	r := newReconciler(t, &recordingApplier{}, nil, driver, credentialSecret("1", "1-secret-key"),
-		nodeDaemonSet(0))
+		nodeDaemonSet(0), controllerDeployment(1))
 	r.Recorder = recorder
 	r.UpgradeTable = upgradeTable
 	reconcileOnce(t, r)
@@ -713,7 +741,7 @@ func TestFreshInstallEmitsNoUpgradeEvent(t *testing.T) {
 
 	recorder := events.NewFakeRecorder(16)
 	r := newReconciler(t, &recordingApplier{}, nil, driver, credentialSecret("1", "1-secret-key"),
-		nodeDaemonSet(0))
+		nodeDaemonSet(0), controllerDeployment(1))
 	r.Recorder = recorder
 	r.UpgradeTable = upgradeTable
 	reconcileOnce(t, r)
@@ -767,4 +795,49 @@ func templateAnnotation(t *testing.T, obj *unstructured.Unstructured, key string
 		t.Fatalf("%s/%s pod template has no %s annotation (%v)", obj.GetKind(), obj.GetName(), key, annotations)
 	}
 	return v
+}
+
+// TestNotReadyWhileTheControllerHasNoReadyReplicas pins the fix for an operator
+// that declared the driver healthy before it could serve anything.
+//
+// The controller Deployment was consulted only by the credential-rotation
+// planner. On an ordinary install nothing else looked at it: the node
+// DaemonSet's rollout plan reported Done as soon as its pods were up, and the
+// CR went Ready=True with both controller pods still ContainerCreating.
+// Observed on a real cluster, where the node pod (three containers) started
+// well before the controller (five). Anything gated on Ready — OLM, a GitOps
+// sync, an operator watching kubectl — would then create claims that nothing
+// was running to serve.
+func TestNotReadyWhileTheControllerHasNoReadyReplicas(t *testing.T) {
+	r := newReconciler(t, &recordingApplier{}, nil, testDriver(),
+		credentialSecret("1", "1-secret-key"), nodeDaemonSet(0), controllerDeployment(0))
+
+	got := reconcileOnce(t, r)
+
+	ready := meta.FindStatusCondition(got.Status.Conditions, truenasv1alpha1.ConditionReady)
+	if ready == nil {
+		t.Fatal("no Ready condition was set at all")
+	}
+	if ready.Status != metav1.ConditionFalse {
+		t.Errorf("Ready = %s, want False: the controller Deployment has no ready "+
+			"replicas, so nothing can serve a provisioning call", ready.Status)
+	}
+	progressing := meta.FindStatusCondition(got.Status.Conditions, truenasv1alpha1.ConditionProgressing)
+	if progressing == nil || progressing.Status != metav1.ConditionTrue {
+		t.Errorf("Progressing = %v, want True while the controller is still coming up", progressing)
+	}
+}
+
+// TestReadyOnceTheControllerHasReadyReplicas is the other half: the added check
+// must not leave a healthy install stuck in Progressing for ever.
+func TestReadyOnceTheControllerHasReadyReplicas(t *testing.T) {
+	r := newReconciler(t, &recordingApplier{}, nil, testDriver(),
+		credentialSecret("1", "1-secret-key"), nodeDaemonSet(0), controllerDeployment(1))
+
+	got := reconcileOnce(t, r)
+
+	ready := meta.FindStatusCondition(got.Status.Conditions, truenasv1alpha1.ConditionReady)
+	if ready == nil || ready.Status != metav1.ConditionTrue {
+		t.Errorf("Ready = %v, want True once the controller is up and nothing is rolling", ready)
+	}
 }
