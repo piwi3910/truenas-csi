@@ -998,3 +998,14 @@ bound derived from the ZFS figure is four times too permissive.
 This matters for the publish ledger, which grows with the number of nodes
 holding a volume: a dual-stack entry costs about 60 bytes, so a ReadWriteMany
 volume reaches the limit around 18 nodes.
+
+## nvmet.global.sessions, populated (verified 25.10.6)
+
+With a node attached to an exported subsystem:
+
+    {"ctrl":2,"host_traddr":"192.168.10.108",
+     "hostnqn":"nqn.2014-08.org.nvmexpress:uuid:058d...","port_id":3,"subsys_id":20}
+
+`host_traddr` is a BARE address, not the "host:port" that `nfs.get_nfs4_clients`
+uses. This was the last unverified shape on the fencing path; all three session
+sources (iSCSI, NFSv4, NVMe) now decode correctly against live payloads.

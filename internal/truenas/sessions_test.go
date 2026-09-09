@@ -304,3 +304,29 @@ func TestNFSClientsFailsWhenEitherSourceFails(t *testing.T) {
 		})
 	}
 }
+
+// TestHostOnlyKeepsIPv6Intact pins the address parsing every fencing decision
+// rests on.
+//
+// The session listings identify a node by address, and SafeToFence compares
+// them against the addresses the driver granted. An IPv6 address mangled here
+// would make a node that IS holding the volume look absent, and the fence would
+// then force-delete a pod whose node is still writing — the one outcome this
+// driver exists to prevent. net.SplitHostPort refuses a bare IPv6 address
+// (too many colons), which is what makes the fallback correct rather than
+// lucky.
+func TestHostOnlyKeepsIPv6Intact(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"192.168.10.102:666", "192.168.10.102"},
+		{"192.168.10.102", "192.168.10.102"},
+		{"[fd7c:8f2a::1]:666", "fd7c:8f2a::1"},
+		{"fd7c:8f2a::1", "fd7c:8f2a::1"},
+		{"fd7c:8f2a:1b3c:4d5e:0:0:0:1", "fd7c:8f2a:1b3c:4d5e:0:0:0:1"},
+		{"fe80::1%eth0", "fe80::1%eth0"},
+		{"", ""},
+	} {
+		if got := hostOnly(tc.in); got != tc.want {
+			t.Errorf("hostOnly(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}

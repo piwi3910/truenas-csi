@@ -127,9 +127,12 @@ func (c *Ops) NFSClientCount(ctx context.Context) (int, error) {
 // an answer, because a short list would read as "that node has let go".
 //
 // UNVERIFIED: the address text for an IPv6 client. Every observed value is IPv4
-// "host:port" (e.g. "192.168.10.102:666"); a hardware run with an IPv6 NFSv4
-// mount should confirm it is bracketed host:port, which is what the parsing
-// here assumes.
+// "host:port" (e.g. "192.168.10.102:666"), because the appliance under test is
+// reachable only over IPv4; an IPv6 NFSv4 mount is needed to confirm it is
+// bracketed host:port. hostOnly handles both that and a bare IPv6 address
+// (TestHostOnlyKeepsIPv6Intact), so the remaining risk is a rendering that is
+// neither -- an unbracketed "addr:port" with an IPv6 host, which no RFC-conformant
+// producer emits and which nothing could parse unambiguously anyway.
 func (c *Ops) NFSClients(ctx context.Context) ([]NFSClient, error) {
 	var v4 []nfs4Client
 	if err := c.CallJSON(ctx, &v4, "nfs.get_nfs4_clients"); err != nil {
@@ -200,13 +203,10 @@ type nfs4Client struct {
 // https://192.168.10.253/api/docs/current/api_methods_nvmet.global.sessions.html
 // (host_traddr, hostnqn, subsys_id, port_id, ctrl) on 25.10.5.
 //
-// UNVERIFIED: the shape of a POPULATED element. That schema is the appliance's
-// own, but no NVMe-oF initiator was attached when it was read, so the exact
-// rendering of host_traddr — a bare address, or "host:port" as the NFSv4 client
-// listing uses — is unconfirmed. The hardware check: connect a node to an
-// exported subsystem and call nvmet.global.sessions. HostAddr is parsed through
-// the same host-only helper the NFS listing uses, so a "host:port" rendering
-// still matches; one carrying a transport suffix would not.
+// VERIFIED on 25.10.6 with a node attached to an exported subsystem:
+// host_traddr is a BARE address ("192.168.10.108"), not the "host:port" the
+// NFSv4 client listing uses, and hostnqn is the initiator's NQN verbatim.
+// hostOnly passes a bare address through unchanged, so both renderings decode.
 type NVMeSession struct {
 	// HostNQN is the initiator's NQN, matching the node's advertised host NQN.
 	HostNQN string
