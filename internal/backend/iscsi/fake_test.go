@@ -279,8 +279,11 @@ func (n *nas) install() {
 		// clone unless the caller asks for one at clone time.
 		clone := map[string]any{
 			"id": dst, "type": src["type"],
-			"volsize":         src["volsize"],
-			"origin":          map[string]any{"value": snap, "source": "LOCAL"},
+			"volsize": src["volsize"],
+			// The middleware UPPERCASES origin's display form and keeps the
+			// true name only in rawvalue — verified on a real appliance.
+			"origin": map[string]any{
+				"value": strings.ToUpper(snap), "rawvalue": snap, "source": "LOCAL"},
 			"user_properties": map[string]any{},
 		}
 		if props, ok := spec["dataset_properties"].(map[string]any); ok {

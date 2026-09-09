@@ -113,5 +113,7 @@ func AbandonedCloneOf(ds *truenas.Dataset, r CreateRequest) bool {
 	if _, marked := ds.UserProperties[volume.OwnerProperty]; marked {
 		return false
 	}
-	return ds.Origin.Value == r.SourceSnapshot
+	// RawValue, never Value: the middleware returns origin's display form
+	// UPPERCASED, so comparing Value never matches a real snapshot name.
+	return ds.Origin.RawValue == r.SourceSnapshot
 }

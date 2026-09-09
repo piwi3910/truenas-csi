@@ -87,11 +87,16 @@ func (d *fakeDataset) json(id string) map[string]any {
 		props[k] = map[string]any{"value": v, "source": "LOCAL"}
 	}
 	return map[string]any{
-		"id":              id,
-		"type":            "FILESYSTEM",
-		"mountpoint":      "/mnt/" + id,
-		"refquota":        map[string]any{"parsed": d.refquota},
-		"origin":          map[string]any{"value": d.origin, "source": "LOCAL"},
+		"id":         id,
+		"type":       "FILESYSTEM",
+		"mountpoint": "/mnt/" + id,
+		"refquota":   map[string]any{"parsed": d.refquota},
+		// The middleware UPPERCASES origin's display form and keeps the true
+		// name only in rawvalue — verified on a real appliance. Reproducing it
+		// is the point: a fake that echoed the name verbatim let a comparison
+		// against Value pass here and fail on hardware.
+		"origin": map[string]any{
+			"value": strings.ToUpper(d.origin), "rawvalue": d.origin, "source": "LOCAL"},
 		"user_properties": props,
 		"comments":        map[string]any{"value": d.comments, "source": "LOCAL"},
 	}

@@ -185,3 +185,48 @@ func TestSizeFieldAcceptsBothShapes(t *testing.T) {
 		t.Errorf("null should decode as 0, got %d", null.Free.Parsed)
 	}
 }
+
+// TestOriginDecodesTheMachineForm pins a middleware quirk that made clone
+// detection silently useless.
+//
+// pool.dataset.query returns origin's "value" UPPERCASED — verified on a real
+// appliance (25.10.6), which answered
+//
+//	{"parsed": "Pool0/k8s/osrc@Snap1", "rawvalue": "Pool0/k8s/osrc@Snap1",
+//	 "value": "POOL0/K8S/OSRC@SNAP1"}
+//
+// so every comparison of Origin against a real dataset id failed. Nothing
+// errored: the dependent-clone refusal simply never managed to name the clones
+// it exists to name, and any other reader of Origin would silently see no
+// clone at all.
+func TestOriginDecodesTheMachineForm(t *testing.T) {
+	const body = `{"id":"Pool0/k8s/oclone","type":"FILESYSTEM",
+	  "origin":{"parsed":"Pool0/k8s/osrc@Snap1","rawvalue":"Pool0/k8s/osrc@Snap1",
+	            "source":"NONE","value":"POOL0/K8S/OSRC@SNAP1"}}`
+	var ds Dataset
+	if err := json.Unmarshal([]byte(body), &ds); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got := ds.Origin.RawValue; got != "Pool0/k8s/osrc@Snap1" {
+		t.Fatalf("Origin.RawValue = %q, want the true snapshot name", got)
+	}
+}
+
+// TestClonesOfMatchesRealNames drives the same quirk through the caller.
+func TestClonesOfMatchesRealNames(t *testing.T) {
+	srv := fake.Start(t, fake.Options{})
+	srv.Handle("pool.dataset.query", func([]json.RawMessage) (any, error) {
+		return []any{
+			map[string]any{"id": "Pool0/k8s/src", "type": "FILESYSTEM"},
+			map[string]any{"id": "Pool0/k8s/clone", "type": "FILESYSTEM",
+				"origin": map[string]any{
+					"parsed": "Pool0/k8s/src@s1", "rawvalue": "Pool0/k8s/src@s1",
+					"source": "NONE", "value": "POOL0/K8S/SRC@S1"}},
+		}, nil
+	})
+	got := dialFake(t, srv).clonesOf(context.Background(), "Pool0/k8s/src")
+	if len(got) != 1 || got[0] != "Pool0/k8s/clone" {
+		t.Fatalf("clonesOf = %v, want [Pool0/k8s/clone] — the refusal could never "+
+			"name the volume blocking the delete", got)
+	}
+}

@@ -373,8 +373,9 @@ func TestISCSICrashMidCloneDoesNotLeak(t *testing.T) {
 	// The abandoned clone: cloned from this request's snapshot, never stamped.
 	n.putDataset(map[string]any{
 		"id": "Pool0/k8s/pvc-restored", "type": "VOLUME",
-		"volsize":         map[string]any{"parsed": int64(1 << 30)},
-		"origin":          map[string]any{"value": "Pool0/k8s/pvc-src@snap1", "source": "LOCAL"},
+		"volsize": map[string]any{"parsed": int64(1 << 30)},
+		"origin": map[string]any{"value": "POOL0/K8S/PVC-SRC@SNAP1",
+			"rawvalue": "Pool0/k8s/pvc-src@snap1", "source": "LOCAL"},
 		"user_properties": map[string]any{},
 	})
 

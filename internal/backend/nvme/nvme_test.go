@@ -297,8 +297,11 @@ func (n *nas) install() {
 		// clone reserved nothing.
 		clone := map[string]any{
 			"id": dst, "type": src["type"],
-			"volsize":         src["volsize"],
-			"origin":          map[string]any{"value": snap, "source": "LOCAL"},
+			"volsize": src["volsize"],
+			// The middleware UPPERCASES origin's display form and keeps the
+			// true name only in rawvalue — verified on a real appliance.
+			"origin": map[string]any{
+				"value": strings.ToUpper(snap), "rawvalue": snap, "source": "LOCAL"},
 			"user_properties": map[string]any{},
 		}
 		if props, ok := spec["dataset_properties"].(map[string]any); ok {
@@ -1061,8 +1064,9 @@ func TestNVMeCrashMidCloneDoesNotLeak(t *testing.T) {
 	// The abandoned clone: cloned from this request's snapshot, never stamped.
 	n.putDataset(map[string]any{
 		"id": "Pool0/k8s/pvc-restored", "type": "VOLUME",
-		"volsize":         map[string]any{"parsed": int64(1 << 30)},
-		"origin":          map[string]any{"value": "Pool0/k8s/pvc-src@snap1", "source": "LOCAL"},
+		"volsize": map[string]any{"parsed": int64(1 << 30)},
+		"origin": map[string]any{"value": "POOL0/K8S/PVC-SRC@SNAP1",
+			"rawvalue": "Pool0/k8s/pvc-src@snap1", "source": "LOCAL"},
 		"user_properties": map[string]any{},
 	})
 

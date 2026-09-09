@@ -1068,3 +1068,18 @@ Verified on the cluster: a class with `secretName`/`secretNamespace` produces
 `nodeStageSecretRef: None` and every mount fails; the same class with the
 reserved names produces `{"name":"truenas-smb","namespace":"default"}` and the
 volume mounts.
+
+## `origin` comes back UPPERCASED in `value`
+
+`pool.dataset.query` returns a clone's `origin` with the display form
+uppercased and the true name only in `parsed`/`rawvalue`. Verified on
+25.10.6 for a dataset actually named `Pool0/k8s/osrc@Snap1`:
+
+```json
+{"parsed": "Pool0/k8s/osrc@Snap1", "rawvalue": "Pool0/k8s/osrc@Snap1",
+ "source": "NONE", "value": "POOL0/K8S/OSRC@SNAP1"}
+```
+
+Anything compared against a real ZFS name must read `RawValue`. Comparing
+`Value` fails silently — nothing errors, the match simply never happens.
+This is why `Property` decodes `rawvalue` separately.

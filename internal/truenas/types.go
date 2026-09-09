@@ -14,6 +14,12 @@ import (
 type Property struct {
 	Value  string `json:"value"`
 	Source string `json:"source"`
+	// RawValue is the machine form. It is decoded separately because "value"
+	// is a DISPLAY form the middleware is free to reshape: for origin it comes
+	// back UPPERCASED (verified on 25.10.6 — "POOL0/K8S/OSRC@SNAP1" for a
+	// dataset actually named Pool0/k8s/osrc@Snap1), so anything compared
+	// against a real ZFS name has to read this instead.
+	RawValue string `json:"rawvalue"`
 }
 
 // sizeField decodes the {"parsed": N, "rawvalue": "N", ...} shape the middleware
@@ -71,13 +77,15 @@ type propField struct{ Property }
 
 func (p *propField) UnmarshalJSON(b []byte) error {
 	var raw struct {
-		Value  json.RawMessage `json:"value"`
-		Source string          `json:"source"`
+		Value    json.RawMessage `json:"value"`
+		RawValue string          `json:"rawvalue"`
+		Source   string          `json:"source"`
 	}
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return nil
 	}
 	p.Source = raw.Source
+	p.RawValue = raw.RawValue
 	var s string
 	if err := json.Unmarshal(raw.Value, &s); err == nil {
 		p.Value = s
