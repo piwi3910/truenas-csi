@@ -17,11 +17,13 @@ import (
 
 // publishBlock binds the resolved device onto the pod's device file target.
 func (n *Node) publishBlock(ctx context.Context, req PublishRequest) error {
-	naa := req.PublishContext[KeyNAA]
-	if naa == "" {
-		return fmt.Errorf("%w: block volume needs %q in the publish context", ErrInvalidRequest, KeyNAA)
-	}
-	device, err := n.deviceFor(ctx, naa)
+	// By protocol, not by NAA. This used to demand a NAA unconditionally, which
+	// only iSCSI has: an NVMe namespace is found by its subsystem serial. Every
+	// raw-block NVMe volume therefore failed NodePublishVolume with
+	// `block volume needs "naa" in the publish context`, retried for ever, and
+	// its pod sat in ContainerCreating -- while the same volume as a filesystem
+	// worked. Found by the upstream conformance suite's block patterns.
+	device, err := n.resolveBlockDevice(ctx, req.PublishContext, protocolOf(req.PublishContext))
 	if err != nil {
 		return err
 	}

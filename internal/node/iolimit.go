@@ -340,15 +340,28 @@ func (n *Node) applyIOLimits(ctx context.Context, req PublishRequest, protocol s
 // throttle written against the single path of a device the pod reaches through
 // the mapper would simply never fire.
 func (n *Node) limitDevice(ctx context.Context, req PublishRequest, protocol string) (string, error) {
+	return n.resolveBlockDevice(ctx, req.PublishContext, protocol)
+}
+
+// resolveBlockDevice resolves the host device backing a volume, by whatever
+// identifier its protocol uses: an iSCSI LUN is found by its NAA, an NVMe
+// namespace by its subsystem serial.
+//
+// Every caller that needs the device goes through here. publishBlock used to
+// carry its own copy of the iSCSI half and demand a NAA unconditionally, so a
+// raw-block NVMe volume failed every NodePublishVolume with `block volume needs
+// "naa" in the publish context` -- filesystem NVMe worked, and volumeMode:
+// Block did not.
+func (n *Node) resolveBlockDevice(ctx context.Context, pc map[string]string, protocol string) (string, error) {
 	switch protocol {
 	case ProtocolISCSI:
-		naa := req.PublishContext[KeyNAA]
+		naa := pc[KeyNAA]
 		if naa == "" {
 			return "", fmt.Errorf("%w: no %s in the volume context", ErrInvalidRequest, KeyNAA)
 		}
 		return n.deviceFor(ctx, naa)
 	case ProtocolNVMe:
-		serial := req.PublishContext[KeySerial]
+		serial := pc[KeySerial]
 		if serial == "" {
 			return "", fmt.Errorf("%w: no %s in the volume context", ErrInvalidRequest, KeySerial)
 		}
