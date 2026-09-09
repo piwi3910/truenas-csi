@@ -156,6 +156,22 @@ func (b *nvmeBackend) bindPort(ctx context.Context, portID, subsysID int) error 
 		}
 	}
 	if _, err := b.c.NVMePortSubsysCreate(ctx, portID, subsysID); err != nil {
+		// The list above is a check-then-act, and ControllerPublishVolume is
+		// retried and can run concurrently for the same volume: two callers
+		// both see no binding and both create one, and the loser gets
+		// "[EINVAL] ...port_id: This record already exists". Observed on a live
+		// cluster, where it failed a publish that had in fact succeeded.
+		//
+		// Establish the state by query rather than by classifying the error,
+		// exactly as ensureSubsystem does -- the middleware's errname is not
+		// reliable enough to branch on.
+		if again, qErr := b.c.NVMePortSubsysList(ctx, subsysID); qErr == nil {
+			for _, ps := range again {
+				if ps.PortID.ID == portID {
+					return nil
+				}
+			}
+		}
 		return fmt.Errorf("binding subsystem %d to port %d: %w", subsysID, portID, err)
 	}
 	return nil
@@ -198,13 +214,24 @@ func (b *nvmeBackend) grantHost(ctx context.Context, subsys *truenas.NVMeSubsyst
 	}
 	if !have {
 		if _, err := b.c.NVMeHostSubsysCreate(ctx, host.ID, subsys.ID); err != nil {
-			return fmt.Errorf("granting %s access to subsystem %d: %w", node.NQN, subsys.ID, err)
+			// Same check-then-act race as bindPort: a concurrent publish for
+			// the same volume and node may already have granted it.
+			if again, qErr := b.c.NVMeHostSubsysList(ctx, subsys.ID); qErr == nil {
+				for _, hs := range again {
+					if hs.HostID.ID == host.ID {
+						have = true
+					}
+				}
+			}
+			if !have {
+				return fmt.Errorf("granting %s access to subsystem %d: %w", node.NQN, subsys.ID, err)
+			}
 		}
 	}
 	if subsys.AllowAnyHost {
-		// UNVERIFIED: that nvmet.subsys.update accepts a lone allow_any_host
-		// patch. The field is documented as writable on the appliance's own
-		// nvmet.subsys.update schema; one call against real hardware settles it.
+		// VERIFIED on 25.10.6: nvmet.subsys.update accepts a lone allow_any_host
+		// patch, and the subsystem reads back allow_any_host=false with the host
+		// ACL entry intact.
 		if err := b.c.CallJSON(ctx, nil, "nvmet.subsys.update", subsys.ID,
 			map[string]any{"allow_any_host": false}); err != nil {
 			return fmt.Errorf("closing subsystem %d to unlisted hosts: %w", subsys.ID, err)

@@ -2,6 +2,9 @@ package nvme
 
 import (
 	"context"
+	"encoding/json"
+	"github.com/piwi3910/truenas-csi/internal/truenas/fake"
+	"strings"
 	"testing"
 
 	"github.com/piwi3910/truenas-csi/internal/backend"
@@ -119,5 +122,69 @@ func TestNVMePublishRejectsWhatIsNotThere(t *testing.T) {
 	}
 	if err := b.Unpublish(ctx, volID("pvc-absent"), testNode("worker-1", "")); err != nil {
 		t.Fatalf("unpublishing a volume that does not exist must succeed, got %v", err)
+	}
+}
+
+// TestPublishToleratesARaceOnTheExistingBinding pins idempotency at the point
+// where it actually broke.
+//
+// bindPort and grantHost both list first and create only when the record is
+// absent. That is a check-then-act, and ControllerPublishVolume is retried by
+// the CO and can run concurrently for the same volume: two callers see nothing,
+// both create, and the loser gets
+//
+//	[EINVAL] nvmet_port_subsys_create.port_id: This record already exists
+//
+// Observed on a live cluster, where it failed a publish whose work had in fact
+// been done. The recovery is the same one ensureSubsystem uses -- establish the
+// state by query rather than by classifying an errname the middleware does not
+// report reliably.
+func TestPublishToleratesARaceOnTheExistingBinding(t *testing.T) {
+	for _, method := range []string{
+		"nvmet.port_subsys.create",
+		"nvmet.host_subsys.create",
+	} {
+		t.Run(method, func(t *testing.T) {
+			n := newNAS(t)
+			b := n.backend()
+			ctx := context.Background()
+
+			if _, err := b.Create(ctx, createReq("pvc-race", 1<<30, nil)); err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+			// Publish once so the records really exist on the appliance.
+			node := testNode("worker-1", "nqn.2014-08.org.nvmexpress:uuid:race")
+			if _, err := b.Publish(ctx, volID("pvc-race"), node); err != nil {
+				t.Fatalf("first Publish: %v", err)
+			}
+
+			// Now model the race rather than the sequential repeat. The FIRST
+			// list comes back empty -- the other caller had not committed when
+			// we looked -- and the create then fails, because by the time it
+			// ran, it had. Every later list tells the truth, which is what the
+			// recovery consults. A test that merely repeats a publish never
+			// reaches the create at all: the pre-check finds the record and
+			// returns early.
+			listMethod := strings.Replace(method, ".create", ".query", 1)
+			real := n.listHandler(listMethod)
+			var first bool
+			n.handle(listMethod, func(p []json.RawMessage) (any, error) {
+				if !first {
+					first = true
+					return []any{}, nil
+				}
+				return real(p)
+			})
+			n.failOn(method, &fake.RPCError{
+				Code: -32602, ErrName: "EINVAL",
+				Reason: "[EINVAL] nvmet_port_subsys_create.port_id: This record already exists",
+			})
+			defer n.clearFail(method)
+
+			if _, err := b.Publish(ctx, volID("pvc-race"), node); err != nil {
+				t.Errorf("a publish that lost the race must succeed: the record it "+
+					"collided with is its own, and re-querying finds it: %v", err)
+			}
+		})
 	}
 }

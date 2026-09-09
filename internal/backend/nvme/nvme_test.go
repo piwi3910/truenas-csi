@@ -150,6 +150,25 @@ func alreadyExists(what string) *fake.RPCError {
 	return &fake.RPCError{Code: -32602, ErrName: "EINVAL", Reason: "[EEXIST] " + what + " already exists"}
 }
 
+// listHandler returns a reader of the fake's own state for one query method,
+// so a test can make the FIRST list miss what the appliance already holds --
+// which is the shape of a lost check-then-act race, and the only way to reach
+// the create that then fails.
+func (n *nas) listHandler(method string) func(p []json.RawMessage) (any, error) {
+	items := func() []map[string]any { return nil }
+	switch method {
+	case "nvmet.port_subsys.query":
+		items = func() []map[string]any { return n.portSubsys }
+	case "nvmet.host_subsys.query":
+		items = func() []map[string]any { return n.hostSubsys }
+	}
+	return func(p []json.RawMessage) (any, error) {
+		n.mu.Lock()
+		defer n.mu.Unlock()
+		return filterItems(items(), p), nil
+	}
+}
+
 func (n *nas) handle(method string, h func(p []json.RawMessage) (any, error)) {
 	n.s.Handle(method, func(p []json.RawMessage) (any, error) {
 		n.mu.Lock()
