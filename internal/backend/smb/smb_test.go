@@ -916,3 +916,45 @@ func TestDisabledSMBShareIsRefusedRatherThanAdopted(t *testing.T) {
 			status.Code(err), err)
 	}
 }
+
+// TestPublishContextKeepsTheStorageClassMountOptions.
+//
+// The same split as the NFS test next door: CreateVolume runs on the
+// external-provisioner's leader and ControllerPublishVolume on the
+// external-attacher's, so on a multi-replica deployment the create-time cache
+// is cold at publish and the operator's ownership and modes were replaced by
+// the defaults.
+//
+// The consequence was not cosmetic. cifs is mounted with forceuid/forcegid, so
+// the defaults present the volume as root:root 0755 and a non-root pod cannot
+// write to it — measured on a real cluster with fsGroup 2000 and runAsUser
+// 1000, where the pod got "Permission denied" on its own volume.
+func TestPublishContextKeepsTheStorageClassMountOptions(t *testing.T) {
+	n := newNAS(t)
+	r := testRequest("pvc-1", gib)
+	r.Params[ParamUID] = "1000"
+	r.Params[ParamGID] = "2000"
+	r.Params[ParamFileMode] = "0777"
+	r.Params[ParamDirMode] = "0777"
+	if _, err := newBackend(t, n).Create(context.Background(), r); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	// The replica that will publish never saw the create.
+	pc, err := newBackend(t, n).PublishContext(context.Background(), testID("pvc-1"))
+	if err != nil {
+		t.Fatalf("PublishContext: %v", err)
+	}
+	for _, tc := range []struct{ key, want string }{
+		{"uid", "1000"},
+		{"gid", "2000"},
+		{"fileMode", "0777"},
+		{"dirMode", "0777"},
+	} {
+		if got := pc[tc.key]; got != tc.want {
+			t.Errorf("%s = %q, want %q: the node would mount the volume the operator "+
+				"did not ask for, and a non-root pod could not write to it",
+				tc.key, got, tc.want)
+		}
+	}
+}

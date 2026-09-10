@@ -802,3 +802,53 @@ func TestPublishRefusesADisabledExport(t *testing.T) {
 		t.Fatalf("code = %v, want FailedPrecondition (err %v)", status.Code(err), err)
 	}
 }
+
+// TestPublishContextKeepsTheStorageClassNFSVersion.
+//
+// CreateVolume runs on the external-provisioner's leader and
+// ControllerPublishVolume on the external-attacher's — separate elections, so
+// on any multi-replica deployment they are different pods and the in-memory
+// version cache is cold at publish. It fell back to the default, so a class
+// asking for nfsVersion 3 mounted NFSv4.2. Measured on a two-replica cluster.
+//
+// A FRESH backend models that: same appliance, no create-time cache.
+func TestPublishContextKeepsTheStorageClassNFSVersion(t *testing.T) {
+	n := newNAS(t)
+	created := newBackend(t, n)
+	r := testRequest("pvc-1", gib)
+	r.Params[ParamNFSVersion] = "3"
+	r.Params[ParamServer] = "192.168.10.253"
+	if _, err := created.Create(context.Background(), r); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	// The replica that will publish never saw the create.
+	publisher := newBackend(t, n)
+	pc, err := publisher.PublishContext(context.Background(), testID("pvc-1"))
+	if err != nil {
+		t.Fatalf("PublishContext: %v", err)
+	}
+	if got := pc["nfsVersion"]; got != "3" {
+		t.Fatalf("nfsVersion = %q, want \"3\": the operator asked for v3 and the node "+
+			"would mount v4", got)
+	}
+}
+
+// TestPublishContextDefaultsWhenNoVersionWasAsked: a class that never named a
+// version must not have one recorded, so the default still governs it.
+func TestPublishContextDefaultsWhenNoVersionWasAsked(t *testing.T) {
+	n := newNAS(t)
+	created := newBackend(t, n)
+	r := testRequest("pvc-2", gib)
+	r.Params[ParamServer] = "192.168.10.253"
+	if _, err := created.Create(context.Background(), r); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	pc, err := newBackend(t, n).PublishContext(context.Background(), testID("pvc-2"))
+	if err != nil {
+		t.Fatalf("PublishContext: %v", err)
+	}
+	if got := pc["nfsVersion"]; got != defaultNFSVersion {
+		t.Fatalf("nfsVersion = %q, want the default %q", got, defaultNFSVersion)
+	}
+}

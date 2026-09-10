@@ -89,11 +89,14 @@ func (b *Backend) Protocol() string { return Protocol }
 type params struct {
 	server     string
 	nfsVersion string
-	networks   []string
-	maproot    string
-	mode       string
-	uid        int
-	gid        int
+	// versionExplicit is true when the StorageClass named a version, as
+	// opposed to inheriting the default.
+	versionExplicit bool
+	networks        []string
+	maproot         string
+	mode            string
+	uid             int
+	gid             int
 }
 
 func parseParams(p map[string]string) (params, error) {
@@ -109,6 +112,11 @@ func parseParams(p map[string]string) (params, error) {
 				"%s=%q: only 3 and 4 are supported", ParamNFSVersion, v)
 		}
 		out.nfsVersion = v
+		// Remembered as EXPLICIT so it can be recorded on the dataset. An
+		// unset version is left unrecorded and resolves to the default at
+		// publish, so changing that default later moves only the volumes whose
+		// operator never expressed an opinion.
+		out.versionExplicit = true
 	}
 	if v := get(ParamNetworks); v != "" {
 		for _, n := range strings.Split(v, ",") {
@@ -193,7 +201,7 @@ func (b *Backend) Create(ctx context.Context, r backend.CreateRequest) (*backend
 		if err := b.ensureShare(ctx, mountpointOf(existing, dsPath), p); err != nil {
 			return nil, err
 		}
-		if err := b.recordNetworkPolicy(ctx, dsPath, p); err != nil {
+		if err := b.recordMountPolicy(ctx, dsPath, p); err != nil {
 			return nil, err
 		}
 		return b.volumeFor(r.ID, r.CapacityBytes, mountpointOf(existing, dsPath), p), nil
@@ -229,7 +237,7 @@ func (b *Backend) Create(ctx context.Context, r backend.CreateRequest) (*backend
 	if err := b.ensureShare(ctx, mountpoint, p); err != nil {
 		return nil, rollback(err)
 	}
-	if err := b.recordNetworkPolicy(ctx, dsPath, p); err != nil {
+	if err := b.recordMountPolicy(ctx, dsPath, p); err != nil {
 		return nil, rollback(err)
 	}
 	return b.volumeFor(r.ID, r.CapacityBytes, mountpoint, p), nil
@@ -353,6 +361,21 @@ func (b *Backend) ensureShare(ctx context.Context, mountpoint string, p params) 
 // It has to outlive this process: ControllerPublishVolume receives no
 // StorageClass parameters, so a controller that restarted has no other way to
 // learn which networks the operator was willing to export to.
+// recordMountPolicy stores the StorageClass values ControllerPublishVolume will
+// need and cannot be told: it receives a volume id and a node, never the class.
+func (b *Backend) recordMountPolicy(ctx context.Context, dsPath string, p params) error {
+	if err := b.recordNetworkPolicy(ctx, dsPath, p); err != nil {
+		return err
+	}
+	if !p.versionExplicit || p.nfsVersion == "" {
+		return nil
+	}
+	if err := b.c.SetUserProperty(ctx, dsPath, volume.NFSVersionProperty, p.nfsVersion); err != nil {
+		return status.Errorf(codes.Internal, "recording the nfs version on %s: %v", dsPath, err)
+	}
+	return nil
+}
+
 func (b *Backend) recordNetworkPolicy(ctx context.Context, dsPath string, p params) error {
 	if len(p.networks) == 0 {
 		return nil
@@ -481,6 +504,14 @@ func (b *Backend) PublishContext(ctx context.Context, id volume.ID) (map[string]
 	server := b.server
 	version := b.versions[id.String()]
 	b.mu.Unlock()
+	if version == "" {
+		// The dataset, not the cache. CreateVolume runs on the provisioner's
+		// leader and this runs on the attacher's — separate elections, so on a
+		// multi-replica deployment they are different pods and the cache is
+		// never warm here. Measured on two replicas: a class asking for
+		// nfsVersion 3 mounted NFSv4.2, silently.
+		version = ds.LocalProperty(volume.NFSVersionProperty)
+	}
 	if version == "" {
 		version = defaultNFSVersion
 	}

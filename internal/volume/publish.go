@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 )
 
 const (
@@ -45,6 +46,27 @@ const (
 	// it here keeps the operator's policy — only these networks may reach this
 	// volume — as a filter applied to each node's addresses instead.
 	NetworksProperty = "io.truenas.csi:networks"
+
+	// NFSVersionProperty records the StorageClass's nfsVersion.
+	//
+	// It has to outlive the process that created the volume for the same reason
+	// NetworksProperty does, and the reason is sharper than "a controller might
+	// restart": CreateVolume runs on the external-provisioner's leader and
+	// ControllerPublishVolume runs on the external-attacher's, and those are
+	// SEPARATE leader elections. On any multi-replica deployment they are
+	// different pods, so a per-volume value cached in memory at create is never
+	// there at publish. Measured on a two-replica cluster: a class asking for
+	// nfsVersion 3 mounted NFSv4.2.
+	NFSVersionProperty = "io.truenas.csi:nfsversion"
+
+	// SMBMountProperty records the SMB ownership and mode the StorageClass
+	// asked for, as JSON, for the same reason.
+	//
+	// One property rather than four because the four are meaningless apart —
+	// a uid without its mode is not a partial answer, it is a wrong one — and
+	// because the encoded ledger next door already established JSON in a user
+	// property as this driver's way of storing a small structured value.
+	SMBMountProperty = "io.truenas.csi:smbmount"
 )
 
 // maxGrantsBytes bounds the encoded ledger: the largest value the MIDDLEWARE
@@ -136,4 +158,40 @@ func (g Grants) Others(nodeID string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// SMBMount is the ownership and mode a cifs mount presents to the pod.
+//
+// These are PRESENTATION only: the cifs client reports them for permission
+// checks, while the appliance authorises against the SMB user. They still
+// decide whether a non-root pod can write, because the kernel refuses the write
+// before the server is ever asked.
+type SMBMount struct {
+	UID      int    `json:"uid"`
+	GID      int    `json:"gid"`
+	FileMode string `json:"fileMode"`
+	DirMode  string `json:"dirMode"`
+}
+
+// EncodeSMBMount renders the mount ownership for a ZFS user property.
+func EncodeSMBMount(m SMBMount) (string, error) {
+	b, err := json.Marshal(m)
+	if err != nil {
+		return "", fmt.Errorf("encoding smb mount options: %w", err)
+	}
+	return string(b), nil
+}
+
+// DecodeSMBMount reads back what EncodeSMBMount wrote. An empty value is not an
+// error: a volume created before this was recorded, or by a static provisioner,
+// simply has none and the caller falls back to its defaults.
+func DecodeSMBMount(s string) (SMBMount, bool, error) {
+	if strings.TrimSpace(s) == "" {
+		return SMBMount{}, false, nil
+	}
+	var m SMBMount
+	if err := json.Unmarshal([]byte(s), &m); err != nil {
+		return SMBMount{}, false, fmt.Errorf("decoding smb mount options %q: %w", s, err)
+	}
+	return m, true, nil
 }

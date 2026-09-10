@@ -39,6 +39,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/piwi3910/truenas-csi/internal/backend"
+	"github.com/piwi3910/truenas-csi/internal/obs"
 	"github.com/piwi3910/truenas-csi/internal/retention"
 	"github.com/piwi3910/truenas-csi/internal/truenas"
 	"github.com/piwi3910/truenas-csi/internal/volume"
@@ -143,6 +144,9 @@ func (b *Backend) Protocol() string { return Protocol }
 
 // params is the resolved StorageClass configuration for one request.
 type params struct {
+	// recalled is true when these came from the create-time cache rather than
+	// from defaultParams. See recall.
+	recalled    bool
 	server      string
 	sharePrefix string
 	uid         int
@@ -357,6 +361,11 @@ func (b *Backend) Create(ctx context.Context, r backend.CreateRequest) (*backend
 		if err := b.ensureShare(ctx, mountpointOf(existing, dsPath), name); err != nil {
 			return nil, err
 		}
+		// Recorded on the retry path too. CreateVolume is idempotent and this
+		// write is as well, so a volume provisioned before the options were
+		// recorded picks them up the next time its class is applied instead of
+		// publishing defaults for the rest of its life.
+		b.recordMountOptions(ctx, dsPath, p)
 		return b.volumeFor(r.ID, r.CapacityBytes, name, p), nil
 	}
 
@@ -391,6 +400,11 @@ func (b *Backend) Create(ctx context.Context, r backend.CreateRequest) (*backend
 	if err := b.ensureShare(ctx, mountpoint, name); err != nil {
 		return nil, rollback(err)
 	}
+	// Recorded because ControllerPublishVolume is told a volume id and a node,
+	// never the StorageClass, and it runs on a different leader from this call.
+	// Without this the operator's ownership and modes are replaced by defaults
+	// at publish and a non-root pod cannot write to its own volume.
+	b.recordMountOptions(ctx, dsPath, p)
 	return b.volumeFor(r.ID, r.CapacityBytes, name, p), nil
 }
 
@@ -697,15 +711,29 @@ func (b *Backend) PublishContext(ctx context.Context, id volume.ID) (map[string]
 			"no SMB server address is known for %s: set the %q StorageClass parameter", id, ParamServer)
 	}
 
+	// The dataset, not the cache. CreateVolume runs on the external-provisioner's
+	// leader and this runs on the external-attacher's — separate elections, so on
+	// a multi-replica deployment they are different pods and the cache is never
+	// warm here. Measured on two replicas: a class asking for fileMode 0777
+	// mounted 0755 root:root, and a non-root pod could not write to its own
+	// volume. The cached value is still preferred when present, because the
+	// replica that created the volume has the operator's exact request.
+	mount := volume.SMBMount{UID: p.uid, GID: p.gid, FileMode: p.fileMode, DirMode: p.dirMode}
+	if !p.recalled {
+		if recorded, ok, dErr := volume.DecodeSMBMount(ds.LocalProperty(volume.SMBMountProperty)); dErr == nil && ok {
+			mount = recorded
+		}
+	}
+
 	out := map[string]string{
 		"server":   server,
 		"share":    name, // the SMB share NAME, not a filesystem path
 		"protocol": Protocol,
 		// SMB ownership is mount-time: the cifs client maps these itself.
-		"uid":      strconv.Itoa(p.uid),
-		"gid":      strconv.Itoa(p.gid),
-		"fileMode": p.fileMode,
-		"dirMode":  p.dirMode,
+		"uid":      strconv.Itoa(mount.UID),
+		"gid":      strconv.Itoa(mount.GID),
+		"fileMode": mount.FileMode,
+		"dirMode":  mount.DirMode,
 	}
 	return out, nil
 }
@@ -737,6 +765,33 @@ func (b *Backend) remember(id volume.ID, p params) {
 // recall returns the parameters seen at Create time, or the defaults when this
 // process never saw them — a controller that restarted must still be able to
 // publish a volume it did not create.
+// recall returns the parameters this process saw at create.
+//
+// params.recalled says whether they are the operator's or merely the defaults,
+// which the caller needs: the defaults are indistinguishable from a real class
+// that happens to match them, and publishing them over a recorded value would
+// undo the operator's choice.
+// recordMountOptions stores the cifs ownership and modes on the dataset.
+//
+// A failure is logged and not returned: the volume exists and is usable, and
+// refusing a provisioned volume over a diagnostic-shaped write would be worse
+// than publishing the defaults once. The next publish re-reads it.
+func (b *Backend) recordMountOptions(ctx context.Context, dsPath string, p params) {
+	encoded, err := volume.EncodeSMBMount(volume.SMBMount{
+		UID: p.uid, GID: p.gid, FileMode: p.fileMode, DirMode: p.dirMode,
+	})
+	if err != nil {
+		obs.Logger(ctx).Warn("could not encode the smb mount options",
+			"dataset", dsPath, "error", obs.Redact(err.Error()))
+		return
+	}
+	if err := b.c.SetUserProperty(ctx, dsPath, volume.SMBMountProperty, encoded); err != nil {
+		obs.Logger(ctx).Warn("could not record the smb mount options; a publish from another "+
+			"controller replica will fall back to the defaults",
+			"dataset", dsPath, "error", obs.Redact(err.Error()))
+	}
+}
+
 func (b *Backend) recall(id volume.ID) params {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -744,6 +799,7 @@ func (b *Backend) recall(id volume.ID) params {
 	if !ok {
 		return defaultParams()
 	}
+	p.recalled = true
 	return p
 }
 
