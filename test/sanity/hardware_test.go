@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	csipb "github.com/container-storage-interface/spec/lib/go/csi"
@@ -15,7 +16,9 @@ import (
 	"github.com/piwi3910/truenas-csi/internal/server"
 	"github.com/piwi3910/truenas-csi/internal/volume"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 )
 
 // TestCSISanityAgainstHardware runs the same conformance suite as TestCSISanity
@@ -268,5 +271,113 @@ func TestCrashMidCloneResumesAgainstHardware(t *testing.T) {
 	if _, err := ctrl.DeleteVolume(ctx, &csipb.DeleteVolumeRequest{
 		VolumeId: out.GetVolume().GetVolumeId()}); err != nil {
 		t.Errorf("resumed clone could not be deleted: %v", err)
+	}
+}
+
+// TestDependentCloneGuardAgainstHardware proves the delete guards actually fire
+// against the appliance.
+//
+// Both were dead for as long as they read origin's display form, and both
+// passed their unit tests the whole time because the fakes echoed the origin
+// back verbatim. A guard that only ever runs against a stand-in proves nothing,
+// so this one runs against real ZFS: a real clone of a real snapshot, and the
+// refusal has to name it.
+func TestDependentCloneGuardAgainstHardware(t *testing.T) {
+	endpoint := os.Getenv("TRUENAS_ENDPOINT")
+	if endpoint == "" {
+		t.Skip("TRUENAS_ENDPOINT is not set: skipping the dependent-clone guard " +
+			"check against real hardware")
+	}
+	get := func(k, def string) string {
+		if v := os.Getenv(k); v != "" {
+			return v
+		}
+		return def
+	}
+	pool := get("TRUENAS_POOL", "Pool0")
+	parent := get("TRUENAS_SANITY_PARENT", "csi-sanity")
+	cfg := &config.Config{NodeID: "guard-hw", Backends: map[string]config.Backend{
+		"nas1": {
+			Name: "nas1", Endpoint: endpoint,
+			Username:           get("TRUENAS_USERNAME", "truenas_admin"),
+			APIKey:             os.Getenv("TRUENAS_API_KEY"),
+			Pool:               pool,
+			ParentDataset:      parent,
+			InsecureSkipVerify: os.Getenv("TRUENAS_INSECURE") == "true",
+		},
+	}}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("invalid appliance configuration: %v", err)
+	}
+	ctx := context.Background()
+	reg, err := backend.NewRegistry(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reg.Close() })
+
+	ctrl := csi.NewController(reg, cfg)
+	params := map[string]string{
+		"backend": "nas1", "protocol": "nfs",
+		"server": get("TRUENAS_DATA_ADDR", "192.168.10.253"),
+	}
+	caps := []*csipb.VolumeCapability{{
+		AccessType: &csipb.VolumeCapability_Mount{Mount: &csipb.VolumeCapability_MountVolume{}},
+		AccessMode: &csipb.VolumeCapability_AccessMode{
+			Mode: csipb.VolumeCapability_AccessMode_MULTI_NODE_MULTI_WRITER},
+	}}
+	create := func(name string, src *csipb.VolumeContentSource) string {
+		t.Helper()
+		out, err := ctrl.CreateVolume(ctx, &csipb.CreateVolumeRequest{
+			Name: name, Parameters: params, VolumeCapabilities: caps,
+			CapacityRange:       &csipb.CapacityRange{RequiredBytes: 1 << 30},
+			VolumeContentSource: src,
+		})
+		if err != nil {
+			t.Fatalf("create %s: %v", name, err)
+		}
+		id := out.GetVolume().GetVolumeId()
+		t.Cleanup(func() {
+			_, _ = ctrl.DeleteVolume(ctx, &csipb.DeleteVolumeRequest{VolumeId: id})
+		})
+		return id
+	}
+
+	srcID := create("guard-src", nil)
+	snap, err := ctrl.CreateSnapshot(ctx, &csipb.CreateSnapshotRequest{
+		SourceVolumeId: srcID, Name: "guard-snap",
+	})
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	snapID := snap.GetSnapshot().GetSnapshotId()
+	t.Cleanup(func() {
+		_, _ = ctrl.DeleteSnapshot(ctx, &csipb.DeleteSnapshotRequest{SnapshotId: snapID})
+	})
+
+	cloneID := create("guard-clone", &csipb.VolumeContentSource{
+		Type: &csipb.VolumeContentSource_Snapshot{
+			Snapshot: &csipb.VolumeContentSource_SnapshotSource{SnapshotId: snapID},
+		},
+	})
+
+	// The snapshot now has a real dependent clone. The guard must refuse by
+	// name, rather than letting the middleware refuse with a raw EINVAL.
+	_, err = ctrl.DeleteSnapshot(ctx, &csipb.DeleteSnapshotRequest{SnapshotId: snapID})
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("DeleteSnapshot with a dependent clone: want FailedPrecondition, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "guard-clone") {
+		t.Errorf("the refusal must name the volume blocking the delete, got: %v", err)
+	}
+
+	// And once the clone is gone the snapshot deletes cleanly, which is what
+	// proves the guard was reading a real dependency rather than refusing
+	// everything.
+	if _, err := ctrl.DeleteVolume(ctx, &csipb.DeleteVolumeRequest{VolumeId: cloneID}); err != nil {
+		t.Fatalf("delete the clone: %v", err)
+	}
+	if _, err := ctrl.DeleteSnapshot(ctx, &csipb.DeleteSnapshotRequest{SnapshotId: snapID}); err != nil {
+		t.Fatalf("delete the snapshot once its clone is gone: %v", err)
 	}
 }
