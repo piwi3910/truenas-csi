@@ -393,3 +393,103 @@ func TestDependentCloneGuardAgainstHardware(t *testing.T) {
 		t.Fatalf("delete the snapshot once its clone is gone: %v", err)
 	}
 }
+
+// TestModifyVolumeAppliesALargeRecordsizeAgainstHardware.
+//
+// recordsize is the one modifiable property pool.dataset.update declares no
+// enum for, so the driver states the accepted set itself — and it stopped at
+// 1M while the appliance accepts every power of two up to 16M. This drives the
+// widened set through ControllerModifyVolume against a real appliance, because
+// a unit test can only prove the driver agrees with itself.
+//
+// It runs here rather than through Kubernetes because VolumeAttributesClass
+// cannot work on 1.34+: no released csi-provisioner asks for storage.k8s.io/v1
+// (see docs/volume-attributes.md), so the sidecar path is untestable on this
+// cluster and the RPC has to be called directly.
+func TestModifyVolumeAppliesALargeRecordsizeAgainstHardware(t *testing.T) {
+	endpoint := os.Getenv("TRUENAS_ENDPOINT")
+	if endpoint == "" {
+		t.Skip("TRUENAS_ENDPOINT is not set: skipping the recordsize check against " +
+			"real hardware")
+	}
+	get := func(k, def string) string {
+		if v := os.Getenv(k); v != "" {
+			return v
+		}
+		return def
+	}
+	pool := get("TRUENAS_POOL", "Pool0")
+	parent := get("TRUENAS_SANITY_PARENT", "csi-sanity")
+	cfg := &config.Config{NodeID: "modify-hw", Backends: map[string]config.Backend{
+		"nas1": {
+			Name: "nas1", Endpoint: endpoint,
+			Username:           get("TRUENAS_USERNAME", "truenas_admin"),
+			APIKey:             os.Getenv("TRUENAS_API_KEY"),
+			Pool:               pool,
+			ParentDataset:      parent,
+			InsecureSkipVerify: os.Getenv("TRUENAS_INSECURE") == "true",
+		},
+	}}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("invalid appliance configuration: %v", err)
+	}
+	ctx := context.Background()
+	reg, err := backend.NewRegistry(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reg.Close() })
+
+	ctrl := csi.NewController(reg, cfg)
+	params := map[string]string{
+		"backend": "nas1", "protocol": "nfs",
+		"server": get("TRUENAS_DATA_ADDR", "192.168.10.253"),
+	}
+	out, err := ctrl.CreateVolume(ctx, &csipb.CreateVolumeRequest{
+		Name: "recordsize-hw", Parameters: params,
+		VolumeCapabilities: []*csipb.VolumeCapability{{
+			AccessType: &csipb.VolumeCapability_Mount{Mount: &csipb.VolumeCapability_MountVolume{}},
+			AccessMode: &csipb.VolumeCapability_AccessMode{
+				Mode: csipb.VolumeCapability_AccessMode_MULTI_NODE_MULTI_WRITER},
+		}},
+		CapacityRange: &csipb.CapacityRange{RequiredBytes: 1 << 30},
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	id := out.GetVolume().GetVolumeId()
+	t.Cleanup(func() {
+		_, _ = ctrl.DeleteVolume(ctx, &csipb.DeleteVolumeRequest{VolumeId: id})
+	})
+
+	api, err := reg.Client(ctx, "nas1")
+	if err != nil {
+		t.Fatalf("client: %v", err)
+	}
+	dsPath := pool + "/" + parent + "/recordsize-hw"
+
+	// Every size the appliance was measured to accept, including the four the
+	// driver used to refuse.
+	for _, size := range []string{"1M", "2M", "4M", "8M", "16M"} {
+		if _, err := ctrl.ControllerModifyVolume(ctx, &csipb.ControllerModifyVolumeRequest{
+			VolumeId: id, MutableParameters: map[string]string{"recordsize": size},
+		}); err != nil {
+			t.Fatalf("ControllerModifyVolume recordsize=%s: %v", size, err)
+		}
+		ds, qErr := api.DatasetQuery(ctx, dsPath)
+		if qErr != nil || ds == nil {
+			t.Fatalf("query %s: %v", dsPath, qErr)
+		}
+		if got, _ := ds.ZFSProperty("recordsize"); !strings.EqualFold(got.Value, size) {
+			t.Errorf("recordsize on the appliance = %q, want %q", got.Value, size)
+		}
+	}
+
+	// And one the appliance really does refuse, so this is not just asserting
+	// that everything is accepted.
+	if _, err := ctrl.ControllerModifyVolume(ctx, &csipb.ControllerModifyVolumeRequest{
+		VolumeId: id, MutableParameters: map[string]string{"recordsize": "32M"},
+	}); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("recordsize=32M: want InvalidArgument, got %v", err)
+	}
+}
