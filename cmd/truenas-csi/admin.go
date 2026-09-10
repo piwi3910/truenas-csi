@@ -6,8 +6,11 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"html"
 	"io"
 	"os"
+	"regexp"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -194,11 +197,14 @@ func humanBytes(n int64) string {
 func poolTable(w *tabwriter.Writer, backend string, v any) {
 	pools, _ := v.([]pooladmin.Pool)
 	_, _ = fmt.Fprintf(w, "\n%s — pools\n", backend)
-	_, _ = fmt.Fprintln(w, "NAME\tSTATUS\tHEALTHY\tSIZE\tFREE\tUSED%\tFRAG%\tSCRUB")
+	_, _ = fmt.Fprintln(w, "NAME\tSTATUS\tHEALTHY\tSIZE\tFREE\tUSED%\tFRAG%\tSCRUB\tSCRUB ERRORS")
 	for _, p := range pools {
-		_, _ = fmt.Fprintf(w, "%s\t%s\t%t\t%s\t%s\t%.0f\t%.0f\t%s\n",
+		// The error count, not just the state. A scrub that found errors still
+		// finishes, so printing FINISHED alone reads as reassurance for the one
+		// case an operator most needs to see — and the count was already read.
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%t\t%s\t%s\t%.0f\t%.0f\t%s\t%d\n",
 			p.Name, p.Status, p.Healthy, humanBytes(p.SizeBytes), humanBytes(p.FreeBytes),
-			p.UsedPercent, p.FragmentationPercent, p.Scrub.State)
+			p.UsedPercent, p.FragmentationPercent, p.Scrub.State, p.Scrub.Errors)
 	}
 }
 
@@ -240,6 +246,29 @@ func alertTable(w *tabwriter.Writer, backend string, v any) {
 			continue
 		}
 		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
-			a.Level, a.Class, a.Time.Format(time.RFC3339), a.Formatted)
+			a.Level, a.Class, a.Time.Format(time.RFC3339), plainText(a.Formatted))
 	}
 }
+
+// plainText renders an appliance alert for a terminal.
+//
+// TrueNAS writes alert text as HTML for its own web UI — 25.10's REST
+// deprecation notice arrives with <br> line breaks and an <a href> to the
+// migration guide — and printing it verbatim into a tab-separated table put
+// raw markup in front of an operator and broke the column alignment with
+// embedded newlines. Observed against a live appliance.
+//
+// Deliberately not a general HTML parser: this turns the handful of constructs
+// the middleware actually emits into text and leaves anything else alone,
+// because a half-understood tag is better shown than silently deleted.
+func plainText(s string) string {
+	s = brTag.ReplaceAllString(s, " ")
+	s = anchorTag.ReplaceAllString(s, "")
+	s = html.UnescapeString(s)
+	return strings.Join(strings.Fields(s), " ")
+}
+
+var (
+	brTag     = regexp.MustCompile(`(?i)<br\s*/?>`)
+	anchorTag = regexp.MustCompile(`(?i)</?a\b[^>]*>`)
+)
