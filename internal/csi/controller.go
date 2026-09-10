@@ -266,6 +266,7 @@ func (c *controller) CreateVolume(ctx context.Context, req *csipb.CreateVolumeRe
 	}
 
 	cr := backend.CreateRequest{ID: id, CapacityBytes: size, Params: req.GetParameters()}
+	wantFS := blockFilesystemFor(id.Protocol, req.GetVolumeCapabilities())
 	if src := req.GetVolumeContentSource(); src != nil {
 		if s := src.GetSnapshot(); s != nil {
 			if err := c.requireSnapshotExists(ctx, s.GetSnapshotId()); err != nil {
@@ -282,6 +283,11 @@ func (c *controller) CreateVolume(ctx context.Context, req *csipb.CreateVolumeRe
 			}
 			if err := requireRestorableInto(id.Protocol,
 				c.snapshotSourceType(ctx, s.GetSnapshotId()), s.GetSnapshotId()); err != nil {
+				return nil, err
+			}
+			srcDataset, _, _ := strings.Cut(zfsID, "@")
+			if err := requireFilesystemMatches(wantFS,
+				c.recordedFilesystem(ctx, srcBackend, srcDataset), s.GetSnapshotId()); err != nil {
 				return nil, err
 			}
 			// The backend talks to ZFS, which knows nothing of the backend
@@ -313,6 +319,11 @@ func (c *controller) CreateVolume(ctx context.Context, req *csipb.CreateVolumeRe
 				datasetTypeFor(srcID.Protocol), v.GetVolumeId()); err != nil {
 				return nil, err
 			}
+			if err := requireFilesystemMatches(wantFS,
+				c.recordedFilesystem(ctx, srcID.Backend, srcID.DatasetPath()),
+				v.GetVolumeId()); err != nil {
+				return nil, err
+			}
 			if err := c.requireVolumeExists(ctx, srcID); err != nil {
 				return nil, err
 			}
@@ -333,6 +344,7 @@ func (c *controller) CreateVolume(ctx context.Context, req *csipb.CreateVolumeRe
 		return nil, toStatus(err)
 	}
 	obs.Logger(ctx).Info("volume created", "capacity", vol.CapacityBytes, "protocol", id.Protocol)
+	c.recordFilesystem(ctx, id, wantFS)
 
 	// Applied after the volume exists, because the properties are set on the
 	// dataset and some of them depend on whether it turned out to be a
@@ -945,6 +957,85 @@ func (c *controller) snapshotSourceType(ctx context.Context, snapshotID string) 
 		return ""
 	}
 	return ds.Type
+}
+
+// blockFilesystemFor is the filesystem a block volume's bytes will hold: what
+// the CO asked for, or ext4, which is what the node formats when nobody says.
+// It is "" for the file protocols, which serve a filesystem the appliance owns
+// and where the question does not arise.
+func blockFilesystemFor(protocol string, caps []*csipb.VolumeCapability) string {
+	if datasetTypeFor(protocol) != "VOLUME" {
+		return ""
+	}
+	for _, c := range caps {
+		if c.GetBlock() != nil {
+			// Raw block: the pod owns the bytes and may put anything there, so
+			// the driver has no filesystem to claim.
+			return ""
+		}
+	}
+	if fs := capabilityFSType(caps); fs != "" {
+		return fs
+	}
+	return "ext4"
+}
+
+// recordFilesystem remembers what a block volume was formatted with, so a later
+// clone of it can be refused when the destination asks for something else.
+//
+// A failure is logged, not fatal. The property is an aid to diagnosing a future
+// clone; losing it costs the check on that one volume, and failing CreateVolume
+// over it would destroy a volume that is otherwise perfectly good.
+func (c *controller) recordFilesystem(ctx context.Context, id volume.ID, fs string) {
+	if fs == "" {
+		return
+	}
+	cl, err := c.reg.Client(ctx, id.Backend)
+	if err != nil {
+		return
+	}
+	if err := cl.SetUserProperty(ctx, id.DatasetPath(), volume.FSTypeProperty, fs); err != nil {
+		obs.Logger(ctx).Warn("could not record the volume's filesystem; a later clone of it "+
+			"cannot be checked against the destination StorageClass",
+			"filesystem", fs, "error", err)
+	}
+}
+
+// recordedFilesystem reads back what a dataset was formatted with, or "" when
+// the driver never recorded it — every volume created before this property
+// existed, which must not be refused for a fact nobody wrote down.
+func (c *controller) recordedFilesystem(ctx context.Context, backendName, dataset string) string {
+	cl, err := c.reg.Client(ctx, backendName)
+	if err != nil {
+		return ""
+	}
+	ds, err := cl.DatasetQuery(ctx, dataset)
+	if err != nil || ds == nil {
+		return ""
+	}
+	// LOCAL, not inherited: a clone gets its own value the moment it is
+	// created, and an inherited one would be the parent dataset's, which is
+	// about a different volume entirely.
+	return ds.LocalProperty(volume.FSTypeProperty)
+}
+
+// requireFilesystemMatches refuses a clone whose destination expects a
+// filesystem the source's bytes do not hold.
+//
+// The refusal has to happen HERE. A ZFS clone copies bytes; the filesystem
+// inside them comes from the source and no StorageClass parameter can change
+// it. Accepting the request creates a real dataset, binds the claim, attaches
+// the volume, and hands the user a mount(8) error about a bad superblock that
+// names neither the snapshot nor either filesystem.
+func requireFilesystemMatches(want, got, source string) error {
+	if want == "" || got == "" || want == got {
+		return nil
+	}
+	return status.Errorf(codes.InvalidArgument,
+		"source %q holds an %s filesystem and a ZFS clone copies it verbatim, so the volume "+
+			"cannot be %s as this StorageClass asks: restore it into a StorageClass whose "+
+			"fsType is %s, or create an empty volume and copy the data in",
+		source, got, want, got)
 }
 
 // datasetTypeFor is the ZFS dataset type a protocol serves: a zvol for the

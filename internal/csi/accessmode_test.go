@@ -357,3 +357,78 @@ func TestUnsupportedFilesystemIsRefusedAtCreateVolume(t *testing.T) {
 		t.Errorf("the message must name the filesystem the user asked for; got %q", err)
 	}
 }
+
+// TestCloneIntoADifferentFilesystemIsRefused covers the one thing a StorageClass
+// parameter cannot change about a ZFS clone.
+//
+// A clone copies bytes. The filesystem in those bytes comes from the source, so
+// restoring an ext4 snapshot into an xfs StorageClass produces a volume that
+// attaches and then never mounts. Measured on a real cluster: the pod sat on
+// "mount -t xfs ...: wrong fs type, bad option, bad superblock on /dev/sdh",
+// which names neither the snapshot, nor ext4, nor xfs.
+func TestCloneIntoADifferentFilesystemIsRefused(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		want, got  string
+		wantRefuse bool
+	}{
+		{"ext4 source into an xfs class", "xfs", "ext4", true},
+		{"xfs source into an ext4 class", "ext4", "xfs", true},
+		{"matching filesystems", "xfs", "xfs", false},
+		{"a volume created before the driver recorded this", "xfs", "", false},
+		{"a file protocol, which has no filesystem of its own", "", "ext4", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := requireFilesystemMatches(tc.want, tc.got, "nas1/Pool0/k8s/pvc-src@snap")
+			if tc.wantRefuse {
+				if err == nil {
+					t.Fatal("the clone was accepted; the claim would bind and the pod would " +
+						"then fail to mount for ever with a bad-superblock error")
+				}
+				if code := status.Code(err); code != codes.InvalidArgument {
+					t.Errorf("want InvalidArgument, got %v", code)
+				}
+				for _, want := range []string{tc.want, tc.got} {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("the message must name both filesystems; %q is missing from %q", want, err)
+					}
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("refused a clone that is fine: %v", err)
+			}
+		})
+	}
+}
+
+// TestBlockFilesystemForNamesWhatTheNodeWillActuallyFormat pins the default. A
+// class that names no fsType still gets ext4 on the node, so recording nothing
+// would leave the commonest case — an ext4 volume cloned into an xfs class —
+// unchecked, which is the exact case that was measured failing.
+func TestBlockFilesystemForNamesWhatTheNodeWillActuallyFormat(t *testing.T) {
+	mount := func(fs string) []*csipb.VolumeCapability {
+		return []*csipb.VolumeCapability{{AccessType: &csipb.VolumeCapability_Mount{
+			Mount: &csipb.VolumeCapability_MountVolume{FsType: fs}}}}
+	}
+	block := []*csipb.VolumeCapability{{AccessType: &csipb.VolumeCapability_Block{
+		Block: &csipb.VolumeCapability_BlockVolume{}}}}
+
+	for _, tc := range []struct {
+		name, protocol string
+		caps           []*csipb.VolumeCapability
+		want           string
+	}{
+		{"iscsi with no fsType formats ext4", "iscsi", mount(""), "ext4"},
+		{"iscsi with xfs", "iscsi", mount("xfs"), "xfs"},
+		{"raw block has no filesystem the driver owns", "iscsi", block, ""},
+		{"nfs serves a filesystem the appliance owns", "nfs", mount("xfs"), ""},
+		{"smb likewise", "smb", mount(""), ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := blockFilesystemFor(tc.protocol, tc.caps); got != tc.want {
+				t.Errorf("blockFilesystemFor(%q) = %q, want %q", tc.protocol, got, tc.want)
+			}
+		})
+	}
+}

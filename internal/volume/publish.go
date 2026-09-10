@@ -67,6 +67,20 @@ const (
 	// because the encoded ledger next door already established JSON in a user
 	// property as this driver's way of storing a small structured value.
 	SMBMountProperty = "io.truenas.csi:smbmount"
+
+	// FSTypeProperty records the filesystem a block volume was formatted with.
+	//
+	// A ZFS clone is a copy of bytes, so it carries the SOURCE's filesystem no
+	// matter what the destination StorageClass asks for. Nothing else on the
+	// appliance knows what those bytes are: to ZFS a zvol is a zvol. Without
+	// this the driver happily restored an ext4 snapshot into an xfs class, the
+	// claim bound, the volume attached, and the pod then sat for ever on
+	//
+	//   mount -t xfs ...: wrong fs type, bad option, bad superblock
+	//
+	// which never mentions the snapshot, the source, or ext4. Measured on a
+	// real cluster.
+	FSTypeProperty = "io.truenas.csi:fstype"
 )
 
 // maxGrantsBytes bounds the encoded ledger: the largest value the MIDDLEWARE
