@@ -235,6 +235,20 @@ func (n *nas) install(s *fake.Server) {
 // mount real filesystems through host binaries, which a unit-test host neither
 // has nor should be asked to provide.
 func TestCSISanity(t *testing.T) {
+	// csi-sanity drives ginkgo, and ginkgo permits ONE RunSpecs per process.
+	// This suite and TestCSISanityAgainstHardware both call it, so with an
+	// appliance configured `go test ./test/sanity/` died half way through with
+	// "It looks like you are calling RunSpecs more than once" — the whole
+	// package could not be run as a whole against hardware at all, and the
+	// error named ginkgo rather than the cause.
+	//
+	// The hardware suite is the stronger of the two (it runs the same specs
+	// against the real middleware), so it is the one that runs when both could.
+	if os.Getenv("TRUENAS_ENDPOINT") != "" {
+		t.Skip("TRUENAS_ENDPOINT is set: TestCSISanityAgainstHardware runs these " +
+			"same specs against the appliance, and ginkgo allows only one " +
+			"RunSpecs per process")
+	}
 	s := fake.Start(t, fake.Options{})
 	newNAS().install(s)
 
