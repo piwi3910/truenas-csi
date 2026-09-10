@@ -103,6 +103,9 @@ spec:
             - name: metrics
               containerPort: 9090
               hostPort: 0
+            # See the controller's copy: 9808 belongs to the liveness-probe
+            # sidecar, and is named here so the driver container's probe can
+            # resolve it.
             - name: healthz
               containerPort: 9808
               hostPort: 0

@@ -18,7 +18,6 @@ logLevel: info
 # below; the startup format is text.
 logFormat: text
 metricsAddr: ":9090"
-healthAddr: ":9808"
 
 # dynamicLogging mounts logLevel and logFormat as a ConfigMap that the driver
 # re-reads live, so verbosity can be raised during an incident without a
@@ -228,7 +227,7 @@ backends: {}
 # These fields require a RESTART and are refused at runtime, loudly:
 #   endpoint, flavour, pool, parentDataset, the set of backend names,
 #   reservedBytes, reservedPercent, namespaceQuotas, deleteProtection,
-#   rateLimit, breaker settings, metricsAddr, healthAddr, metricsInterval.
+#   rateLimit, breaker settings, metricsAddr, metricsInterval.
 #
 # They are identity or startup wiring: every PersistentVolume records which
 # appliance and dataset it lives on, so swapping one in place would silently

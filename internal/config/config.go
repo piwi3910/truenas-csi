@@ -103,7 +103,6 @@ type Config struct {
 	NodeID      string             `yaml:"nodeID"`
 	LogLevel    string             `yaml:"logLevel"`
 	MetricsAddr string             `yaml:"metricsAddr"`
-	HealthAddr  string             `yaml:"healthAddr"`
 
 	// MetricsInterval is how often the controller polls each appliance for
 	// array-level metrics, as a Go duration ("60s", "5m"). Empty means the
@@ -150,9 +149,6 @@ func Load(path string) (*Config, error) {
 	}
 	if c.MetricsAddr == "" {
 		c.MetricsAddr = ":9090"
-	}
-	if c.HealthAddr == "" {
-		c.HealthAddr = ":9808"
 	}
 	if c.MetricsInterval != "" {
 		d, dErr := time.ParseDuration(c.MetricsInterval)

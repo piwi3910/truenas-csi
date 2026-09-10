@@ -115,7 +115,7 @@ backends:
 	if c.Backends["nas1"].Name != "nas1" {
 		t.Errorf("backend name should default to its map key, got %q", c.Backends["nas1"].Name)
 	}
-	if c.LogLevel != "info" || c.MetricsAddr != ":9090" || c.HealthAddr != ":9808" {
+	if c.LogLevel != "info" || c.MetricsAddr != ":9090" {
 		t.Errorf("defaults not applied: %+v", c)
 	}
 

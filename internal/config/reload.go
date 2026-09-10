@@ -16,7 +16,7 @@ import (
 //
 //	reloadable   username, apiKey, caCert, insecureSkipVerify
 //	restart      endpoint, flavour, pool, parentDataset, the set of backend
-//	             names, nodeID, metricsAddr, healthAddr, metricsInterval,
+//	             names, nodeID, metricsAddr, metricsInterval,
 //	             reservedBytes, reservedPercent, namespaceQuotas,
 //	             deleteProtection, rate limit and breaker settings
 //
@@ -62,7 +62,6 @@ func CheckReloadable(cur, next *Config) error {
 
 	add("", "nodeID", cur.NodeID != next.NodeID)
 	add("", "metricsAddr", cur.MetricsAddr != next.MetricsAddr)
-	add("", "healthAddr", cur.HealthAddr != next.HealthAddr)
 	add("", "metricsInterval", cur.MetricsPollInterval() != next.MetricsPollInterval())
 
 	for name, cb := range cur.Backends {

@@ -140,6 +140,13 @@ spec:
           ports:
             - name: metrics
               containerPort: 9090
+            # 9808 is the LIVENESS-PROBE SIDECAR's listener, not the driver's.
+            # It is declared here because a probe resolves a port NAME against
+            # its own container, and the probe below has to live on the driver
+            # container for the kubelet to restart the right one. Containers in
+            # a pod share a network namespace, so the name resolves to the
+            # sidecar's socket. The driver's own /healthz and /readyz are on the
+            # metrics port.
             - name: healthz
               containerPort: 9808
             {{- if .Values.podmon.enabled }}
