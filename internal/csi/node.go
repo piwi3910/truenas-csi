@@ -22,7 +22,9 @@ type nodeServer struct {
 
 // NewNode adapts the node data path to the CSI gRPC surface.
 func NewNode(n *node.Node) csipb.NodeServer {
-	return &nodeServer{n: n, published: newPublishedTargets()}
+	s := &nodeServer{n: n, published: newPublishedTargets()}
+	s.published.recover(n.PublishedTargets())
+	return s
 }
 
 // publishedTargets records where each volume is currently published on THIS
@@ -34,12 +36,16 @@ func NewNode(n *node.Node) csipb.NodeServer {
 // Advertising SINGLE_NODE_MULTI_WRITER without this would be claiming an
 // enforcement nobody performs.
 //
-// The record is in memory, and deliberately so: it describes mounts this
-// process made, and it is rebuilt by the kubelet's own reconciliation, which
-// re-issues NodePublishVolume for every mounted volume after a plugin restart.
-// A file would have to be found again from a NodeUnpublishVolume request that
-// carries nothing but a volume id and a target path, which is exactly the
-// information this map is keyed by.
+// The record is in memory, and it is rebuilt at startup from the publish
+// records on disk — NOT by the kubelet.
+//
+// It used to say the kubelet re-issues NodePublishVolume for every mounted
+// volume after a plugin restart. It does not. Measured on a real cluster: a
+// node plugin restarted while a volume was mounted and its pod running received
+// zero NodeStageVolume and zero NodePublishVolume calls, only
+// NodeGetVolumeStats, until the pod was deleted. So this map was simply empty
+// after every restart, and the enforcement it exists for was silently gone for
+// as long as those volumes lived.
 type publishedTargets struct {
 	mu sync.Mutex
 	// byVolume maps a volume id to the access mode each target path was
@@ -49,6 +55,22 @@ type publishedTargets struct {
 
 func newPublishedTargets() *publishedTargets {
 	return &publishedTargets{byVolume: map[string]map[string]csipb.VolumeCapability_AccessMode_Mode{}}
+}
+
+// recover re-reserves publications this node made before the process started.
+//
+// The reservations come from what is actually MOUNTED, so a publication the
+// kubelet has since torn down is not resurrected — which matters, because a
+// reservation that outlives its mount refuses a legitimate publish for ever.
+func (p *publishedTargets) recover(targets []node.PublishedTarget) {
+	for _, t := range targets {
+		p.mu.Lock()
+		if p.byVolume[t.VolumeID] == nil {
+			p.byVolume[t.VolumeID] = map[string]csipb.VolumeCapability_AccessMode_Mode{}
+		}
+		p.byVolume[t.VolumeID][t.TargetPath] = csipb.VolumeCapability_AccessMode_Mode(t.AccessMode)
+		p.mu.Unlock()
+	}
 }
 
 // reserve records a publication, or names the target path that forbids it.
@@ -267,7 +289,8 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csipb.NodePubli
 	}
 	// Also record it against the target path: NodeExpandVolume is called with
 	// the published volume path and may carry no staging path at all.
-	if err := node.WritePublishRecord(req.GetTargetPath(), req.GetVolumeId(), pc); err != nil {
+	if err := node.WritePublishRecord(req.GetTargetPath(), req.GetVolumeId(),
+		int32(req.GetVolumeCapability().GetAccessMode().GetMode()), pc); err != nil {
 		obs.Logger(ctx).Warn("could not record publish context at the target path",
 			"error", obs.Redact(err.Error()))
 	}

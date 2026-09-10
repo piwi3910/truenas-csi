@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	csipb "github.com/container-storage-interface/spec/lib/go/csi"
+	"github.com/piwi3910/truenas-csi/internal/node"
 )
 
 // TestSingleWriterPublicationsAreExclusive.
@@ -93,5 +94,48 @@ func TestSingleWriterPublicationsAreExclusive(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestSingleWriterSurvivesARestartOfTheNodePlugin covers the enforcement that
+// used to disappear without a trace.
+//
+// The reservation map is what makes SINGLE_NODE_SINGLE_WRITER enforceable, and
+// it lives in memory. It used to be justified by the claim that the kubelet
+// re-issues NodePublishVolume for every mounted volume after a plugin restart.
+// It does not: measured on a real cluster, a plugin restarted while a volume
+// was mounted and its pod running received zero NodeStageVolume and zero
+// NodePublishVolume calls, only NodeGetVolumeStats. So after every restart the
+// map was empty and the driver granted the second writer it advertises that it
+// refuses.
+func TestSingleWriterSurvivesARestartOfTheNodePlugin(t *testing.T) {
+	const (
+		volumeID = "nas1/iscsi/Pool0/k8s/pvc-a"
+		first    = "/var/lib/kubelet/pods/uid-1/volumes/kubernetes.io~csi/pvc-a/mount"
+		second   = "/var/lib/kubelet/pods/uid-2/volumes/kubernetes.io~csi/pvc-a/mount"
+	)
+	p := newPublishedTargets()
+	// What the previous process had published, as the records beside the
+	// still-mounted target paths describe it.
+	p.recover([]node.PublishedTarget{{
+		VolumeID:   volumeID,
+		TargetPath: first,
+		AccessMode: int32(csipb.VolumeCapability_AccessMode_SINGLE_NODE_SINGLE_WRITER),
+	}})
+
+	if other, ok := p.reserve(volumeID, second,
+		csipb.VolumeCapability_AccessMode_SINGLE_NODE_SINGLE_WRITER); ok {
+		t.Fatal("a second single-writer publication was granted; the volume is already " +
+			"published elsewhere on this node and the driver advertises that it refuses this")
+	} else if other != first {
+		t.Errorf("the refusal names %q, want the publication that forbids it, %q", other, first)
+	}
+
+	// Republishing the SAME target must still succeed: the CO retries
+	// NodePublishVolume freely and the call is required to be idempotent.
+	if _, ok := p.reserve(volumeID, first,
+		csipb.VolumeCapability_AccessMode_SINGLE_NODE_SINGLE_WRITER); !ok {
+		t.Error("refused a republish of the target this node had already published, " +
+			"which the CO does routinely and which must be a no-op")
 	}
 }

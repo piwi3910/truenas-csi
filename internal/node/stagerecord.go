@@ -37,7 +37,11 @@ type stageRecord struct {
 	// depends on that is a driver that breaks on a CO which does not — and
 	// silently, by monitoring a pod's mount that vanishes with the pod instead
 	// of the staging mount that lives as long as the volume.
-	Kind           string            `json:"kind,omitempty"`
+	Kind string `json:"kind,omitempty"`
+	// AccessMode is the CSI access-mode enum the volume was published under.
+	// Only a publish record carries it, and it is what lets the single-writer
+	// reservation be rebuilt after a restart.
+	AccessMode     int32             `json:"accessMode,omitempty"`
 	PublishContext map[string]string `json:"publishContext,omitempty"`
 }
 
@@ -68,9 +72,39 @@ func WriteStageRecord(path, volumeID string, pc map[string]string) error {
 // WritePublishRecord remembers the same context beside a POD's target path,
 // which NodeExpandVolume is called with and which may carry no staging path.
 // It disappears with the pod.
-func WritePublishRecord(path, volumeID string, pc map[string]string) error {
+func WritePublishRecord(path, volumeID string, accessMode int32, pc map[string]string) error {
 	return writeRecord(path, stageRecord{
-		VolumeID: volumeID, Kind: recordPublish, PublishContext: pc})
+		VolumeID: volumeID, Kind: recordPublish, AccessMode: accessMode, PublishContext: pc})
+}
+
+// PublishedTarget is one volume this node has published, and where.
+type PublishedTarget struct {
+	VolumeID   string
+	TargetPath string
+	AccessMode int32
+}
+
+// PublishedTargets lists the publications this node made before the process
+// started, so the single-writer reservation can be rebuilt.
+//
+// Like RecoverStagedVolumes, it trusts the host's mount table over any
+// directory walk: a publication that is no longer mounted is not a publication,
+// and reserving it would refuse a legitimate publish for ever.
+func (n *Node) PublishedTargets() []PublishedTarget {
+	entries, err := n.mounts()
+	if err != nil {
+		return nil
+	}
+	var out []PublishedTarget
+	for _, e := range entries {
+		r, ok := readStageRecord(e.target)
+		if !ok || r.VolumeID == "" || r.Kind != recordPublish {
+			continue
+		}
+		out = append(out, PublishedTarget{
+			VolumeID: r.VolumeID, TargetPath: e.target, AccessMode: r.AccessMode})
+	}
+	return out
 }
 
 func writeRecord(path string, r stageRecord) error {
