@@ -38,6 +38,13 @@ func iscsiRoot(t *testing.T, withDevice bool) string {
 	if err := os.MkdirAll(byID, 0o755); err != nil {
 		t.Fatalf("mkdir by-id: %v", err)
 	}
+	// by-path exists on any host with iSCSI devices, and unstage reads it to
+	// decide whether a sibling volume still holds the SHARED session. Leaving
+	// it out made the fake describe a host that cannot exist, on exactly the
+	// question these tests are about.
+	if err := os.MkdirAll(filepath.Join(root, "dev", "disk", "by-path"), 0o755); err != nil {
+		t.Fatalf("mkdir by-path: %v", err)
+	}
 	if withDevice {
 		if err := os.Symlink("../../sdc", filepath.Join(byID, "scsi-36589cfc000000a960e31390c2657efa7")); err != nil {
 			t.Fatalf("symlink: %v", err)

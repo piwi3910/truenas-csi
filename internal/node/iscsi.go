@@ -22,6 +22,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/piwi3910/truenas-csi/internal/obs"
 	"time"
 )
 
@@ -106,6 +108,24 @@ func (n *Node) unstageISCSI(ctx context.Context, req UnstageRequest) error {
 	}
 	portal, iqn := req.PublishContext[KeyPortal], req.PublishContext[KeyIQN]
 	if portal == "" || iqn == "" {
+		return nil
+	}
+	// The session is SHARED by every volume this driver has staged on the node,
+	// because every volume is a LUN on one target. Logging out while a sibling
+	// is still mounted takes that sibling's data path down with it.
+	inUse, err := n.iscsiTargetInUse(portal, iqn)
+	if err != nil {
+		// Could not tell. Keeping a session costs one idle TCP connection;
+		// ending one that is still carrying a volume costs that volume.
+		obs.Logger(ctx).Warn("leaving the iSCSI session up: could not determine "+
+			"whether other volumes still use this target",
+			"portal", portal, "target", iqn, "error", obs.Redact(err.Error()))
+		return nil
+	}
+	if inUse {
+		obs.Logger(ctx).Info("leaving the iSCSI session up: other volumes on this "+
+			"node are still mounted through the same shared target",
+			"portal", portal, "target", iqn)
 		return nil
 	}
 	return iscsiLogout(ctx, n.exec, portal, iqn)
