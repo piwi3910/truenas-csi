@@ -27,9 +27,24 @@ import (
 // stageRecord is the on-disk form. The volume id is stored beside the publish
 // context rather than inside it, so it can never be mistaken for a publish key.
 type stageRecord struct {
-	VolumeID       string            `json:"volumeID,omitempty"`
+	VolumeID string `json:"volumeID,omitempty"`
+	// Kind says which call wrote this record: recordStage beside a staging
+	// path, recordPublish beside a pod's target path.
+	//
+	// It is recorded rather than inferred from the path because the paths are
+	// the CO's to choose. Reading "globalmount" out of a path works only
+	// because Kubernetes happens to spell it that way, and a driver that
+	// depends on that is a driver that breaks on a CO which does not — and
+	// silently, by monitoring a pod's mount that vanishes with the pod instead
+	// of the staging mount that lives as long as the volume.
+	Kind           string            `json:"kind,omitempty"`
 	PublishContext map[string]string `json:"publishContext,omitempty"`
 }
+
+const (
+	recordStage   = "stage"
+	recordPublish = "publish"
+)
 
 // stageRecordSuffix names the file. It is also how a mount is recognised as one
 // of this driver's during recovery: the file exists only where this driver put
@@ -43,8 +58,23 @@ func StageRecordPath(path string) string {
 }
 
 // WriteStageRecord remembers how to detach a volume, and which volume it is.
+// It is written beside the STAGING path, which lives as long as the volume is
+// on this node.
 func WriteStageRecord(path, volumeID string, pc map[string]string) error {
-	b, err := json.Marshal(stageRecord{VolumeID: volumeID, PublishContext: pc})
+	return writeRecord(path, stageRecord{
+		VolumeID: volumeID, Kind: recordStage, PublishContext: pc})
+}
+
+// WritePublishRecord remembers the same context beside a POD's target path,
+// which NodeExpandVolume is called with and which may carry no staging path.
+// It disappears with the pod.
+func WritePublishRecord(path, volumeID string, pc map[string]string) error {
+	return writeRecord(path, stageRecord{
+		VolumeID: volumeID, Kind: recordPublish, PublishContext: pc})
+}
+
+func writeRecord(path string, r stageRecord) error {
+	b, err := json.Marshal(r)
 	if err != nil {
 		return err
 	}
@@ -105,30 +135,40 @@ func (n *Node) RecoverStagedVolumes(ctx context.Context) int {
 	// mount is the one to keep: it is the path the health monitor stats, and
 	// the published path of a raw block volume is a device node, not a
 	// filesystem.
-	best := map[string]StageRequest{}
+	type found struct {
+		req  StageRequest
+		kind string
+	}
+	best := map[string]found{}
 	for _, e := range entries {
 		r, ok := readStageRecord(e.target)
 		if !ok || r.VolumeID == "" {
 			continue
 		}
-		req := StageRequest{
-			VolumeID:       r.VolumeID,
-			StagingPath:    e.target,
-			PublishContext: r.PublishContext,
-		}
-		if prev, seen := best[r.VolumeID]; seen && filepath.Base(prev.StagingPath) == "globalmount" {
+		// A staging record beats a publish record: the staging mount lives as
+		// long as the volume is on this node, while a pod's mount goes away
+		// with the pod and would leave the monitor stat'ing a path that is
+		// gone — reporting a healthy volume as unreachable.
+		if prev, seen := best[r.VolumeID]; seen && prev.kind == recordStage {
 			continue
 		}
-		best[r.VolumeID] = req
+		best[r.VolumeID] = found{
+			req: StageRequest{
+				VolumeID:       r.VolumeID,
+				StagingPath:    e.target,
+				PublishContext: r.PublishContext,
+				// A raw block volume's mount point IS the device node. That is
+				// the fact that identifies it, and healthPathOf then answers ""
+				// because there is no filesystem to stat.
+				VolumeCapability: VolumeCapability{Block: n.blockDeviceAt(e.target) != ""},
+			},
+			kind: r.Kind,
+		}
 	}
 
-	for _, req := range best {
+	for _, f := range best {
+		req := f.req
 		proto := protocolOf(req.PublishContext)
-		// A published device node is not a path the monitor can stat, and
-		// healthPathOf already answers "" for a volume with no filesystem.
-		if filepath.Base(req.StagingPath) != "globalmount" {
-			req.VolumeCapability.Block = true
-		}
 		n.health.Track(HealthTarget{
 			VolumeID: req.VolumeID,
 			Protocol: proto,

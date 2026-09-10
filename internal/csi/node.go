@@ -267,7 +267,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csipb.NodePubli
 	}
 	// Also record it against the target path: NodeExpandVolume is called with
 	// the published volume path and may carry no staging path at all.
-	if err := node.WriteStageRecord(req.GetTargetPath(), req.GetVolumeId(), pc); err != nil {
+	if err := node.WritePublishRecord(req.GetTargetPath(), req.GetVolumeId(), pc); err != nil {
 		obs.Logger(ctx).Warn("could not record publish context at the target path",
 			"error", obs.Redact(err.Error()))
 	}

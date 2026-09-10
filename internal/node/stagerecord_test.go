@@ -49,7 +49,7 @@ func stageRecordHost(t *testing.T, records []stageRecord, paths []string) string
 func TestVolumesStagedBeforeTheProcessStartedAreMonitored(t *testing.T) {
 	const staged = "nas1/iscsi/Pool0/k8s/pvc-a"
 	root := stageRecordHost(t,
-		[]stageRecord{{VolumeID: staged, PublishContext: map[string]string{
+		[]stageRecord{{VolumeID: staged, Kind: recordStage, PublishContext: map[string]string{
 			KeyProtocol: ProtocolISCSI, KeyPortal: "192.168.10.253:3260",
 			KeyIQN: "iqn.x:csi", KeyNAA: "0xabc", KeyLUN: "3"}}},
 		[]string{"var/lib/kubelet/plugins/kubernetes.io/csi/hash/globalmount"})
@@ -69,6 +69,45 @@ func TestVolumesStagedBeforeTheProcessStartedAreMonitored(t *testing.T) {
 	}
 	if filepath.Base(tgt.Path) != "globalmount" {
 		t.Errorf("recovered target has no path to stat: %q", tgt.Path)
+	}
+}
+
+// TestRecoveryPrefersTheStagingMountOverThePodsMount is why the record says
+// which call wrote it.
+//
+// A filesystem volume is mounted twice: at its staging path, which lives as
+// long as the volume is on this node, and at the pod's path, which goes away
+// with the pod. Monitoring the pod's path would report a perfectly healthy
+// volume as unreachable the moment its pod restarted. Nothing in the two paths
+// distinguishes them except names the CO chose, so the record says it outright.
+func TestRecoveryPrefersTheStagingMountOverThePodsMount(t *testing.T) {
+	const id = "nas1/nfs/Pool0/k8s/pvc-a"
+	pc := map[string]string{KeyProtocol: ProtocolNFS, KeyServer: "192.168.10.253",
+		KeyExport: "/mnt/Pool0/k8s/pvc-a"}
+	// The staging mount is listed FIRST and the pod's mount second, so a scan
+	// that simply keeps the last entry it sees would keep the pod's — which is
+	// exactly the mistake this preference exists to prevent.
+	root := stageRecordHost(t,
+		[]stageRecord{
+			{VolumeID: id, Kind: recordStage, PublishContext: pc},
+			{VolumeID: id, Kind: recordPublish, PublishContext: pc},
+		},
+		[]string{
+			"var/lib/kubelet/plugins/kubernetes.io/csi/hash/globalmount",
+			"var/lib/kubelet/pods/uid/volumes/kubernetes.io~csi/pvc-a/mount",
+		})
+
+	n := &Node{Root: root, pre: &Preflight{Found: map[Capability]bool{}}, health: NewHealthMonitor()}
+	if got := n.RecoverStagedVolumes(context.Background()); got != 1 {
+		t.Fatalf("recovered %d volumes, want 1 — the two mounts are one volume", got)
+	}
+	tgt, ok := n.health.Target(id)
+	if !ok {
+		t.Fatal("the volume was not recovered at all")
+	}
+	if filepath.Base(tgt.Path) != "globalmount" {
+		t.Errorf("the monitor is watching %q, the pod's own mount; when that pod restarts "+
+			"the path disappears and a healthy volume is reported unreachable", tgt.Path)
 	}
 }
 
