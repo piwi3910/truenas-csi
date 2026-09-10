@@ -289,6 +289,24 @@ func (c *controller) CreateVolume(ctx context.Context, req *csipb.CreateVolumeRe
 			if perr != nil {
 				return nil, status.Errorf(codes.NotFound, "source volume %q not found", v.GetVolumeId())
 			}
+			// Both checks come BEFORE the snapshot, and that ordering is the
+			// point. A clone is a snapshot plus a clone, so a mismatch noticed
+			// afterwards has already taken csi-clone-<name> on the SOURCE
+			// volume and leaves it there while the CO retries a request that
+			// can never succeed.
+			//
+			// A ZFS clone cannot cross pools, let alone appliances, and cannot
+			// change shape: a filesystem cannot become a zvol.
+			if srcID.Backend != id.Backend {
+				return nil, status.Errorf(codes.InvalidArgument,
+					"source volume %q lives on backend %q but the clone would be created on %q, "+
+						"and a ZFS clone cannot cross appliances",
+					v.GetVolumeId(), srcID.Backend, id.Backend)
+			}
+			if err := requireRestorableInto(id.Protocol,
+				datasetTypeFor(srcID.Protocol), v.GetVolumeId()); err != nil {
+				return nil, err
+			}
 			if err := c.requireVolumeExists(ctx, srcID); err != nil {
 				return nil, err
 			}
@@ -934,7 +952,7 @@ func datasetTypeFor(protocol string) string {
 // An empty srcType means the source could not be classified, which is not
 // evidence of a mismatch: it must not turn into a refusal of a restore that
 // would have worked.
-func requireRestorableInto(protocol, srcType, snapshotID string) error {
+func requireRestorableInto(protocol, srcType, source string) error {
 	if srcType == "" {
 		return nil
 	}
@@ -944,10 +962,10 @@ func requireRestorableInto(protocol, srcType, snapshotID string) error {
 	}
 	kind := map[string]string{"VOLUME": "block volume", "FILESYSTEM": "filesystem"}
 	return status.Errorf(codes.InvalidArgument,
-		"snapshot %q is of a %s and cannot be restored into a %q volume, which needs a %s: "+
-			"a ZFS snapshot keeps the shape of what it was taken from, so restore it into a "+
-			"StorageClass whose protocol serves the same shape",
-		snapshotID, kind[srcType], protocol, kind[want])
+		"source %q is a %s and cannot become a %q volume, which needs a %s: a ZFS clone "+
+			"keeps the shape of what it came from, so use a StorageClass whose protocol "+
+			"serves the same shape",
+		source, kind[srcType], protocol, kind[want])
 }
 
 // rejectSnapshotNameReuse enforces the CSI rule that one snapshot name may not

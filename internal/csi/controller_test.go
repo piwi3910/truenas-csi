@@ -753,3 +753,46 @@ func TestRestoreAcrossProtocolsIsRefusedUpFront(t *testing.T) {
 		t.Fatalf("an unreadable source type must not refuse the restore: %v", err)
 	}
 }
+
+// TestCloneVolumeChecksBackendAndProtocolBeforeSnapshotting.
+//
+// The snapshot path refuses a source on another backend and, since the fix
+// alongside this one, a source of the wrong ZFS shape. The CLONE path — a PVC
+// whose dataSource is another PVC — checked neither.
+//
+// It is the worse of the two, because it TAKES A SNAPSHOT of the source before
+// it can discover the mismatch: a clone of an nfs claim into an iscsi class
+// created csi-clone-<name> on the source volume, failed sizing the clone, and
+// left that snapshot behind while the CO retried for ever.
+func TestCloneVolumeChecksBackendAndProtocolBeforeSnapshotting(t *testing.T) {
+	for _, tc := range []struct {
+		name, source string
+	}{
+		{"another backend", "nas2/nfs/Pool0/k8s/pvc-src"},
+		{"another protocol", "nas1/iscsi/Pool0/k8s/pvc-src"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			shared = newCounting()
+			c, f := ctlWith(t)
+			_, err := c.CreateVolume(context.Background(), &csipb.CreateVolumeRequest{
+				Name: "pvc-clone", Parameters: params(),
+				CapacityRange:      &csipb.CapacityRange{RequiredBytes: 1 << 30},
+				VolumeCapabilities: testCaps(),
+				VolumeContentSource: &csipb.VolumeContentSource{
+					Type: &csipb.VolumeContentSource_Volume{
+						Volume: &csipb.VolumeContentSource_VolumeSource{VolumeId: tc.source},
+					},
+				},
+			})
+			if status.Code(err) != codes.InvalidArgument {
+				t.Fatalf("code = %v, want InvalidArgument (err %v)", status.Code(err), err)
+			}
+			for _, call := range f.Calls() {
+				if strings.Contains(call, "snapshot.create") {
+					t.Fatal("a snapshot was taken on the source before the mismatch " +
+						"was noticed; it is left behind when the clone then fails")
+				}
+			}
+		})
+	}
+}
