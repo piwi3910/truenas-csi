@@ -323,7 +323,7 @@ func NewNode(nodeID string, p *Preflight, exec Executor) *Node {
 		exec:   exec,
 		health: NewHealthMonitor(),
 	}
-	// The monitor cannot read a device's identity on its own: the read is
+	// The monitor cannot establish a device's identity on its own: the read is
 	// relative to the host root, which only the node knows.
 	n.health.DeviceIdentity = n.stagedDeviceIdentity
 	return n
@@ -389,7 +389,10 @@ func (n *Node) Stage(ctx context.Context, req StageRequest) error {
 		// Only iSCSI: it is the only protocol here whose address space the
 		// appliance recycles under a live initiator. An NVMe volume owns its
 		// whole subsystem, and the file protocols have no device at all.
-		NAA: req.PublishContext[KeyNAA],
+		NAA:    req.PublishContext[KeyNAA],
+		Portal: req.PublishContext[KeyPortal],
+		IQN:    req.PublishContext[KeyIQN],
+		LUN:    req.PublishContext[KeyLUN],
 	})
 	n.trackIO(ctx, req, proto)
 	return nil

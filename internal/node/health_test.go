@@ -257,13 +257,14 @@ func TestMonitorReportsADeviceThatIsADifferentVolume(t *testing.T) {
 		Statfs: func(string) error { return nil },
 		Dial:   func(context.Context, string) error { return nil },
 		Now:    time.Now,
-		// The kernel answers about the disk actually in the slot.
-		DeviceIdentity: func(string) (string, bool) { return other, true },
+		// The kernel, once made to ask, answers about the disk actually in the slot.
+		DeviceIdentity: func(string, string, string) (string, bool) { return other, true },
 	}
 	m.targets = map[string]HealthTarget{}
 	m.states = map[string]*HealthState{}
 	m.Track(HealthTarget{VolumeID: "nas1/iscsi/Pool0/k8s/pvc-a", Protocol: ProtocolISCSI,
-		Path: "/staging", Backend: "nas1", DataAddr: "192.168.10.253:3260", NAA: staged})
+		Path: "/staging", Backend: "nas1", DataAddr: "192.168.10.253:3260",
+		NAA: staged, Portal: "192.168.10.253:3260", IQN: "iqn.x:csi", LUN: "0"})
 
 	m.CheckOnce(context.Background())
 
@@ -286,11 +287,14 @@ func TestMonitorDoesNotInventAMismatch(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		naa      string
-		identity func(string) (string, bool)
+		identity func(portal, iqn, lun string) (string, bool)
 	}{
-		{"the same device", staged, func(want string) (string, bool) { return want, true }},
-		{"a device that has gone away", staged, func(string) (string, bool) { return "", false }},
-		{"a protocol with no device", "", func(string) (string, bool) { return "anything", true }},
+		{"the same device", staged,
+			func(string, string, string) (string, bool) { return normalizeNAA(staged), true }},
+		{"a device whose identity cannot be established", staged,
+			func(string, string, string) (string, bool) { return "", false }},
+		{"a protocol with no device", "",
+			func(string, string, string) (string, bool) { return "anything", true }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := &HealthMonitor{
@@ -301,7 +305,8 @@ func TestMonitorDoesNotInventAMismatch(t *testing.T) {
 			m.targets = map[string]HealthTarget{}
 			m.states = map[string]*HealthState{}
 			m.Track(HealthTarget{VolumeID: "v", Protocol: ProtocolISCSI, Path: "/staging",
-				Backend: "nas1", DataAddr: "192.168.10.253:3260", NAA: tc.naa})
+				Backend: "nas1", DataAddr: "192.168.10.253:3260", NAA: tc.naa,
+				Portal: "192.168.10.253:3260", IQN: "iqn.x:csi", LUN: "0"})
 			m.CheckOnce(context.Background())
 			if abnormal, message := m.Condition("v"); abnormal {
 				t.Errorf("reported a healthy volume as unhealthy: %s", message)

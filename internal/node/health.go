@@ -42,6 +42,9 @@ import (
 const (
 	DefaultHealthInterval = 10 * time.Second
 	DefaultHealthTimeout  = 3 * time.Second
+	// DefaultIdentityInterval is how often a block volume's device identity is
+	// re-established. See HealthMonitor.IdentityInterval.
+	DefaultIdentityInterval = time.Minute
 )
 
 // Log messages for the two transitions. They are constants so the test that
@@ -72,19 +75,27 @@ type HealthTarget struct {
 	// DataAddr is the appliance's data address (host:port) — the NFS server or
 	// the iSCSI portal — probed with a bounded TCP dial.
 	DataAddr string
-	// NAA is the identity of the block device this volume was staged on, in the
-	// publish context's "0x…" spelling. Empty for the file protocols, which
-	// have no device.
+	// NAA, Portal, IQN and LUN locate the block device this volume was staged
+	// on and say which volume it is meant to be. All four are empty for the
+	// file protocols, which have no device.
 	//
-	// It is checked because reachability is not the only way a data path goes
-	// wrong. Every volume on a backend is a LUN on ONE shared target and the
-	// appliance recycles LUN ids, so a node fenced from a volume — force
+	// They are checked because reachability is not the only way a data path
+	// goes wrong. Every volume on a backend is a LUN on ONE shared target and
+	// the appliance recycles LUN ids, so a node fenced from a volume — force
 	// detached after going NotReady, say — keeps a mounted device at a LUN the
 	// controller has since given to a DIFFERENT volume. That device answers
 	// every probe in this file perfectly: it is reachable, it stats, the portal
 	// dials. It is simply not this volume any more, and the pod is writing into
 	// another claim's data.
-	NAA string
+	//
+	// The LUN, not the NAA, is what locates the device. A LUN is the slot, and
+	// the slot is what stays put while its contents change; every name derived
+	// from the device's own identity — the by-id link, the cached VPD in sysfs
+	// — still shows the OLD volume until something makes the kernel ask again.
+	// Measured on the cluster: after the appliance moved a LUN to a different
+	// extent, sysfs went on reporting the previous volume's wwid indefinitely,
+	// and a check that trusted it saw nothing wrong.
+	NAA, Portal, IQN, LUN string
 }
 
 // HealthState is what the monitor last observed about one volume.
@@ -110,29 +121,43 @@ type HealthMonitor struct {
 	Statfs func(path string) error
 	// Dial probes an appliance data address.
 	Dial func(ctx context.Context, addr string) error
-	// DeviceIdentity reports the identity the kernel currently gives the device
-	// staged for a NAA, and whether it could be read at all. It is a field
-	// because the read needs the node's host root, which the monitor has no
-	// other reason to know.
-	DeviceIdentity func(naa string) (string, bool)
+	// DeviceIdentity reports the identity the appliance currently serves at one
+	// portal, target and LUN, and whether it could be established. It is a
+	// field because the answer needs the node's host root, which the monitor
+	// has no other reason to know.
+	DeviceIdentity func(portal, iqn, lun string) (string, bool)
+	// IdentityInterval is how often the identity of a device is re-established,
+	// DefaultIdentityInterval when zero.
+	//
+	// It is separate from Interval because the two checks cost different
+	// things. Reachability is a stat and a dial; establishing identity means
+	// making the kernel re-read the device's VPD, which is an INQUIRY on the
+	// wire for every volume on the node. Once a minute is far inside the window
+	// that matters — the CO polls volume health every five — and a tenth of the
+	// traffic that reusing the reachability cadence would cost.
+	IdentityInterval time.Duration
 	// Now is the clock, overridable in tests.
 	Now func() time.Time
 
 	mu      sync.Mutex
 	targets map[string]HealthTarget
 	states  map[string]*HealthState
+	// identityChecked is when each volume's identity was last established, so
+	// the expensive check keeps its own slower cadence.
+	identityChecked map[string]time.Time
 }
 
 // NewHealthMonitor builds a monitor with the production probes.
 func NewHealthMonitor() *HealthMonitor {
 	return &HealthMonitor{
-		Interval: DefaultHealthInterval,
-		Timeout:  DefaultHealthTimeout,
-		Statfs:   statfsProbe,
-		Dial:     dialProbe,
-		Now:      time.Now,
-		targets:  make(map[string]HealthTarget),
-		states:   make(map[string]*HealthState),
+		Interval:         DefaultHealthInterval,
+		Timeout:          DefaultHealthTimeout,
+		IdentityInterval: DefaultIdentityInterval,
+		Statfs:           statfsProbe,
+		Dial:             dialProbe,
+		Now:              time.Now,
+		targets:          make(map[string]HealthTarget),
+		states:           make(map[string]*HealthState),
 	}
 }
 
@@ -282,7 +307,7 @@ func (m *HealthMonitor) probeVolume(ctx context.Context, t HealthTarget) error {
 	// Identity before reachability: a device that is the wrong volume is worse
 	// than one that is unreachable, and saying "unreachable" about it would be
 	// a lie that reads as a network problem.
-	if err := m.checkIdentity(t); err != nil {
+	if err := m.checkIdentity(ctx, t); err != nil {
 		return err
 	}
 	if t.Path == "" {
@@ -311,18 +336,57 @@ var ErrWrongDevice = errors.New("the staged device is a different volume")
 // A device that has gone away entirely is NOT reported here. That is the
 // ordinary "unreachable" case the rest of this file exists for, and it already
 // has a better message than this one would give it.
-func (m *HealthMonitor) checkIdentity(t HealthTarget) error {
-	if t.NAA == "" || m.DeviceIdentity == nil {
+func (m *HealthMonitor) checkIdentity(ctx context.Context, t HealthTarget) error {
+	if t.NAA == "" || t.LUN == "" || m.DeviceIdentity == nil {
+		return nil
+	}
+	if !m.identityDue(t.VolumeID) {
 		return nil
 	}
 	want := normalizeNAA(t.NAA)
-	got, ok := m.DeviceIdentity(want)
+
+	// Bounded like every other probe here. Re-reading a device's VPD goes to
+	// the wire, so on the very session failure this file exists to report it
+	// can block exactly as long as a statfs on a hard mount can.
+	var (
+		got string
+		ok  bool
+	)
+	if err := m.bounded(ctx, func() error {
+		got, ok = m.DeviceIdentity(t.Portal, t.IQN, t.LUN)
+		return nil
+	}); err != nil {
+		// A timed-out identity read is a hung data path, which the reachability
+		// probe below describes better. Say nothing here.
+		return nil
+	}
 	if !ok || got == "" || got == want {
 		return nil
 	}
-	return fmt.Errorf("%w: it now reports %s, not %s — the appliance has reassigned this "+
+	return fmt.Errorf("%w: LUN %s now holds %s, not %s — the appliance has reassigned this "+
 		"volume's LUN and anything written here lands in another volume's data",
-		ErrWrongDevice, got, want)
+		ErrWrongDevice, t.LUN, got, want)
+}
+
+// identityDue rate-limits the identity check to IdentityInterval per volume,
+// and reports true the first time it is asked about a volume.
+func (m *HealthMonitor) identityDue(volumeID string) bool {
+	every := m.IdentityInterval
+	if every <= 0 {
+		every = DefaultIdentityInterval
+	}
+	now := m.now()
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.identityChecked == nil {
+		m.identityChecked = map[string]time.Time{}
+	}
+	if last, seen := m.identityChecked[volumeID]; seen && now.Sub(last) < every {
+		return false
+	}
+	m.identityChecked[volumeID] = now
+	return true
 }
 
 // probeBackend runs the bounded appliance dial.

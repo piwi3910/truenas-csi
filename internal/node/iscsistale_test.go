@@ -27,9 +27,12 @@ func staleHost(t *testing.T, portal, iqn string, luns map[int]struct{ dev, wwid 
 		if err := os.WriteFile(filepath.Join(devDir, "wwid"), []byte("naa."+e.wwid+"\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		// The delete attribute is the kernel's interface for forgetting a disk.
-		if err := os.WriteFile(filepath.Join(devDir, "delete"), nil, 0o644); err != nil {
-			t.Fatal(err)
+		// The delete attribute is the kernel's interface for forgetting a disk,
+		// and rescan is how it is told to look again.
+		for _, attr := range []string{"delete", "rescan"} {
+			if err := os.WriteFile(filepath.Join(devDir, attr), nil, 0o644); err != nil {
+				t.Fatal(err)
+			}
 		}
 		link := filepath.Join(byPath, "ip-"+portal+"-iscsi-"+iqn+"-lun-"+itoa(lun))
 		if err := os.Symlink("../../"+e.dev, link); err != nil {
@@ -172,5 +175,54 @@ func TestUnstageRemovesThisVolumesDevice(t *testing.T) {
 	if !deleted(t, root, "sdb") {
 		t.Fatal("unstage left this volume's device in the kernel; when the appliance gives " +
 			"its LUN id to the next volume, that volume cannot be staged on this node")
+	}
+}
+
+// TestStagedDeviceIdentityLocatesTheDeviceByItsLUN is the whole reason this
+// check works at all.
+//
+// Every name derived from a device's own identity keeps naming the PREVIOUS
+// volume after the appliance reassigns a LUN — measured on the cluster, sysfs
+// went on reporting the old wwid and the by-id link still pointed at that disk,
+// indefinitely. So the device is found through the LUN, which is a slot and
+// stays put, and the kernel is made to re-read what is in it.
+func TestStagedDeviceIdentityLocatesTheDeviceByItsLUN(t *testing.T) {
+	const stagedAs = "6589cfc00000080cf0f6604c8d9b7680"
+	// The host as it looks after a reassignment and before any rescan: LUN 0
+	// still points at sdf, and sdf still claims to be the volume we staged.
+	root := staleHost(t, stalePortal, staleIQN,
+		map[int]struct{ dev, wwid string }{0: {"sdf", stagedAs}}, []string{"sdf"})
+
+	n := &Node{Root: root, pre: &Preflight{Found: map[Capability]bool{}}}
+	got, ok := n.stagedDeviceIdentity(stalePortal, staleIQN, "0")
+	if !ok {
+		t.Fatal("could not establish what the LUN holds")
+	}
+	if got != stagedAs {
+		t.Fatalf("LUN 0 reported %s, want %s", got, stagedAs)
+	}
+
+	// The load-bearing half: the kernel was told to look again. Without this
+	// the check reads the VPD cached at the original attach, which agrees with
+	// itself no matter what the appliance has since put behind the LUN — so it
+	// could never fire, on the one failure it exists to catch.
+	b, err := os.ReadFile(filepath.Join(root, "sys", "block", "sdf", "device", "rescan"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != "1" {
+		t.Error("the device was never rescanned, so the identity read is the one cached " +
+			"at attach time and the check can never detect a reassigned LUN")
+	}
+}
+
+// TestStagedDeviceIdentityIgnoresOtherTargets keeps the rescan off another
+// initiator's disks: a rescan is harmless, but looking at all is a bug.
+func TestStagedDeviceIdentityIgnoresOtherTargets(t *testing.T) {
+	root := staleHost(t, stalePortal, "iqn.2019-10.io.longhorn:pvc-other",
+		map[int]struct{ dev, wwid string }{0: {"sdb", "60000000000000000e00000000010001"}}, nil)
+	n := &Node{Root: root, pre: &Preflight{Found: map[Capability]bool{}}}
+	if _, ok := n.stagedDeviceIdentity(stalePortal, staleIQN, "0"); ok {
+		t.Fatal("answered about a LUN of a target that is not ours")
 	}
 }

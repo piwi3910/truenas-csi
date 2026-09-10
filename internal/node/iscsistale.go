@@ -189,31 +189,50 @@ func (n *Node) deviceWWID(name string) string {
 	return normalizeNAA(strings.TrimPrefix(strings.TrimSpace(string(b)), "naa."))
 }
 
-// stagedDeviceIdentity reports the identity the kernel currently gives the
-// device published under a NAA, and whether it could be read.
+// stagedDeviceIdentity reports the identity the appliance currently serves at
+// one LUN of one target, and whether it could be established.
 //
-// It follows the by-id link rather than remembering a kernel name, because a
-// kernel name is exactly what goes stale: sdb is a slot, and the disk in it can
-// change. The link is regenerated from the device's own identity, so following
-// it and then reading the identity back is a round trip that can only disagree
-// with itself when the host layout is broken.
+// The device is located by its LUN — the SLOT — and not by any name derived
+// from its identity, because the identity is precisely what has changed. The
+// by-id link and the wwid cached in sysfs both go on naming the previous volume
+// for as long as nothing makes the kernel ask again: measured on the cluster,
+// after the appliance moved a LUN to a different extent, sysfs reported the old
+// wwid indefinitely and the by-id link still pointed at that disk.
 //
-// The interesting case is the link being GONE while the mount lives on. That
-// happens when the appliance unmaps the LUN under a node it has fenced, and it
-// is reported as unreadable rather than as a mismatch: the caller treats an
-// unreadable identity as "no answer", which is the honest one.
-func (n *Node) stagedDeviceIdentity(naa string) (string, bool) {
-	id := normalizeNAA(naa)
-	if id == "" {
+// So the kernel is made to ask. Writing to the device's rescan attribute is one
+// INQUIRY, the same mechanism online expansion already uses to see a new size,
+// and afterwards sysfs holds what the appliance is actually serving.
+func (n *Node) stagedDeviceIdentity(portal, iqn, lun string) (string, bool) {
+	devices, err := n.devicesAtLUN(portal, iqn, lun)
+	if err != nil || len(devices) != 1 {
 		return "", false
 	}
-	dest, err := os.Readlink(filepath.Join(n.hostRoot(), "dev", "disk", "by-id", "scsi-3"+id))
-	if err != nil {
+	var name string
+	for d := range devices {
+		name = d
+	}
+	if err := n.rescanSCSIDevice(name); err != nil {
+		// Without a fresh read there is nothing to compare: the cached value
+		// would agree with itself no matter what the appliance is serving.
 		return "", false
 	}
-	got := n.deviceWWID(filepath.Base(dest))
+	got := n.deviceWWID(name)
 	if got == "" {
 		return "", false
 	}
 	return got, true
+}
+
+// rescanSCSIDevice makes the kernel re-read one disk's capacity and identity.
+func (n *Node) rescanSCSIDevice(name string) error {
+	path := filepath.Join(n.hostRoot(), "sys", "block", name, "device", "rescan")
+	f, err := os.OpenFile(path, os.O_WRONLY, 0)
+	if err != nil {
+		return fmt.Errorf("open %s: %w", path, err)
+	}
+	defer f.Close()
+	if _, err := f.WriteString("1"); err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	return nil
 }
