@@ -168,6 +168,17 @@ var scanTimeout = 20 * time.Second
 // recovery, which is the behaviour before recovery existed. The same trade the
 // health monitor makes, for the same reason.
 func (n *Node) mountsToScan(ctx context.Context) ([]mountEntry, error) {
+	// Once per process. Both recoveries — the health monitor's targets and the
+	// single-writer reservation — want the same answer, and both run at
+	// startup, before the plugin serves anything and while the liveness probe
+	// is already counting. Scanning twice would double a delay taken at the
+	// worst possible moment, for an answer that cannot have changed: nothing
+	// this process does has started yet.
+	n.scanOnce.Do(func() { n.scanned, n.scanErr = n.scanMounts(ctx) })
+	return n.scanned, n.scanErr
+}
+
+func (n *Node) scanMounts(ctx context.Context) ([]mountEntry, error) {
 	type result struct {
 		entries []mountEntry
 		err     error

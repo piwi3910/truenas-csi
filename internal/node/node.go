@@ -312,6 +312,12 @@ type Node struct {
 	// every restart of this process stopped watching every volume already here.
 	health *HealthMonitor
 
+	// scanOnce guards the one startup scan of the host mount table, whose
+	// result both recoveries read.
+	scanOnce sync.Once
+	scanned  []mountEntry
+	scanErr  error
+
 	// ioMetricsState carries the per-volume performance metrics, off unless
 	// EnableIOMetrics was called. Its target set is kept in step with Stage and
 	// Unstage, and rebuilt at startup, for the same reasons the monitor's is: a

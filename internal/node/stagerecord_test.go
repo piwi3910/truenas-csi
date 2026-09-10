@@ -331,3 +331,36 @@ type recordingIOSink struct{ tracked []obs.VolumeIOLabels }
 func (s *recordingIOSink) Track(l obs.VolumeIOLabels) { s.tracked = append(s.tracked, l) }
 func (s *recordingIOSink) Attach(_, _, _, _ string)   {}
 func (s *recordingIOSink) Forget(string)              {}
+
+// TestTheHostIsScannedOnceAtStartup keeps a delay out of the worst moment.
+//
+// Both recoveries want the same answer — the health monitor's targets and the
+// single-writer reservation — and both run before the plugin serves anything,
+// while the liveness probe is already counting. The scan is bounded, so
+// repeating it doubles the worst case for an answer that cannot have changed:
+// nothing this process does has started yet.
+func TestTheHostIsScannedOnceAtStartup(t *testing.T) {
+	root := stageRecordHost(t,
+		[]stageRecord{{VolumeID: "v", Kind: recordStage, PublishContext: map[string]string{
+			KeyProtocol: ProtocolNFS, KeyServer: "192.168.10.253"}}},
+		[]string{"var/lib/kubelet/plugins/kubernetes.io/csi/hash/globalmount"})
+
+	n := &Node{Root: root, pre: &Preflight{Found: map[Capability]bool{}}, health: NewHealthMonitor()}
+	n.RecoverStagedVolumes(context.Background())
+	n.PublishedTargets(context.Background())
+
+	// Removing the mount table would make a SECOND real scan return nothing.
+	// The cached answer must be unaffected.
+	if err := os.Remove(filepath.Join(root, "proc", "mounts")); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := n.mountsToScan(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Errorf("the host was scanned again (got %d entries, want the 1 from the first "+
+			"scan); both startup recoveries pay the bounded scan's worst case instead of "+
+			"one of them", len(entries))
+	}
+}
