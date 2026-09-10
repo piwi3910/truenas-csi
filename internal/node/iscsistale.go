@@ -72,7 +72,7 @@ func (n *Node) dropStaleTargetDevices(ctx context.Context, portal, iqn, wantNAA,
 	}
 	inUse := map[string]bool{}
 	for _, e := range entries {
-		for _, name := range n.deviceNamesOf(e.source) {
+		for _, name := range n.deviceNamesOfMount(e) {
 			inUse[name] = true
 		}
 	}
