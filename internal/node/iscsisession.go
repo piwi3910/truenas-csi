@@ -64,18 +64,26 @@ func (n *Node) deviceNamesOfMount(e mountEntry) []string {
 	if strings.HasPrefix(e.source, "/dev/") {
 		return n.deviceNamesOf(e.source)
 	}
-	// Only the device filesystems are followed. Stat'ing an arbitrary mount
-	// point would put a syscall on a path that may be a hung NFS mount, which
-	// is exactly the hang this driver takes such care to stay out of.
-	switch e.fsType {
-	case "devtmpfs", "tmpfs", "udev":
-	default:
-		return nil
-	}
-	if name := n.blockDeviceAt(e.target); name != "" {
+	if name := n.blockDeviceOfMount(e); name != "" {
 		return n.deviceNamesOf("/dev/" + name)
 	}
 	return nil
+}
+
+// blockDeviceOfMount names the disk a mount point IS, when the mount point is a
+// device node, and "" otherwise.
+//
+// Only the device filesystems are ever stat'ed. Stat'ing an arbitrary mount
+// point would put a syscall on a path that may be a hung NFS mount — the exact
+// hang the rest of this driver takes such care to stay out of — and a raw block
+// publish is always devtmpfs, so nothing is lost by not looking anywhere else.
+func (n *Node) blockDeviceOfMount(e mountEntry) string {
+	switch e.fsType {
+	case "devtmpfs", "tmpfs", "udev":
+		return n.blockDeviceAt(e.target)
+	default:
+		return ""
+	}
 }
 
 // blockDeviceAt names the disk behind a path that IS a block device node, or ""

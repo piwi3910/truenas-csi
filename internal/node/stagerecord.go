@@ -194,7 +194,12 @@ func (n *Node) RecoverStagedVolumes(ctx context.Context) int {
 				// A raw block volume's mount point IS the device node. That is
 				// the fact that identifies it, and healthPathOf then answers ""
 				// because there is no filesystem to stat.
-				VolumeCapability: VolumeCapability{Block: n.blockDeviceAt(e.target) != ""},
+				//
+				// Through blockDeviceOfMount, which stats only the device
+				// filesystems: this runs at STARTUP, before the plugin serves
+				// anything, and a stat on a hung NFS mount would hang the whole
+				// plugin rather than one probe.
+				VolumeCapability: VolumeCapability{Block: n.blockDeviceOfMount(e) != ""},
 			},
 			kind: r.Kind,
 		}

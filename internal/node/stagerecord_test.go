@@ -164,3 +164,41 @@ func TestARoundTripKeepsBothHalves(t *testing.T) {
 		t.Fatalf("publish context did not survive the round trip: %+v", r)
 	}
 }
+
+// TestRecoveryNeverStatsANetworkMount is about where this code runs.
+//
+// Recovery happens at startup, before the plugin serves anything, and it walks
+// the host's whole mount table. A stat on a hung NFS mount does not return —
+// that is the precise failure the health monitor exists to report — so a stat
+// there would hang the entire node plugin rather than one probe. Only the
+// device filesystems are ever looked at, which is all a raw block publish can
+// be.
+func TestRecoveryNeverStatsANetworkMount(t *testing.T) {
+	var stattedPaths []string
+	restore := blockDeviceNumber
+	t.Cleanup(func() { blockDeviceNumber = restore })
+	blockDeviceNumber = func(path string) (uint64, bool) {
+		stattedPaths = append(stattedPaths, path)
+		return 0, false
+	}
+
+	n := &Node{Root: "/nonexistent", pre: &Preflight{Found: map[Capability]bool{}}}
+	for _, tc := range []struct {
+		fsType   string
+		mayStat  bool
+		whatItIs string
+	}{
+		{"nfs4", false, "an NFS mount, which can hang forever"},
+		{"nfs", false, "an NFS mount, which can hang forever"},
+		{"cifs", false, "an SMB mount, which can hang forever"},
+		{"ext4", false, "a filesystem volume, which is never a device node"},
+		{"devtmpfs", true, "a raw block publish"},
+	} {
+		stattedPaths = nil
+		n.blockDeviceOfMount(mountEntry{source: "srv:/export", target: "/mnt/x", fsType: tc.fsType})
+		if got := len(stattedPaths) > 0; got != tc.mayStat {
+			t.Errorf("fstype %q is %s: statted=%v, want %v",
+				tc.fsType, tc.whatItIs, got, tc.mayStat)
+		}
+	}
+}
