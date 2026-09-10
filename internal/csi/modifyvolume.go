@@ -167,8 +167,16 @@ var mutableProperties = []mutableProperty{{
 }, {
 	name:           "recordsize",
 	filesystemOnly: true,
+	// Every power of two from 512 to 16M. recordsize is the one modifiable
+	// property pool.dataset.update declares no enum for — its schema is a bare
+	// string — so this set is stated here, and it stopped at 1M while the
+	// appliance went to 16M. Measured on 25.10.6: 2M, 4M, 8M and 16M are all
+	// accepted and reported back verbatim, 256 and 32M are refused as "an
+	// invalid recordsize". An operator asking for a large recordsize, the usual
+	// choice for big sequential files, was refused by the DRIVER rather than by
+	// ZFS.
 	values: enum("512", "1K", "2K", "4K", "8K", "16K", "32K", "64K", "128K", "256K",
-		"512K", "1M", inheritValue),
+		"512K", "1M", "2M", "4M", "8M", "16M", inheritValue),
 	why: "the block size ZFS uses for files written from now on; the zvol " +
 		"equivalent is volblocksize, which cannot be changed after creation",
 }}

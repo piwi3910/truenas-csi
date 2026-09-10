@@ -200,7 +200,10 @@ func TestModifyVolumeRejectsValuesOutsideTheEnum(t *testing.T) {
 		{"compression", "zstd-99"},
 		{"atime", "maybe"},
 		{"recordsize", "3K"},
-		{"recordsize", "2M"},
+		// 32M, not 2M: the appliance accepts every power of two up to 16M, and
+		// this row used to assert the driver refuse 2M — encoding the very cap
+		// that refused operators a size ZFS supports.
+		{"recordsize", "32M"},
 	} {
 		t.Run(tc.key+"="+tc.value, func(t *testing.T) {
 			c, f := newModifyFake(t, ownedDataset("Pool0/k8s/pvc-a", "FILESYSTEM", nil))
@@ -491,5 +494,38 @@ func TestCreateVolumeAcceptsAnEmptyClass(t *testing.T) {
 		MutableParameters: map[string]string{},
 	}); err != nil {
 		t.Fatalf("an empty class must be accepted, got %v", err)
+	}
+}
+
+// TestRecordsizeAcceptsEveryValueTheApplianceDoes.
+//
+// recordsize is the one modifiable property pool.dataset.update does NOT
+// declare an enum for — its schema is a bare string — so the driver states the
+// set itself. It stopped at 1M, and the appliance accepts up to 16M: measured
+// on 25.10.6, where 2M, 4M, 8M and 16M were all accepted and reported back
+// verbatim, while 256 and 32M were refused as "an invalid recordsize".
+//
+// An operator asking for a large recordsize — the usual choice for big
+// sequential files — was therefore refused a setting the appliance supports,
+// by the driver rather than by ZFS.
+func TestRecordsizeAcceptsEveryValueTheApplianceDoes(t *testing.T) {
+	var rs *mutableProperty
+	for i := range mutableProperties {
+		if mutableProperties[i].name == "recordsize" {
+			rs = &mutableProperties[i]
+		}
+	}
+	if rs == nil {
+		t.Fatal("recordsize is no longer a modifiable property")
+	}
+	for _, v := range []string{"512", "1K", "128K", "1M", "2M", "4M", "8M", "16M"} {
+		if !rs.values[v] {
+			t.Errorf("recordsize %q is refused by the driver and accepted by the appliance", v)
+		}
+	}
+	for _, v := range []string{"256", "32M", "3M"} {
+		if rs.values[v] {
+			t.Errorf("recordsize %q is accepted by the driver and refused by the appliance", v)
+		}
 	}
 }
