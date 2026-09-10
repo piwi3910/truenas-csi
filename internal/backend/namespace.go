@@ -200,11 +200,11 @@ func EnsureNamespace(ctx context.Context, c truenas.API, pool, parent, namespace
 
 // applyNamespaceQuota sets the ZFS quota property and records what was set.
 //
-// UNVERIFIED: `pool.dataset.update` accepting a `quota` of 0 to clear the
-// property is taken from the middleware's documented dataset schema at
-// https://192.168.10.253/api/docs/current/ and has not been exercised against
-// hardware. The set path (a positive byte count) matches how refquota is
-// already set by the volume backends.
+// VERIFIED against a live appliance (25.10.6): `pool.dataset.update` with a
+// `quota` of 0 clears the property — a dataset created with quota=10737418240
+// reported rawvalue "0", value None and source LOCAL afterwards. The set path
+// (a positive byte count) matches how refquota is already set by the volume
+// backends.
 func applyNamespaceQuota(ctx context.Context, c truenas.API, path string, quota int64) error {
 	if _, err := c.DatasetUpdate(ctx, path, map[string]any{"quota": quota}); err != nil {
 		return fmt.Errorf("setting quota %d on %s: %w", quota, path, err)

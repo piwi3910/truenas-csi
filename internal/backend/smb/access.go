@@ -141,9 +141,11 @@ func (b *Backend) shareByPath(ctx context.Context, path string) (*smbShare, erro
 // DEFAULT_SHARE at it would discard the options that preset carries. A share
 // with no purpose recorded falls back to the preset this driver creates.
 //
-// UNVERIFIED: that sharing.smb.update accepts the `options` object read back
-// from sharing.smb.query unchanged for a LEGACY_SHARE. DEFAULT_SHARE is what
-// this driver creates and is what the integration suite covers.
+// VERIFIED against a live appliance (25.10.6): sharing.smb.update accepts the
+// `options` object read back from sharing.smb.query for a LEGACY_SHARE, with
+// hostsallow and hostsdeny added to it and the preset's own seventeen keys
+// echoed back unchanged. DEFAULT_SHARE is what this driver creates and is what
+// the integration suite covers.
 func (b *Backend) setHostsAllow(ctx context.Context, share *smbShare, allow []string) error {
 	purpose := share.Purpose
 	if purpose == "" {
