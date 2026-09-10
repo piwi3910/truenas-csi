@@ -43,12 +43,16 @@ func (b *Backend) Publish(ctx context.Context, id volume.ID, node backend.NodeRe
 		return nil, status.Errorf(codes.Internal, "query SMB share for %s: %v", mountpoint, err)
 	}
 	if share != nil && !share.serving() {
-		// The publish path matters more than the create path here: an existing
-		// volume's pod being rescheduled comes through HERE, not through
-		// CreateVolume, so a share disabled after provisioning was still
-		// adopted and the node then failed to mount with the appliance's own
-		// "No such file or directory" and nothing naming the cause. Observed
-		// on a real cluster.
+		// This covers a share disabled AFTER the volume was provisioned, which
+		// CreateVolume never sees again. It fires when the volume ATTACHES: a
+		// pod landing on a different node, or a VolumeAttachment recreated.
+		//
+		// It does NOT fire when a pod restarts on the same node with the
+		// attachment still in place — no controller RPC runs at all there, and
+		// the node only sees the appliance's own "reason given by server: No
+		// such file or directory". Both were measured on a real cluster; this
+		// catches the case a controller can catch, and the volume recovers on
+		// its own once the share is re-enabled.
 		return nil, status.Errorf(codes.FailedPrecondition,
 			"the SMB share for %s is disabled on the appliance, so this volume cannot "+
 				"be mounted; re-enable it or delete it and let the driver recreate it",
