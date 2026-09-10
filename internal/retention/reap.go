@@ -5,12 +5,19 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/piwi3910/truenas-csi/internal/obs"
 	"github.com/piwi3910/truenas-csi/internal/truenas"
 	"github.com/piwi3910/truenas-csi/internal/volume"
 )
+
+// errStillInGrace distinguishes the one refusal a later sweep WILL resolve on
+// its own from every other, which no sweep ever will. Only the first is
+// routine; the rest are datasets whose space is never coming back without an
+// operator, and they are reported rather than kept at Debug.
+var errStillInGrace = errors.New("still within its grace period")
 
 // ErrNotReapable means a dataset failed at least one of the four preconditions
 // and must not be destroyed.
@@ -75,19 +82,56 @@ func Reapable(ds *truenas.Dataset, p Policy, now time.Time) error {
 	// .procoder/notes/truenas-api-findings.md.
 
 	// 3. Carries a deletion timestamp.
+	//
+	// Retire stamps deleted-at AFTER the rename, deliberately, and treats a
+	// stamping failure as non-fatal — so a controller killed in that window
+	// leaves a dataset in the graveyard with no timestamp. Refusing it outright
+	// meant its space was never reclaimed and nobody was told: this refusal is
+	// logged at Debug and the orphan report skips graveyard entries by design.
+	// Observed on a real appliance, four hours past a one-hour grace period.
+	//
+	// The entry NAME carries the same instant, chosen by the same operation, so
+	// it is the timestamp rather than a guess at one. It is consulted only for
+	// a dataset already confined to the graveyard by check 1 above, and only
+	// when the property is missing, so it can neither reach a live volume nor
+	// override what Retire recorded.
 	deletedAt, err := volume.ParseDeletedAt(ds.LocalProperty(volume.DeletedAtProperty))
 	if err != nil {
-		return fmt.Errorf("%w: %q: %w", ErrNotReapable, ds.ID, err)
+		named, nameErr := deletedAtFromEntryName(ds.ID)
+		if nameErr != nil {
+			return fmt.Errorf("%w: %q: %w", ErrNotReapable, ds.ID, err)
+		}
+		deletedAt = named
 	}
 
 	// 4. Past its grace period. A timestamp in the future — a clock that went
 	// backwards, an operator editing the property — reads as "not yet", which
 	// is the direction that keeps the data.
 	if age := now.UTC().Sub(deletedAt); age < p.Grace {
-		return fmt.Errorf("%w: %q was retired %s ago and the grace period is %s: %s left",
-			ErrNotReapable, ds.ID, age.Round(time.Second), p.Grace, (p.Grace - age).Round(time.Second))
+		return fmt.Errorf("%w: %w: %q was retired %s ago and the grace period is %s: %s left",
+			ErrNotReapable, errStillInGrace, ds.ID, age.Round(time.Second), p.Grace,
+			(p.Grace - age).Round(time.Second))
 	}
 	return nil
+}
+
+// deletedAtFromEntryName reads the retirement instant out of a graveyard
+// entry's name, which entryName writes as "20060102T150405Z-<leaf>".
+func deletedAtFromEntryName(id string) (time.Time, error) {
+	name := id
+	if i := strings.LastIndex(name, "/"); i >= 0 {
+		name = name[i+1:]
+	}
+	stamp, _, found := strings.Cut(name, "-")
+	if !found {
+		return time.Time{}, fmt.Errorf("%q carries no timestamp in its name", id)
+	}
+	t, err := time.Parse("20060102T150405Z", stamp)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("%q: name prefix %q is not a retirement timestamp: %w",
+			id, stamp, err)
+	}
+	return t.UTC(), nil
 }
 
 // Reaper destroys graveyard datasets whose grace period has expired.
@@ -157,10 +201,19 @@ func (r *Reaper) sweep(ctx context.Context, t Target, now time.Time) []string {
 	for i := range datasets {
 		ds := &datasets[i]
 		if err := Reapable(ds, t.Policy, now); err != nil {
-			// Not an error condition: most sweeps see mostly unexpired
-			// datasets. Debug keeps the common case quiet while still letting
-			// an operator ask why something was not destroyed.
-			log.Debug("reaper kept a dataset", "backend", t.Name, "dataset", ds.ID, "reason", err.Error())
+			// Waiting out a grace period is the common case and stays quiet at
+			// Debug. Anything else is a dataset no future sweep will ever
+			// reclaim, and it must not hide there: the orphan report skips
+			// graveyard entries by design, so Debug was the only place a
+			// permanently stuck dataset appeared, and Debug is off by default.
+			if errors.Is(err, errStillInGrace) {
+				log.Debug("reaper kept a dataset", "backend", t.Name,
+					"dataset", ds.ID, "reason", err.Error())
+			} else {
+				log.Warn("reaper cannot reclaim a graveyard dataset and no later sweep will; "+
+					"its space stays used until it is removed by hand",
+					"backend", t.Name, "dataset", ds.ID, "reason", err.Error())
+			}
 			continue
 		}
 		// Not forced, and not recursive beyond the dataset's own children: a

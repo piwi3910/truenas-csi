@@ -331,3 +331,82 @@ func TestReaperDoesNothingWhenProtectionIsOff(t *testing.T) {
 		t.Fatalf("a disabled policy issued %d deletes", n)
 	}
 }
+
+// TestReapableFallsBackToTheNameTimestamp closes a silent, unbounded space leak.
+//
+// Retire stamps deleted-at AFTER the rename, deliberately, and treats a
+// stamping failure as non-fatal. The consequence was that a controller killed
+// in that window — or one whose stamping call simply failed — left a dataset
+// inside the graveyard with no timestamp, which Reapable refused for ever. The
+// reaper logged the refusal at Debug, the orphan report skips graveyard
+// entries, and nothing else looks: the space was never reclaimed and no
+// operator was ever told. Observed on a real appliance, where a graveyard entry
+// sat four hours past a one-hour grace period with no deleted-at property.
+//
+// The entry NAME carries the same instant, written by the same operation that
+// chose the name, and it is only ever consulted for a dataset already confined
+// to the graveyard — so this recovers the timestamp without trusting anything
+// the property did not already assert.
+func TestReapableFallsBackToTheNameTimestamp(t *testing.T) {
+	p := Policy{Pool: "Pool0", Parent: "k8s", Graveyard: ".trash", Grace: time.Hour}
+	// Everything Retire stamps EXCEPT the timestamp, which is the window.
+	props := map[string]string{
+		volume.OwnerProperty:       volume.OwnerValue,
+		volume.RetiredFromProperty: "nas1/nfs/Pool0/k8s/pvc-1",
+	}
+	const id = "Pool0/k8s/.trash/20260910T041119Z-pvc-1"
+	props[volume.OwnerIDProperty] = id
+	ds := dataset(t, id, props, nil)
+
+	retiredAt := time.Date(2026, 9, 10, 4, 11, 19, 0, time.UTC)
+	if err := Reapable(ds, p, retiredAt.Add(30*time.Minute)); err == nil {
+		t.Fatal("a dataset inside its grace period must not be reapable")
+	}
+	if err := Reapable(ds, p, retiredAt.Add(2*time.Hour)); err != nil {
+		t.Fatalf("past its grace period it must be reapable, got: %v", err)
+	}
+}
+
+// TestReapableStillRefusesAnUndatedEntry: the fallback must not become a way to
+// reap anything whose name carries no timestamp at all.
+func TestReapableStillRefusesAnUndatedEntry(t *testing.T) {
+	p := Policy{Pool: "Pool0", Parent: "k8s", Graveyard: ".trash", Grace: time.Hour}
+	props := map[string]string{
+		volume.OwnerProperty:       volume.OwnerValue,
+		volume.RetiredFromProperty: "nas1/nfs/Pool0/k8s/pvc-1",
+		volume.OwnerIDProperty:     "Pool0/k8s/.trash/handmade",
+	}
+	ds := dataset(t, "Pool0/k8s/.trash/handmade", props, nil)
+	if err := Reapable(ds, p, time.Now()); err == nil {
+		t.Fatal("an entry with neither a timestamp property nor a dated name " +
+			"must never be reaped — the driver did not put it there")
+	}
+}
+
+// TestReapableSeparatesWaitingFromStuck: a sweep must be able to tell a dataset
+// that is merely waiting out its grace period from one no sweep will ever
+// reclaim. Only the first is routine, and only the first belongs at Debug —
+// the orphan report skips graveyard entries, so Debug was the sole place a
+// permanently stuck dataset appeared, and Debug is off by default.
+func TestReapableSeparatesWaitingFromStuck(t *testing.T) {
+	p := Policy{Pool: "Pool0", Parent: "k8s", Graveyard: ".trash", Grace: time.Hour}
+	now := time.Date(2026, 9, 10, 5, 0, 0, 0, time.UTC)
+
+	waiting := dataset(t, "Pool0/k8s/.trash/20260910T045500Z-pvc-1",
+		retiredProps("2026-09-10T04:55:00Z"), nil)
+	err := Reapable(waiting, p, now)
+	if !errors.Is(err, errStillInGrace) {
+		t.Fatalf("a dataset inside its grace period must report as waiting, got: %v", err)
+	}
+
+	// Not driver-owned: no later sweep resolves this on its own.
+	stuck := dataset(t, "Pool0/k8s/.trash/20260910T030000Z-pvc-2",
+		map[string]string{volume.DeletedAtProperty: "2026-09-10T03:00:00Z"}, nil)
+	err = Reapable(stuck, p, now)
+	if err == nil {
+		t.Fatal("an unowned graveyard dataset must never be reaped")
+	}
+	if errors.Is(err, errStillInGrace) {
+		t.Fatalf("a permanently stuck dataset must not report as merely waiting: %v", err)
+	}
+}
