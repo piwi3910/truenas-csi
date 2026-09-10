@@ -55,6 +55,10 @@ type fakeExport struct {
 	id       int
 	hosts    []string
 	networks []string
+	// disabled mirrors the appliance's own enabled switch, which a query
+	// reports for every share. A fake that never returned it described a share
+	// that cannot be turned off, which is not the appliance's behaviour.
+	disabled bool
 }
 
 func (d *fakeDataset) json(id string) map[string]any {
@@ -252,7 +256,7 @@ func newNAS(t *testing.T) *nas {
 			return []any{}, nil
 		}
 		return []any{map[string]any{"id": sh.id, "path": path,
-			"hosts": sh.hosts, "networks": sh.networks}}, nil
+			"hosts": sh.hosts, "networks": sh.networks, "enabled": !sh.disabled}}, nil
 	})
 
 	n.Handle("sharing.nfs.update", func(p []json.RawMessage) (any, error) {
@@ -747,5 +751,29 @@ func TestNFSRestoreResumesAfterACrashMidClone(t *testing.T) {
 	}
 	if ds.props[volume.ProtocolProperty] != "nfs" {
 		t.Errorf("resumed clone protocol = %q, want nfs", ds.props[volume.ProtocolProperty])
+	}
+}
+
+// TestDisabledExportIsRefusedRatherThanAdopted.
+//
+// A share carries its own enabled switch and the driver matched on PATH alone,
+// so a disabled export was adopted silently: the volume reported provisioned
+// and published while the appliance exported nothing, and the pod failed to
+// mount with nothing pointing at the share. Verified on a real appliance, where
+// sharing.nfs.update accepts {"enabled": false} and the share still answers a
+// query at the same path.
+func TestDisabledExportIsRefusedRatherThanAdopted(t *testing.T) {
+	n := newNAS(t)
+	n.put("Pool0/k8s/pvc-1", &fakeDataset{refquota: gib, marker: volume.OwnerValue, source: "LOCAL"})
+	n.mu.Lock()
+	n.shares["/mnt/Pool0/k8s/pvc-1"] = &fakeExport{id: 7, disabled: true}
+	n.mu.Unlock()
+	b := newBackend(t, n)
+
+	_, err := b.Create(context.Background(), testRequest("pvc-1", gib))
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("code = %v, want FailedPrecondition: a disabled export exports "+
+			"nothing, so a volume using it can never be mounted (err %v)",
+			status.Code(err), err)
 	}
 }

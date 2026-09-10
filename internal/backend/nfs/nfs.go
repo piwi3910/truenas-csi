@@ -325,6 +325,20 @@ func (b *Backend) ensureShare(ctx context.Context, mountpoint string, p params) 
 	if err != nil {
 		return status.Errorf(codes.Internal, "query NFS share for %s: %v", mountpoint, err)
 	}
+	if share != nil && !share.serving() {
+		// Adopting a disabled share reported the volume as provisioned and
+		// published while the appliance exported nothing, so the pod failed to
+		// mount with nothing pointing at the share. Verified on a real
+		// appliance: sharing.nfs.update accepts {"enabled": false} and the
+		// share still answers a query at the same path.
+		//
+		// Refused rather than re-enabled: disabling a share is a deliberate
+		// act, and silently undoing it would override whoever did it.
+		return status.Errorf(codes.FailedPrecondition,
+			"the NFS share for %s is disabled on the appliance, so a volume using it "+
+				"cannot be mounted; re-enable it or delete it and let the driver "+
+				"recreate it", mountpoint)
+	}
 	if share != nil {
 		return nil
 	}

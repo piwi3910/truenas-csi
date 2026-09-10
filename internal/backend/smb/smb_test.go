@@ -43,6 +43,10 @@ type fakeShare struct {
 	name    string
 	path    string
 	purpose string
+	// disabled mirrors the appliance's own enabled switch, which a query
+	// reports for every share. A fake that never returned it described a share
+	// that cannot be turned off, which the appliance's is not.
+	disabled bool
 	// options is the nested object the appliance really returns. It is kept
 	// whole, and not reduced to the two host lists, because a share's other
 	// options must survive an access-list update — a LEGACY_SHARE carries a
@@ -52,7 +56,7 @@ type fakeShare struct {
 
 func (s *fakeShare) json() map[string]any {
 	return map[string]any{"id": s.id, "path": s.path, "name": s.name,
-		"purpose": s.purpose, "options": s.options}
+		"purpose": s.purpose, "options": s.options, "enabled": !s.disabled}
 }
 
 // hostList reads one of the share's access lists back out.
@@ -888,5 +892,27 @@ func TestSMBRestoreResumesAfterACrashMidClone(t *testing.T) {
 	}
 	if ds.props[volume.ProtocolProperty] != "smb" {
 		t.Errorf("resumed clone protocol = %q, want smb", ds.props[volume.ProtocolProperty])
+	}
+}
+
+// TestDisabledSMBShareIsRefusedRatherThanAdopted: see the NFS test of the same
+// name. A share carries its own enabled switch and the driver matched on PATH
+// alone, so a disabled share was adopted silently and the volume reported
+// published while the appliance served nothing.
+func TestDisabledSMBShareIsRefusedRatherThanAdopted(t *testing.T) {
+	n := newNAS(t)
+	n.put("Pool0/k8s/pvc-1", &fakeDataset{
+		refquota: gib, marker: volume.OwnerValue, source: "LOCAL", acltype: "NFSV4"})
+	n.mu.Lock()
+	n.shares["/mnt/Pool0/k8s/pvc-1"] = &fakeShare{
+		id: 7, path: "/mnt/Pool0/k8s/pvc-1", name: "pvc-1",
+		purpose: "DEFAULT_SHARE", options: map[string]any{}, disabled: true}
+	n.mu.Unlock()
+
+	_, err := newBackend(t, n).Create(context.Background(), testRequest("pvc-1", gib))
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("code = %v, want FailedPrecondition: a disabled share serves "+
+			"nothing, so a volume using it can never be mounted (err %v)",
+			status.Code(err), err)
 	}
 }

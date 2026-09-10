@@ -51,7 +51,16 @@ type smbShare struct {
 	// options that preset implies.
 	Purpose string         `json:"purpose"`
 	Options map[string]any `json:"options"`
+
+	// Enabled is the share's own switch. A POINTER because absent must not read
+	// as disabled: middleware that stopped reporting the field would otherwise
+	// make every share look dead and stop provisioning outright.
+	Enabled *bool `json:"enabled"`
 }
+
+// serving reports whether the appliance is actually serving this share. A share
+// that does not report the field is assumed to be.
+func (s *smbShare) serving() bool { return s == nil || s.Enabled == nil || *s.Enabled }
 
 // hostsAllow reads the share's current allow list.
 func (s *smbShare) hostsAllow() []string {

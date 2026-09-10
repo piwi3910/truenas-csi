@@ -38,7 +38,16 @@ type nfsShare struct {
 	Path     string   `json:"path"`
 	Hosts    []string `json:"hosts"`
 	Networks []string `json:"networks"`
+
+	// Enabled is the export's own switch. A POINTER because absent must not
+	// read as disabled: middleware that stopped reporting the field would
+	// otherwise make every share look dead and stop provisioning outright.
+	Enabled *bool `json:"enabled"`
 }
+
+// serving reports whether the appliance is actually exporting this share. A
+// share that does not report the field is assumed to be.
+func (s *nfsShare) serving() bool { return s == nil || s.Enabled == nil || *s.Enabled }
 
 func (b *Backend) shareByPath(ctx context.Context, path string) (*nfsShare, error) {
 	var out []nfsShare
