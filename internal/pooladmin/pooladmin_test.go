@@ -370,3 +370,40 @@ func TestAlertsDoNotMatchAnEmptySerial(t *testing.T) {
 		t.Error("a disk with no serial was condemned by an unrelated alert")
 	}
 }
+
+// TestDiskHealthJoinsAlertsForItsCallers is the half the first attempt missed.
+//
+// The join was put in Collect, which `pool disks` does not use: the CLI calls
+// DiskHealth directly, so the command an operator actually runs to look at
+// disks still reported a disk with uncorrectable errors as though nothing were
+// known about it. Verified against the real appliance, which showed the alert
+// column empty for a disk it was concurrently alerting on.
+func TestDiskHealthJoinsAlertsForItsCallers(t *testing.T) {
+	b, s := appliance(t)
+	// This test's own alert. The shared fixture's alerts name DEVICES, and the
+	// join is on serials — editing it would change the world the other tests
+	// in this file are written against.
+	s.Handle("alert.list", raw(t, `[
+	 {"id":"z1","level":"WARNING","klass":"SMARTUncorrectedErrors",
+	  "formatted":"2 uncorrectable errors reported for sdb (S2).","dismissed":false}]`))
+	disks, err := DiskHealth(context.Background(), b)
+	if err != nil {
+		t.Fatalf("DiskHealth: %v", err)
+	}
+	var sdb *Disk
+	for i := range disks {
+		if disks[i].Name == "sdb" {
+			sdb = &disks[i]
+		}
+	}
+	if sdb == nil {
+		t.Fatal("sdb missing from the inventory")
+	}
+	if sdb.Healthy {
+		t.Error("sdb has an active uncorrectable-errors alert against its serial " +
+			"and DiskHealth still reports it healthy")
+	}
+	if !strings.Contains(sdb.AlertedBy, "SMARTUncorrectedErrors") {
+		t.Errorf("AlertedBy = %q, want the alert class that condemned it", sdb.AlertedBy)
+	}
+}

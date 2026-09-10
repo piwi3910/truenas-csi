@@ -240,13 +240,35 @@ func PoolStatus(ctx context.Context, b Backend) ([]Pool, error) {
 }
 
 // DiskHealth reports per-disk state, with the SMART summary where the appliance
-// exposes one.
+// exposes one and any active alert that names the disk.
+//
+// The alert join is part of DiskHealth rather than of one caller because it is
+// what every caller needs: on 25.10 there is no SMART surface at all, so an
+// alert is the ONLY thing the appliance will say about a failing disk. Putting
+// it in Collect alone left `pool disks` — the command an operator actually runs
+// to look at disks — reporting a disk with uncorrectable errors as though
+// nothing were known about it.
+//
+// A failure to read the alerts costs the alert column, not the inventory.
+func DiskHealth(ctx context.Context, b Backend) ([]Disk, error) {
+	disks, err := diskInventory(ctx, b)
+	if err != nil {
+		return nil, err
+	}
+	alerts, err := Alerts(ctx, b)
+	if err != nil {
+		return disks, nil
+	}
+	return markAlertedDisks(disks, alerts), nil
+}
+
+// diskInventory is the disk listing itself, without the alert join.
 //
 // A missing smart.test.results is not an error: TrueNAS CORE, a controller
 // without SMART passthrough and a pool of NVMe namespaces all legitimately
 // report nothing there, and losing the disk inventory over it would be worse
 // than reporting the SMART status as unknown.
-func DiskHealth(ctx context.Context, b Backend) ([]Disk, error) {
+func diskInventory(ctx context.Context, b Backend) ([]Disk, error) {
 	var raw []struct {
 		Name   string          `json:"name"`
 		Serial string          `json:"serial"`
@@ -379,7 +401,7 @@ func Collect(ctx context.Context, b Backend) (*Diagnostics, error) {
 		}
 	}
 
-	disks, diskErr := DiskHealth(ctx, b)
+	disks, diskErr := diskInventory(ctx, b)
 	if diskErr != nil {
 		d.Errors = append(d.Errors, diskErr.Error())
 	}
