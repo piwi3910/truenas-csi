@@ -1087,3 +1087,36 @@ func TestNVMeCrashMidCloneDoesNotLeak(t *testing.T) {
 		t.Errorf("resumed clone protocol = %q, want %q", got, Protocol)
 	}
 }
+
+// TestFailedCreateLeavesTheSharedPortAlone: the port is the ONE object this
+// backend shares between volumes, and this package's own header says it "is
+// never removed on a volume's rollback or delete". The rollback removed it.
+//
+// A port is an appliance-wide listener. One volume's create failing after it
+// happened to be the call that created the port would delete it, and every
+// subsystem another concurrent create had already bound to it loses its
+// listener — volumes that were provisioning fine become unreachable because an
+// unrelated request failed. Leaving an unbound port behind costs nothing: the
+// next volume queries it first and reuses it, which is exactly what the header
+// describes.
+func TestFailedCreateLeavesTheSharedPortAlone(t *testing.T) {
+	ctx := context.Background()
+	n := newNAS(t)
+	b := n.backend()
+
+	n.failOn("nvmet.host.create", &fake.RPCError{Code: -32001, ErrName: "EFAULT", Reason: "boom"})
+	req := createReq("pvc-1", 1<<30, map[string]string{
+		ParamPortAddress: "192.168.10.253",
+		ParamHostNQNs:    "nqn.2014-08.org.nvmexpress:uuid:node-a",
+	})
+	if _, err := b.Create(ctx, req); err == nil {
+		t.Fatal("create was expected to fail so the rollback runs")
+	}
+	n.mu.Lock()
+	ports := len(n.ports)
+	n.mu.Unlock()
+	if ports == 0 {
+		t.Fatal("rollback deleted the SHARED port — every subsystem bound to it " +
+			"by another volume loses its listener")
+	}
+}

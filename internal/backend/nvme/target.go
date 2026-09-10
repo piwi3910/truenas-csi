@@ -138,10 +138,14 @@ func (b *nvmeBackend) ensurePort(ctx context.Context, p Params, rollback *[]func
 		}
 		return nil, fmt.Errorf("creating %s port on %s:%d: %w", trtype, addr, p.Port, err)
 	}
-	portID := created.ID
-	*rollback = append(*rollback, func() {
-		_ = b.c.NVMePortDelete(context.WithoutCancel(ctx), portID)
-	})
+	// Deliberately NOT added to the rollback. A port is an appliance-wide
+	// listener shared by every NVMe volume, so undoing it on one volume's
+	// failure would take out every subsystem another create had already bound
+	// to it — a request failing here would break volumes that succeeded.
+	//
+	// An unbound port left behind costs nothing: ensurePort queries first and
+	// reuses it, which is what this package's header describes and what the
+	// rollback contradicted.
 	return created, nil
 }
 
