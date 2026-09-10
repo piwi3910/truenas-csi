@@ -25,7 +25,6 @@ import (
 	"time"
 
 	"github.com/piwi3910/truenas-csi/internal/obs"
-	"github.com/piwi3910/truenas-csi/internal/truenas"
 )
 
 // ErrMutatingCall means this package was asked to issue a method that is not a
@@ -37,7 +36,19 @@ type Backend struct {
 	// Name is the configured backend name, used as the metric label.
 	Name string
 	// Client is the connected middleware client.
-	Client *truenas.Client
+	//
+	// An INTERFACE, not *truenas.Client, and narrowed to the one method this
+	// package uses. Every call it makes is a raw read routed through the
+	// read-verb guard, so nothing here needs the typed API — and the concrete
+	// type kept the metrics poller from reusing this package at all, which is
+	// why the appliance-health gauges went unset in every running driver.
+	Client Caller
+}
+
+// Caller is the middleware surface this package needs: one method, so a metrics
+// poller holding a truenas.API can pass it straight through.
+type Caller interface {
+	CallJSON(ctx context.Context, out any, method string, params ...any) error
 }
 
 // readVerbs is the closed set of trailing method components this package may

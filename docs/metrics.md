@@ -133,6 +133,17 @@ default) and served from cache: `truenas_pool_size_bytes`,
 `truenas_iscsi_sessions`, `truenas_collection_duration_seconds`,
 `truenas_collection_errors_total`.
 
+Appliance self-report, from the same poll: `truenas_appliance_disk_healthy`,
+`truenas_appliance_scrub_state`, `truenas_appliance_scrub_errors`,
+`truenas_appliance_alerts`, `truenas_appliance_pool_healthy`,
+`truenas_appliance_pool_size_bytes`, `truenas_appliance_pool_free_bytes`,
+`truenas_appliance_pool_fragmentation_percent`.
+
+`truenas_appliance_disk_healthy` is the one worth an alert rule. TrueNAS 25.10
+exposes no SMART API at all, so an appliance alert naming a disk's serial is the
+only warning anyone gets that a disk is failing; the driver joins those alerts
+onto the disk inventory and drops this gauge to 0 for the disk they name.
+
 The three pool byte counts are RAW, which is what `zpool list` and the
 appliance's own pool view show. On a RAIDZ pool that includes parity and is
 therefore larger than the data the pool can hold — a 12-disk RAIDZ2 measured

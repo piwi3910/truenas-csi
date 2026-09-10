@@ -311,3 +311,54 @@ func TestStartSkipsWhenNoBackendIsReachable(t *testing.T) {
 		t.Fatal("Start must report that no backend was reachable")
 	}
 }
+
+// TestCollectorPublishesApplianceDiagnostics closes a gap between a set of
+// declared metrics and any deployment that could export them.
+//
+// internal/obs declares truenas_appliance_disk_healthy, _scrub_state,
+// _scrub_errors and _alerts, and internal/pooladmin sets them — but the only
+// caller of pooladmin.Collect was the `truenas-csi pool` CLI, a process that
+// sets a gauge and immediately exits. Confirmed against a live controller:
+// none of that family appeared on /metrics, on either replica.
+//
+// It matters most for disks. TrueNAS 25.10 exposes no SMART API at all, so an
+// alert naming a disk is the only warning anyone gets, and there was no way to
+// alert on it.
+func TestCollectorPublishesApplianceDiagnostics(t *testing.T) {
+	srv := fake.Start(t, fake.Options{})
+	serveAppliance(srv, []map[string]any{
+		dataset("Pool0/k8s/pvc-1", 1<<30, 5<<30, "LOCAL"),
+	}, 3)
+	srv.HandleValue("disk.query", []map[string]any{
+		{"name": "sda", "serial": "S1", "model": "HGST", "size": 1 << 40, "pool": "Pool0"},
+		{"name": "sdb", "serial": "S2", "model": "HGST", "size": 1 << 40, "pool": "Pool0"},
+	})
+	srv.HandleValue("alert.list", []map[string]any{{
+		"id": "a1", "level": "WARNING", "klass": "SMARTUncorrectedErrors",
+		"formatted": "2 uncorrectable errors reported for sdb (S2).", "dismissed": false,
+	}})
+
+	c := New(testRegistry(t, map[string]string{"nas1": srv.URL()}), time.Minute)
+	c.CollectOnce(context.Background())
+
+	// The gauges live on the default registry, which is what the driver's
+	// /metrics handler serves.
+	mfs, err := prometheus.DefaultGatherer.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	healthy := func(disk string) float64 {
+		return mustValue(t, mfs, "truenas_appliance_disk_healthy",
+			map[string]string{"backend": "nas1", "disk": disk})
+	}
+	if got := healthy("sda"); got != 1 {
+		t.Errorf("sda healthy = %v, want 1", got)
+	}
+	if got := healthy("sdb"); got != 0 {
+		t.Errorf("sdb healthy = %v, want 0: the appliance is alerting on its serial", got)
+	}
+	if got := mustValue(t, mfs, "truenas_appliance_alerts",
+		map[string]string{"backend": "nas1", "level": "WARNING"}); got != 1 {
+		t.Errorf("WARNING alerts = %v, want 1", got)
+	}
+}

@@ -18,6 +18,7 @@ import (
 
 	"github.com/piwi3910/truenas-csi/internal/config"
 	"github.com/piwi3910/truenas-csi/internal/obs"
+	"github.com/piwi3910/truenas-csi/internal/pooladmin"
 	"github.com/piwi3910/truenas-csi/internal/truenas"
 	"github.com/piwi3910/truenas-csi/internal/volume"
 	"github.com/prometheus/client_golang/prometheus"
@@ -241,6 +242,40 @@ func (c *Collector) collectBackend(ctx context.Context, name string) {
 		c.errs[name] = 0
 	}
 	c.mu.Unlock()
+
+	c.collectDiagnostics(ctx, name)
+}
+
+// collectDiagnostics publishes the appliance's own health: disk health, scrub
+// state and errors, active alert counts.
+//
+// It runs here because nothing else ever ran it. internal/obs declares those
+// gauges and internal/pooladmin sets them, but the only caller of
+// pooladmin.Collect was the `truenas-csi pool` CLI — a process that sets a
+// gauge and immediately exits, so the series could never be scraped. They were
+// declared metrics that no deployment could ever export, and the appliance's
+// disk health in particular has no other route out: 25.10 exposes no SMART API,
+// so an alert against a disk is the only warning anyone gets.
+//
+// A failure is logged, not counted as a collection error: the pool and dataset
+// metrics above are the ones the cache serves, and losing the appliance's
+// self-report must not make a healthy poll look failed.
+//
+// Note that pooladmin also sets truenas_appliance_pool_* , which overlaps the
+// truenas_pool_* gauges this collector serves from its own cache. The two are
+// left as they are rather than reconciled here: they come from the same
+// pool.query and agree, and choosing which name survives is a decision for
+// whoever owns the dashboards.
+func (c *Collector) collectDiagnostics(ctx context.Context, name string) {
+	cl, err := c.reg.Client(ctx, name)
+	if err != nil {
+		return
+	}
+	if _, err := pooladmin.Collect(ctx, pooladmin.Backend{Name: name, Client: cl}); err != nil {
+		obs.Logger(ctx).Warn("appliance diagnostics could not be collected; disk health, "+
+			"scrub state and alert counts will hold their last values",
+			"backend", name, "error", obs.Redact(err.Error()))
+	}
 }
 
 // pollBackend issues the appliance calls for one backend, in sequence. Three
