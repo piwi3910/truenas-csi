@@ -86,9 +86,11 @@ func Reapable(ds *truenas.Dataset, p Policy, now time.Time) error {
 	// Retire stamps deleted-at AFTER the rename, deliberately, and treats a
 	// stamping failure as non-fatal — so a controller killed in that window
 	// leaves a dataset in the graveyard with no timestamp. Refusing it outright
-	// meant its space was never reclaimed and nobody was told: this refusal is
+	// means its space is never reclaimed and nobody is told: this refusal is
 	// logged at Debug and the orphan report skips graveyard entries by design.
-	// Observed on a real appliance, four hours past a one-hour grace period.
+	// Retire documents that outcome and accepts it as the safe direction to
+	// fail in; recovering the timestamp costs nothing and removes the leak, so
+	// there is no longer a direction to choose between.
 	//
 	// The entry NAME carries the same instant, chosen by the same operation, so
 	// it is the timestamp rather than a guess at one. It is consulted only for

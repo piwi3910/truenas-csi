@@ -335,13 +335,15 @@ func TestReaperDoesNothingWhenProtectionIsOff(t *testing.T) {
 // TestReapableFallsBackToTheNameTimestamp closes a silent, unbounded space leak.
 //
 // Retire stamps deleted-at AFTER the rename, deliberately, and treats a
-// stamping failure as non-fatal. The consequence was that a controller killed
-// in that window — or one whose stamping call simply failed — left a dataset
-// inside the graveyard with no timestamp, which Reapable refused for ever. The
-// reaper logged the refusal at Debug, the orphan report skips graveyard
-// entries, and nothing else looks: the space was never reclaimed and no
-// operator was ever told. Observed on a real appliance, where a graveyard entry
-// sat four hours past a one-hour grace period with no deleted-at property.
+// stamping failure as non-fatal. A controller killed in that window — or one
+// whose stamping call simply failed — leaves a dataset inside the graveyard
+// with no timestamp, which Reapable refused for ever. The reaper logs that
+// refusal at Debug, the orphan report skips graveyard entries, and nothing else
+// looks: the space is never reclaimed and no operator is ever told.
+//
+// The window is narrow — one middleware call wide — and Retire documents the
+// outcome as the safe direction to fail in. This is not a failure anyone has
+// caught in the act; it is one the code already says it cannot recover from.
 //
 // The entry NAME carries the same instant, written by the same operation that
 // chose the name, and it is only ever consulted for a dataset already confined
