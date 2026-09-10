@@ -14,6 +14,9 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 )
 
@@ -35,6 +38,30 @@ func (n *Node) Stats(_ context.Context, req StatsRequest) (StatsResponse, error)
 		return StatsResponse{}, fmt.Errorf("stat %s: %w", req.VolumePath, err)
 	}
 
+	abnormalOf := func() (bool, string) {
+		if n.health == nil {
+			return false, ""
+		}
+		return n.health.Condition(req.VolumeID)
+	}
+
+	// A raw block volume has no filesystem, and statfs does not fail on its
+	// path — it answers about the filesystem CONTAINING the device node, which
+	// is devtmpfs. That is how a 1 GiB block PVC came to report 16.4 GB of
+	// capacity on a real cluster: half the node's RAM, the same number for
+	// every block volume on it, driving every kubelet_volume_stats_* metric and
+	// every usage alert built on them.
+	//
+	// The device's own size is the honest answer, and it is the only one: how
+	// much of a raw block device is "used" is a question only its consumer can
+	// answer, and CSI says to report the capacity alone.
+	if size, ok := n.blockVolumeSize(req.VolumePath); ok {
+		abnormal, message := abnormalOf()
+		return StatsResponse{Abnormal: abnormal, Message: message, Usage: []Usage{
+			{Unit: UnitBytes, Total: size},
+		}}, nil
+	}
+
 	var st syscall.Statfs_t
 	if err := syscall.Statfs(req.VolumePath, &st); err != nil {
 		return StatsResponse{}, fmt.Errorf("statfs %s: %w", req.VolumePath, err)
@@ -54,10 +81,7 @@ func (n *Node) Stats(_ context.Context, req StatsRequest) (StatsResponse, error)
 	inodesFree := st.Ffree
 	inodesUsed := inodesTotal - inodesFree
 
-	abnormal, message := false, ""
-	if n.health != nil {
-		abnormal, message = n.health.Condition(req.VolumeID)
-	}
+	abnormal, message := abnormalOf()
 
 	return StatsResponse{Abnormal: abnormal, Message: message, Usage: []Usage{
 		{
@@ -73,4 +97,37 @@ func (n *Node) Stats(_ context.Context, req StatsRequest) (StatsResponse, error)
 			Available: int64(inodesFree),
 		},
 	}}, nil
+}
+
+// blockVolumeSize is the size in bytes of the device published at path, and
+// whether path is a block device at all.
+//
+// The size comes from sysfs rather than an ioctl or a helper binary: the node
+// already reads this tree to map a device number to a name, the value is in
+// 512-byte sectors by kernel convention regardless of the device's own logical
+// block size, and it needs no privilege beyond the read the plugin already has.
+func (n *Node) blockVolumeSize(path string) (int64, bool) {
+	dev, ok := blockDeviceNumber(path)
+	if !ok {
+		return 0, false
+	}
+	name := n.deviceNameForNumber(dev)
+	if name == "" {
+		return 0, false
+	}
+	b, err := os.ReadFile(filepath.Join(n.hostRoot(), "sys", "block", name, "size"))
+	if err != nil {
+		// A partition, whose size lives under its parent disk's directory.
+		b, err = os.ReadFile(filepath.Join(n.hostRoot(), "sys", "dev", "block",
+			strconv.FormatUint(unixMajor(dev), 10)+":"+strconv.FormatUint(unixMinor(dev), 10),
+			"size"))
+		if err != nil {
+			return 0, false
+		}
+	}
+	sectors, err := strconv.ParseInt(strings.TrimSpace(string(b)), 10, 64)
+	if err != nil || sectors <= 0 {
+		return 0, false
+	}
+	return sectors * 512, true
 }
