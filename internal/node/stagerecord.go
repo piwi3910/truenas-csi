@@ -225,39 +225,59 @@ func (n *Node) RecoverStagedVolumes(ctx context.Context) int {
 	// mount is the one to keep: it is the path the health monitor stats, and
 	// the published path of a raw block volume is a device node, not a
 	// filesystem.
+	// Both records of a volume are wanted, for different halves of the answer.
+	//
+	// The PATH must come from the staging record: the staging mount lives as
+	// long as the volume is on this node, while a pod's mount goes away with
+	// the pod and would leave the monitor stat'ing a path that is gone,
+	// reporting a healthy volume as unreachable.
+	//
+	// The workload LABELS can only come from the publish record. The kubelet
+	// passes the pod's name, namespace and uid in NodePublishVolume alone, so
+	// the staging record has never seen them, and recovering from it by itself
+	// would bring a volume's I/O series back with no pod on it.
 	type found struct {
-		req  StageRequest
-		kind string
+		req     StageRequest
+		haveGot map[string]bool
 	}
-	best := map[string]found{}
+	best := map[string]*found{}
 	for _, e := range entries {
 		r, ok := readStageRecord(e.target)
 		if !ok || r.VolumeID == "" {
 			continue
 		}
-		// A staging record beats a publish record: the staging mount lives as
-		// long as the volume is on this node, while a pod's mount goes away
-		// with the pod and would leave the monitor stat'ing a path that is
-		// gone — reporting a healthy volume as unreachable.
-		if prev, seen := best[r.VolumeID]; seen && prev.kind == recordStage {
-			continue
+		f := best[r.VolumeID]
+		if f == nil {
+			f = &found{
+				req:     StageRequest{VolumeID: r.VolumeID},
+				haveGot: map[string]bool{},
+			}
+			best[r.VolumeID] = f
 		}
-		best[r.VolumeID] = found{
-			req: StageRequest{
-				VolumeID:       r.VolumeID,
-				StagingPath:    e.target,
-				PublishContext: r.PublishContext,
-				// A raw block volume's mount point IS the device node. That is
-				// the fact that identifies it, and healthPathOf then answers ""
-				// because there is no filesystem to stat.
-				//
-				// Through blockDeviceOfMount, which stats only the device
-				// filesystems: this runs at STARTUP, before the plugin serves
-				// anything, and a stat on a hung NFS mount would hang the whole
-				// plugin rather than one probe.
-				VolumeCapability: VolumeCapability{Block: n.blockDeviceOfMount(e) != ""},
-			},
-			kind: r.Kind,
+		f.haveGot[r.Kind] = true
+
+		// Later keys win, and the publish context is the superset, so a merge
+		// in either arrival order ends with the same map.
+		if f.req.PublishContext == nil {
+			f.req.PublishContext = map[string]string{}
+		}
+		for k, v := range r.PublishContext {
+			if _, taken := f.req.PublishContext[k]; !taken || r.Kind == recordPublish {
+				f.req.PublishContext[k] = v
+			}
+		}
+
+		if r.Kind == recordStage || !f.haveGot[recordStage] {
+			f.req.StagingPath = e.target
+			// A raw block volume's mount point IS the device node. That is the
+			// fact that identifies it, and healthPathOf then answers "" because
+			// there is no filesystem to stat.
+			//
+			// Through blockDeviceOfMount, which stats only the device
+			// filesystems: this runs at STARTUP, before the plugin serves
+			// anything, and a stat on a hung NFS mount would hang the whole
+			// plugin rather than one probe.
+			f.req.VolumeCapability = VolumeCapability{Block: n.blockDeviceOfMount(e) != ""}
 		}
 	}
 

@@ -8,6 +8,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/piwi3910/truenas-csi/internal/obs"
 )
 
 // mkfifo makes a named pipe, whose open-for-read blocks until a writer arrives.
@@ -257,3 +259,75 @@ func TestAStuckMountCannotStopTheNodePluginStarting(t *testing.T) {
 			"registers can mount nothing at all")
 	}
 }
+
+// TestRecoveryKeepsTheWorkloadLabels is why both records are read.
+//
+// The kubelet passes a pod's name, namespace and uid in NodePublishVolume
+// alone, so the staging record has never seen them. Recovering from the staging
+// record by itself brings a volume's I/O series back with no pod on it — which
+// is how the per-volume metrics join to the workload, and without it a
+// dashboard shows traffic belonging to nobody.
+func TestRecoveryKeepsTheWorkloadLabels(t *testing.T) {
+	const id = "nas1/iscsi/Pool0/k8s/pvc-a"
+	stagePC := map[string]string{
+		KeyProtocol: ProtocolISCSI, KeyPortal: "192.168.10.253:3260",
+		KeyIQN: "iqn.x:csi", KeyNAA: "0xabc", KeyLUN: "3",
+		KeyPVCName: "data-web-0",
+	}
+	publishPC := map[string]string{}
+	for k, v := range stagePC {
+		publishPC[k] = v
+	}
+	publishPC[KeyPodName] = "web-0"
+	publishPC[KeyPodNamespace] = "shop"
+
+	root := stageRecordHost(t,
+		[]stageRecord{
+			{VolumeID: id, Kind: recordStage, PublishContext: stagePC},
+			{VolumeID: id, Kind: recordPublish, PublishContext: publishPC},
+		},
+		[]string{
+			"var/lib/kubelet/plugins/kubernetes.io/csi/hash/globalmount",
+			"var/lib/kubelet/pods/uid/volumes/kubernetes.io~csi/pvc-a/mount",
+		})
+
+	n := &Node{Root: root, pre: &Preflight{Found: map[Capability]bool{}}, health: NewHealthMonitor()}
+	sink := &recordingIOSink{}
+	n.EnableIOMetrics(sink, nil)
+	if got := n.RecoverStagedVolumes(context.Background()); got != 1 {
+		t.Fatalf("recovered %d volumes, want 1", got)
+	}
+	tgt, ok := n.health.Target(id)
+	if !ok {
+		t.Fatal("the volume was not recovered")
+	}
+	// The path still comes from the staging mount, which outlives the pod.
+	if filepath.Base(tgt.Path) != "globalmount" {
+		t.Errorf("the monitor is watching %q rather than the staging mount", tgt.Path)
+	}
+	// And the identity check still has what it needs.
+	if tgt.LUN != "3" || tgt.NAA != "0xabc" {
+		t.Errorf("recovered target lost its device identity: %+v", tgt)
+	}
+	// The labels are the half that only the publish record carries.
+	if len(sink.tracked) != 1 {
+		t.Fatalf("the recovered volume was not exported at all: %+v", sink.tracked)
+	}
+	got := sink.tracked[0]
+	if got.Pod != "web-0" || got.Namespace != "shop" {
+		t.Errorf("the volume's I/O series came back with no pod on it (%+v); the kubelet "+
+			"passes pod identity in NodePublishVolume alone, so it can only come from the "+
+			"publish record", got)
+	}
+	if got.PVC != "data-web-0" {
+		t.Errorf("lost the claim name: %+v", got)
+	}
+}
+
+// recordingIOSink captures what the node exports, so a test can assert on the
+// labels rather than on the fact that a call was made.
+type recordingIOSink struct{ tracked []obs.VolumeIOLabels }
+
+func (s *recordingIOSink) Track(l obs.VolumeIOLabels) { s.tracked = append(s.tracked, l) }
+func (s *recordingIOSink) Attach(_, _, _, _ string)   {}
+func (s *recordingIOSink) Forget(string)              {}
