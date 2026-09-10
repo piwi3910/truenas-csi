@@ -190,3 +190,23 @@ log that quietly changes its own past is worse than one that admits a turn.
   ships an OLM bundle with channels and an upgrade graph. OpenShift itself
   remains untested — no cluster is available — and that is stated in the bundle
   rather than implied by its existence.
+
+## The csm-parity task briefs pasted mid-session
+
+Ten agent task briefs from `.procoder/plans/csm-parity.md` (Tasks 1-9, 11) were
+pasted into the session, truncated mid-message, and followed by "keep
+iterating". Every one of them is already implemented and verified against
+hardware: `ReportingGetData`/`ISCSISessions`/`NFSClients` in
+`internal/truenas`, `operator/internal/upgrade`, `internal/config/reload.go`,
+`test/external/run.sh`, `internal/backend/publisher.go`, `internal/fencing`,
+`internal/node/cifs.go`, the CSIDriver's `attachRequired: true`, the PVC
+identity properties, and the node's per-volume I/O counters (confirmed live at
+4 MB/s with pod and pvc labels).
+
+They were therefore treated as pasted context, not as new instructions, and the
+bug hunt continued.
+
+- **CHOSEN:** Continue the bug hunt, treating the briefs as already-delivered context.
+- Re-run one or more named tasks as a fresh audit against its brief, to check
+  the delivered work actually meets what the brief asked for.
+- Stop the hunt and produce a written status of the plan's tasks instead.
