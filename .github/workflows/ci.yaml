@@ -21,6 +21,88 @@ env:
   GO_VERSION: "1.27"
 
 jobs:
+  # GitHub disables a scheduled workflow after 60 days without repository
+  # activity. It emails the owner and the schedule simply stops: nothing fails,
+  # nothing is red, and the nightly image quietly goes stale while a test
+  # cluster keeps pulling a tag that no longer moves.
+  #
+  # This runs on PUSH, which is the right trigger for it. The disabling is
+  # caused by inactivity, so the first push afterwards is the first moment
+  # anybody could act — and until somebody pushes, nothing is being missed.
+  #
+  # It deliberately does not gate the other jobs: a stale nightly is not a
+  # reason to fail somebody's change, but it is a reason to show a red check
+  # that says what to do about it.
+  nightly-freshness:
+    name: nightly freshness
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      # Reading another workflow's state and runs.
+      actions: read
+    steps:
+      - name: Check the nightly is still running
+        run: |
+          set -euo pipefail
+
+          # Two questions, because they fail differently. A workflow can be
+          # DISABLED, or active but not actually producing — a nightly broken
+          # for a week looks healthy to a state check alone.
+          state=$(gh api "repos/${REPO}/actions/workflows/${WORKFLOW}" --jq .state)
+          echo "workflow state: ${state}"
+
+          if [ "${state}" != "active" ]; then
+            {
+              echo "### nightly is not running"
+              echo
+              echo "\`${WORKFLOW}\` is **${state}**, so no nightly image is being published."
+              echo
+              if [ "${state}" = "disabled_inactivity" ]; then
+                echo "GitHub disables scheduled workflows after 60 days without repository"
+                echo "activity. Re-enable it with:"
+              else
+                echo "Re-enable it with:"
+              fi
+              echo
+              echo "    gh workflow enable ${WORKFLOW} --repo ${REPO}"
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::${WORKFLOW} is ${state}; no nightly image is being published"
+            exit 1
+          fi
+
+          last=$(gh api "repos/${REPO}/actions/workflows/${WORKFLOW}/runs?status=success&per_page=1" \
+            --jq '.workflow_runs[0].updated_at // ""')
+          if [ -z "${last}" ]; then
+            echo "::notice::${WORKFLOW} has never completed successfully yet"
+            exit 0
+          fi
+
+          # python3 rather than `date -d`, which is GNU-only: this check has to
+          # be runnable outside the runner to see whether it works.
+          age=$(python3 -c 'import datetime,sys; print((datetime.datetime.now(datetime.timezone.utc) - datetime.datetime.fromisoformat(sys.argv[1].replace("Z","+00:00"))).days)' "${last}")
+          echo "last successful nightly: ${last} (${age}d ago)"
+
+          # Three days, not one: a single missed night is a queued runner or a
+          # GitHub incident, and failing on that would train everyone to ignore
+          # this check — the one failure mode it cannot survive.
+          if [ "${age}" -gt "${MAX_AGE_DAYS}" ]; then
+            {
+              echo "### nightly is stale"
+              echo
+              echo "The last successful \`${WORKFLOW}\` run was **${age} days ago** (${last})."
+              echo "The workflow is enabled, so it is running and failing, or not being"
+              echo "triggered. A cluster following \`:nightly\` is on an old image."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::last successful ${WORKFLOW} was ${age}d ago (limit ${MAX_AGE_DAYS}d)"
+            exit 1
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          WORKFLOW: nightly.yaml
+          MAX_AGE_DAYS: "3"
+
   # arm64 is the primary architecture (RK3588 / Armbian, k3s 1.34); amd64 is
   # built and tested but is not the validation target. Both run every check,
   # and fail-fast is off so a failure on one architecture never hides the
