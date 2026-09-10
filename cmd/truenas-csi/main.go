@@ -356,6 +356,20 @@ func run(o options) error {
 			slog.Info("per-volume I/O metrics enabled", "source", "node kernel counters")
 		}
 
+		// Volumes staged before this process started are picked up here, and
+		// this is the only chance to do it. Both the monitor's targets and the
+		// I/O series live in memory and are registered by NodeStageVolume
+		// alone, while the kubelet's own state says those volumes are already
+		// staged — so it never calls NodeStageVolume for them again, and
+		// without this every restart of the node plugin silently stopped
+		// watching every volume already on the node, for as long as those
+		// volumes lived.
+		//
+		// It runs after EnableIOMetrics so the recovered volumes get their I/O
+		// series too, and after the health monitor is running so the first pass
+		// includes them.
+		nn.RecoverStagedVolumes(ctx)
+
 		// The node self-check answers from the node plugin's own state and its
 		// own bounded probes. It is given a lookup function, not the driver's
 		// client or its socket, so that it keeps answering when the driver it

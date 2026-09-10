@@ -2,10 +2,8 @@ package csi
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -89,37 +87,6 @@ func (p *publishedTargets) release(volumeID, target string) {
 	if len(p.byVolume[volumeID]) == 0 {
 		delete(p.byVolume, volumeID)
 	}
-}
-
-// stageRecordPath is where the publish context is remembered for unstage.
-//
-// NodeUnstageVolume carries no publish context, so without this the node cannot
-// know which target to log out of. Guessing from live session state is not an
-// option: Longhorn shares this node's iSCSI stack and a wrong guess would tear
-// down its sessions.
-func stageRecordPath(stagingPath string) string {
-	return filepath.Join(filepath.Dir(stagingPath),
-		"."+filepath.Base(stagingPath)+".truenas-csi.json")
-}
-
-func writeStageRecord(stagingPath string, pc map[string]string) error {
-	b, err := json.Marshal(pc)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(stageRecordPath(stagingPath), b, 0o600)
-}
-
-func readStageRecord(stagingPath string) map[string]string {
-	b, err := os.ReadFile(stageRecordPath(stagingPath))
-	if err != nil {
-		return nil
-	}
-	var pc map[string]string
-	if json.Unmarshal(b, &pc) != nil {
-		return nil
-	}
-	return pc
 }
 
 // mergeCtx combines the volume context with the publish context.
@@ -232,7 +199,7 @@ func (s *nodeServer) NodeStageVolume(ctx context.Context, req *csipb.NodeStageVo
 	}
 	// Remember how to detach. A failure here is not fatal to the mount, but it
 	// does mean unstage may not be able to log out, so it is logged loudly.
-	if err := writeStageRecord(req.GetStagingTargetPath(),
+	if err := node.WriteStageRecord(req.GetStagingTargetPath(), req.GetVolumeId(),
 		mergeCtx(req.GetVolumeContext(), req.GetPublishContext())); err != nil {
 		obs.Logger(ctx).Warn("could not record publish context for unstage; "+
 			"the iscsi session may have to be cleaned up by hand",
@@ -249,7 +216,7 @@ func (s *nodeServer) NodeUnstageVolume(ctx context.Context, req *csipb.NodeUnsta
 		return nil, status.Error(codes.InvalidArgument, "volume id and staging target path are required")
 	}
 	ctx = obs.WithVolume(ctx, req.GetVolumeId())
-	pc := readStageRecord(req.GetStagingTargetPath())
+	pc := node.ReadStageRecord(req.GetStagingTargetPath())
 	if err := s.n.Unstage(ctx, node.UnstageRequest{
 		VolumeID:       req.GetVolumeId(),
 		StagingPath:    req.GetStagingTargetPath(),
@@ -257,7 +224,7 @@ func (s *nodeServer) NodeUnstageVolume(ctx context.Context, req *csipb.NodeUnsta
 	}); err != nil {
 		return nil, nodeErr(err)
 	}
-	_ = os.Remove(stageRecordPath(req.GetStagingTargetPath()))
+	_ = os.Remove(node.StageRecordPath(req.GetStagingTargetPath()))
 	return &csipb.NodeUnstageVolumeResponse{}, nil
 }
 
@@ -283,7 +250,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csipb.NodePubli
 	}
 	pc := mergeCtx(req.GetVolumeContext(), req.GetPublishContext())
 	if len(pc) == 0 {
-		pc = readStageRecord(req.GetStagingTargetPath())
+		pc = node.ReadStageRecord(req.GetStagingTargetPath())
 	}
 	if err := s.n.Publish(ctx, node.PublishRequest{
 		VolumeID:         req.GetVolumeId(),
@@ -300,7 +267,7 @@ func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csipb.NodePubli
 	}
 	// Also record it against the target path: NodeExpandVolume is called with
 	// the published volume path and may carry no staging path at all.
-	if err := writeStageRecord(req.GetTargetPath(), pc); err != nil {
+	if err := node.WriteStageRecord(req.GetTargetPath(), req.GetVolumeId(), pc); err != nil {
 		obs.Logger(ctx).Warn("could not record publish context at the target path",
 			"error", obs.Redact(err.Error()))
 	}
@@ -321,7 +288,7 @@ func (s *nodeServer) NodeUnpublishVolume(ctx context.Context, req *csipb.NodeUnp
 		return nil, nodeErr(err)
 	}
 	s.published.release(req.GetVolumeId(), req.GetTargetPath())
-	_ = os.Remove(stageRecordPath(req.GetTargetPath()))
+	_ = os.Remove(node.StageRecordPath(req.GetTargetPath()))
 	return &csipb.NodeUnpublishVolumeResponse{}, nil
 }
 
@@ -338,9 +305,9 @@ func (s *nodeServer) NodeExpandVolume(ctx context.Context, req *csipb.NodeExpand
 			"volume path %s does not exist on this node", req.GetVolumePath())
 	}
 	staging := req.GetStagingTargetPath()
-	pc := readStageRecord(staging)
+	pc := node.ReadStageRecord(staging)
 	if len(pc) == 0 {
-		pc = readStageRecord(req.GetVolumePath())
+		pc = node.ReadStageRecord(req.GetVolumePath())
 	}
 	out, err := s.n.Expand(ctx, node.ExpandRequest{
 		VolumeID:         req.GetVolumeId(),
