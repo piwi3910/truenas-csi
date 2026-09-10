@@ -50,8 +50,13 @@ func TestDeleteSnapshotWithDependentClone(t *testing.T) {
 	s.HandleValue("pool.snapshot.query", []any{map[string]any{"id": "Pool0/k8s/pvc-1@snap1"}})
 	s.Handle("pool.dataset.query", func([]json.RawMessage) (any, error) {
 		var v any
+		// The middleware UPPERCASES origin's display value and keeps the true
+		// name only in parsed/rawvalue — verified on a real appliance. The
+		// fixture used to echo it back verbatim, which let this guard pass here
+		// while never once matching a clone against the appliance.
 		_ = json.Unmarshal([]byte(`[{"id":"Pool0/k8s/pvc-restored",
-		  "origin":{"parsed":"Pool0/k8s/pvc-1@snap1","value":"Pool0/k8s/pvc-1@snap1","source":"NONE"}}]`), &v)
+		  "origin":{"parsed":"Pool0/k8s/pvc-1@snap1","rawvalue":"Pool0/k8s/pvc-1@snap1",
+		            "value":"POOL0/K8S/PVC-1@SNAP1","source":"NONE"}}]`), &v)
 		return v, nil
 	})
 	r := regWith(t, s)
@@ -177,5 +182,42 @@ func TestCreateSnapshotFilesystemSizeComesFromDataset(t *testing.T) {
 	}
 	if snap.SizeBytes != 1073741824 {
 		t.Errorf("SizeBytes = %d, want the source refquota 1073741824", snap.SizeBytes)
+	}
+}
+
+// TestDeleteGroupSnapshotWithDependentClone: the group guard had the same hole
+// as the single-snapshot one and no test at all.
+//
+// It keyed a map of clones by origin's display value, which the middleware
+// returns UPPERCASED, then looked it up by the real snapshot id -- so the
+// lookup never hit, the guard never fired, and a group snapshot with dependent
+// volumes went to the delete path instead of being refused by name.
+func TestDeleteGroupSnapshotWithDependentClone(t *testing.T) {
+	s := fake.Start(t, fake.Options{})
+	s.HandleValue("pool.snapshot.query", []any{
+		map[string]any{"id": "Pool0/k8s@grp1", "dataset": "Pool0/k8s"},
+		map[string]any{"id": "Pool0/k8s/pvc-1@grp1", "dataset": "Pool0/k8s/pvc-1"},
+	})
+	s.Handle("pool.dataset.query", func([]json.RawMessage) (any, error) {
+		var v any
+		_ = json.Unmarshal([]byte(`[{"id":"Pool0/k8s/pvc-restored",
+		  "origin":{"parsed":"Pool0/k8s/pvc-1@grp1","rawvalue":"Pool0/k8s/pvc-1@grp1",
+		            "value":"POOL0/K8S/PVC-1@GRP1","source":"NONE"}}]`), &v)
+		return v, nil
+	})
+	r := regWith(t, s)
+
+	err := r.DeleteGroupSnapshot(context.Background(), "nas1/Pool0/k8s@grp1",
+		[]string{"nas1/Pool0/k8s/pvc-1@grp1"})
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("want FailedPrecondition, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "pvc-restored") {
+		t.Errorf("error should name the dependent volume: %v", err)
+	}
+	for _, c := range s.Calls() {
+		if c == "pool.snapshot.delete" {
+			t.Fatal("must not delete a group snapshot that still has clones")
+		}
 	}
 }

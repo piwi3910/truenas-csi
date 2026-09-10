@@ -518,7 +518,7 @@ func (m *Manager) Failover(ctx context.Context, g Group, opts ActionOptions) (*S
 		if err := updateDataset(ctx, dst, target, map[string]any{"readonly": "OFF"}); err != nil {
 			return nil, fmt.Errorf("promoting %s: %w", target, err)
 		}
-		if ds.Origin.Value != "" {
+		if ds.OriginSnapshot() != "" {
 			if err := promoteDataset(ctx, dst, target); err != nil {
 				return nil, fmt.Errorf("promoting clone %s: %w", target, err)
 			}

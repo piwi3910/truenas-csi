@@ -204,10 +204,7 @@ func (c *Ops) clonesOf(ctx context.Context, id string) []string {
 	}
 	var out []string
 	for i := range all {
-		// RawValue, never Value: the middleware uppercases origin's display
-		// form, so comparing Value against a real dataset id never matched and
-		// this refusal could never name the clone blocking the delete.
-		origin := all[i].Origin.RawValue
+		origin := all[i].OriginSnapshot()
 		if origin == "" {
 			continue
 		}

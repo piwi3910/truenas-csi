@@ -295,7 +295,7 @@ func (r *Registry) DeleteGroupSnapshot(ctx context.Context, id string, memberIDs
 	}
 	clonesOf := map[string][]string{}
 	for i := range all {
-		if o := all[i].Origin.Value; o != "" {
+		if o := all[i].OriginSnapshot(); o != "" {
 			clonesOf[o] = append(clonesOf[o], all[i].ID)
 		}
 	}

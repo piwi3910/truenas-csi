@@ -207,7 +207,7 @@ func TestOriginDecodesTheMachineForm(t *testing.T) {
 	if err := json.Unmarshal([]byte(body), &ds); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if got := ds.Origin.RawValue; got != "Pool0/k8s/osrc@Snap1" {
+	if got := ds.OriginSnapshot(); got != "Pool0/k8s/osrc@Snap1" {
 		t.Fatalf("Origin.RawValue = %q, want the true snapshot name", got)
 	}
 }

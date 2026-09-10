@@ -157,7 +157,7 @@ func (r *Registry) dependentClones(ctx context.Context, c truenas.API, snapID st
 	}
 	var out []string
 	for i := range all {
-		if all[i].Origin.Value == snapID {
+		if all[i].OriginSnapshot() == snapID {
 			out = append(out, all[i].ID)
 		}
 	}

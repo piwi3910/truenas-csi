@@ -93,6 +93,33 @@ func (p *propField) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
+// originField decodes a clone's origin.
+//
+// It deliberately exposes NO Value field. The middleware returns origin's
+// display value uppercased, so a comparison against a real ZFS name that
+// reached for it failed silently -- and three separate guards did exactly that
+// for as long as the display form was reachable. Keeping only the machine form
+// makes the mistake unavailable rather than merely documented.
+type originField struct{ snapshot string }
+
+func (o *originField) UnmarshalJSON(b []byte) error {
+	var raw struct {
+		Parsed   json.RawMessage `json:"parsed"`
+		RawValue string          `json:"rawvalue"`
+	}
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return nil // an unexpected shape means "not a clone"
+	}
+	o.snapshot = raw.RawValue
+	// parsed carries the same name and is preferred when present: rawvalue is
+	// absent from some middleware responses, parsed from none seen so far.
+	var s string
+	if err := json.Unmarshal(raw.Parsed, &s); err == nil && s != "" {
+		o.snapshot = s
+	}
+	return nil
+}
+
 // Dataset is a ZFS filesystem or volume.
 type Dataset struct {
 	ID         string `json:"id"`
@@ -104,7 +131,7 @@ type Dataset struct {
 	Used      sizeField `json:"used"`
 	Available sizeField `json:"available"`
 
-	Origin         propField            `json:"origin"`
+	Origin         originField          `json:"origin"`
 	UserProperties map[string]propField `json:"user_properties"`
 
 	// The native ZFS properties the driver is allowed to change on a live
@@ -117,6 +144,17 @@ type Dataset struct {
 	ATime       propField `json:"atime"`
 	RecordSize  propField `json:"recordsize"`
 }
+
+// OriginSnapshot is the snapshot this dataset was cloned from, or "" when it is
+// not a clone.
+//
+// It returns origin's MACHINE form. The middleware returns origin's display
+// value uppercased -- verified on 25.10.6, where a dataset cloned from
+// Pool0/k8s/osrc@Snap1 reported value "POOL0/K8S/OSRC@SNAP1" while parsed and
+// rawvalue both held the true name. Every comparison against a real ZFS name
+// that read the display form failed silently: nothing errors, the match simply
+// never happens, and three separate guards were dead in exactly that way.
+func (d *Dataset) OriginSnapshot() string { return d.Origin.snapshot }
 
 // ZFSProperty returns one of the native ZFS properties this client decodes,
 // looked up by its ZFS name, and reports whether the name is one of them.
