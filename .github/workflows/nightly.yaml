@@ -204,6 +204,10 @@ jobs:
             echo
             echo "Also tagged \`nightly\`. Digest \`${DIGEST}\`."
             echo
+            echo "Prefer the \`nightly-<sha>\` tag over \`nightly\`: the chart ships"
+            echo "\`pullPolicy: IfNotPresent\`, so a node holding a cached \`:nightly\`"
+            echo "will not fetch a newer one."
+            echo
             echo "Not a release: unsigned, no SBOM attestation, \`latest\` untouched."
           } >> "$GITHUB_STEP_SUMMARY"
         env:
