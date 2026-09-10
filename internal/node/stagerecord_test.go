@@ -354,7 +354,7 @@ func TestTheHostIsScannedOnceAtStartup(t *testing.T) {
 	if err := os.Remove(filepath.Join(root, "proc", "mounts")); err != nil {
 		t.Fatal(err)
 	}
-	entries, err := n.mountsToScan(context.Background())
+	entries, err := n.startupMountScan(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

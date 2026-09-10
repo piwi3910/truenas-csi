@@ -92,7 +92,7 @@ type PublishedTarget struct {
 // directory walk: a publication that is no longer mounted is not a publication,
 // and reserving it would refuse a legitimate publish for ever.
 func (n *Node) PublishedTargets(ctx context.Context) []PublishedTarget {
-	entries, err := n.mountsToScan(ctx)
+	entries, err := n.startupMountScan(ctx)
 	if err != nil {
 		return nil
 	}
@@ -154,7 +154,13 @@ func readStageRecord(path string) (stageRecord, bool) {
 // reads — and the only thing it protects against is a read that never returns.
 var scanTimeout = 20 * time.Second
 
-// mountsToScan is the host mount table, read under a deadline.
+// startupMountScan is the host mount table, read under a deadline and cached
+// for the life of the process.
+//
+// The cache is why the name says STARTUP: the answer is only valid before this
+// process has staged anything, which is exactly when the two recoveries run. A
+// caller added later that wanted the CURRENT mount table would get the one from
+// startup and be quietly wrong, so such a caller must use mounts() instead.
 //
 // Reading a record means reading a file in the DIRECTORY HOLDING a mount point,
 // and this walks every mount on the host, including other software's. That
@@ -167,7 +173,7 @@ var scanTimeout = 20 * time.Second
 // mount going away will release it — and the caller carries on with no
 // recovery, which is the behaviour before recovery existed. The same trade the
 // health monitor makes, for the same reason.
-func (n *Node) mountsToScan(ctx context.Context) ([]mountEntry, error) {
+func (n *Node) startupMountScan(ctx context.Context) ([]mountEntry, error) {
 	// Once per process. Both recoveries — the health monitor's targets and the
 	// single-writer reservation — want the same answer, and both run at
 	// startup, before the plugin serves anything and while the liveness probe
@@ -224,7 +230,7 @@ func (n *Node) scanMounts(ctx context.Context) ([]mountEntry, error) {
 // the staging mount of a filesystem volume and the published bind mount of a
 // raw block volume carry a record, so both are found.
 func (n *Node) RecoverStagedVolumes(ctx context.Context) int {
-	entries, err := n.mountsToScan(ctx)
+	entries, err := n.startupMountScan(ctx)
 	if err != nil {
 		obs.Logger(ctx).Warn("could not read the host mount table; volumes staged before "+
 			"this process started will not be monitored until they are staged again",
