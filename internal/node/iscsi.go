@@ -65,6 +65,20 @@ func (n *Node) stageISCSI(ctx context.Context, req StageRequest) error {
 	}
 
 	device, err := n.deviceFor(ctx, naa)
+	if errors.Is(err, ErrDeviceNotFound) {
+		// One recovery, then one more look. The LUN this volume was given may
+		// be one this node still holds a device for from a volume deleted
+		// earlier: LUN ids are recycled, and a live session is never told that
+		// a LUN now means a different disk. Without this the node is stuck for
+		// good — every retry logs in to a session that already exists, finds
+		// nothing new, and fails again with the same message.
+		if n.dropStaleTargetDevices(ctx, portal, iqn, naa) > 0 {
+			if rErr := iscsiRescan(ctx, n.exec, portal, iqn); rErr != nil {
+				return err
+			}
+			device, err = n.deviceFor(ctx, naa)
+		}
+	}
 	if err != nil {
 		return err
 	}
@@ -110,6 +124,12 @@ func (n *Node) unstageISCSI(ctx context.Context, req UnstageRequest) error {
 	if portal == "" || iqn == "" {
 		return nil
 	}
+	// This volume's own device goes first, and it goes whether or not the
+	// session survives. The appliance is free to give this volume's LUN id to
+	// the next volume created, and a device left behind here would then name a
+	// LUN whose contents have changed — which the kernel has no way to notice.
+	n.dropDeviceForNAA(ctx, req.PublishContext[KeyNAA])
+
 	// The session is SHARED by every volume this driver has staged on the node,
 	// because every volume is a LUN on one target. Logging out while a sibling
 	// is still mounted takes that sibling's data path down with it.
