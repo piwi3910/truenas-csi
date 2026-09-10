@@ -276,11 +276,19 @@ func normalizeNAA(naa string) string {
 	return strings.ToLower(strings.TrimPrefix(strings.TrimSpace(strings.ToLower(naa)), "0x"))
 }
 
-// formatIfBlank creates a filesystem on device only when blkid reports none. This
-// check is the difference between a retried NodeStageVolume and a destroyed volume,
-// so the rule is absolute: never mkfs a device that already carries a filesystem.
+// formatIfBlank creates a filesystem on device only when blkid POSITIVELY
+// reports that it holds none.
+//
+// This check is the difference between a retried NodeStageVolume and a
+// destroyed volume, so the rule is absolute: never mkfs a device that already
+// carries a filesystem, and never mkfs a device whose state could not be
+// established. "Could not ask" is not "blank".
 func (n *Node) formatIfBlank(ctx context.Context, device, fsType string) error {
-	if n.hasFilesystem(ctx, device) {
+	blank, err := n.deviceIsBlank(ctx, device)
+	if err != nil {
+		return err
+	}
+	if !blank {
 		return nil
 	}
 	if _, err := n.exec.Run(ctx, "mkfs."+fsType, device); err != nil {
@@ -289,18 +297,36 @@ func (n *Node) formatIfBlank(ctx context.Context, device, fsType string) error {
 	return nil
 }
 
-// hasFilesystem reports whether blkid sees a filesystem on device. blkid exits
-// non-zero with no output for a blank device, which is the signal to format; any
-// other failure is treated as "there might be a filesystem", because guessing wrong
-// in that direction only costs a failed stage, while guessing wrong in the other
-// costs the data.
-func (n *Node) hasFilesystem(ctx context.Context, device string) bool {
+// deviceIsBlank reports whether blkid said the device holds no filesystem, and
+// errors when blkid could not answer at all.
+//
+// blkid exits 2 with NO output for a genuinely blank device, and that exit
+// status is the only thing separating it from every other failure — a missing
+// binary, a permission error, a busy device — which also produce no output.
+// Treating an empty answer as "blank" therefore formatted devices nobody had
+// established were empty, and blkid is not among the binaries preflight
+// requires, so a host without it advertised ext4 and xfs and then reformatted
+// every volume staged on it.
+//
+// Guessing "there is a filesystem" costs a failed stage the CO retries.
+// Guessing the other way costs the data, so only a positive exit-2 answer is
+// allowed to mean blank.
+func (n *Node) deviceIsBlank(ctx context.Context, device string) (bool, error) {
 	out, err := n.exec.Run(ctx, "blkid", "-p", "-s", "TYPE", "-o", "value", device)
 	if err == nil {
-		return strings.TrimSpace(string(out)) != ""
+		return strings.TrimSpace(string(out)) == "", nil
 	}
-	if strings.TrimSpace(string(out)) != "" {
-		return true
+	var coded interface{ ExitCode() int }
+	if errors.As(err, &coded) && coded.ExitCode() == blkidNothingFound &&
+		strings.TrimSpace(string(out)) == "" {
+		return true, nil
 	}
-	return false
+	return false, fmt.Errorf(
+		"refusing to stage %s: blkid could not establish whether it already holds a "+
+			"filesystem, and formatting a device that does would destroy it. Ensure blkid "+
+			"(util-linux) is installed on this node: %w", device, err)
 }
+
+// blkidNothingFound is blkid's exit status for "the device holds nothing I
+// recognise", which is the only answer that licenses mkfs.
+const blkidNothingFound = 2

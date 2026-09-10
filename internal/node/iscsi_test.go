@@ -84,7 +84,9 @@ func (h *iscsiHandler) run(name string, args []string) ([]byte, error) {
 			return []byte(`/dev/sdc: UUID="a1" TYPE="ext4"` + "\n"), nil
 		}
 		// blkid exits 2 with no output when the device holds no filesystem.
-		return nil, fmt.Errorf("exit status 2")
+		// The EXIT STATUS is what says so: every other blkid failure is also
+		// silent, and only this one licenses mkfs.
+		return nil, exitErr{blkidNothingFound}
 	case "iscsiadm":
 		target := argValue(args, "-T")
 		switch {
@@ -364,5 +366,77 @@ func TestStageFailsWhenFsTypeUnavailable(t *testing.T) {
 	}
 	if got := e.cmds(); len(got) != 0 {
 		t.Fatalf("node acted on the host before failing the preflight: %q", got)
+	}
+}
+
+// exitErr is an error carrying a real process exit status, which is the only
+// thing that distinguishes "blkid ran and found no filesystem" from "blkid
+// could not answer".
+type exitErr struct{ code int }
+
+func (e exitErr) Error() string { return fmt.Sprintf("exit status %d", e.code) }
+func (e exitErr) ExitCode() int { return e.code }
+
+// blkidExec answers blkid with a fixed result and refuses every other command,
+// so a test that formats shows up as a call to mkfs.
+type blkidExec struct {
+	out []byte
+	err error
+	ran []string
+}
+
+func (b *blkidExec) Run(_ context.Context, name string, args ...string) ([]byte, error) {
+	b.ran = append(b.ran, name+" "+strings.Join(args, " "))
+	if name == "blkid" {
+		return b.out, b.err
+	}
+	return nil, nil
+}
+
+func (b *blkidExec) formatted() bool {
+	for _, c := range b.ran {
+		if strings.HasPrefix(c, "mkfs.") {
+			return true
+		}
+	}
+	return false
+}
+
+// TestNeverFormatsWhenBlkidCannotAnswer is the most destructive bug this driver
+// could have.
+//
+// blkid exits 2 with no output for a genuinely blank device, and that is the
+// ONLY answer that licenses mkfs. Every other failure — blkid missing from the
+// host, a permission error, a device busy — also produces no output, and
+// treating those as "blank" formats a device that may hold somebody's data.
+// blkid is not in the preflight requirements either, so a node without it
+// advertises ext4 and xfs and then formats every volume it stages.
+func TestNeverFormatsWhenBlkidCannotAnswer(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		out    []byte
+		err    error
+		format bool
+	}{
+		{name: "blank device: blkid exits 2 with no output", err: exitErr{2}, format: true},
+		{name: "device carries a filesystem", out: []byte("ext4\n")},
+		{name: "blkid is not installed on the host",
+			err: errors.New("blkid: executable file not found in $PATH")},
+		{name: "blkid failed for some other reason", err: exitErr{4}},
+		{name: "blkid was killed", err: exitErr{-1}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ex := &blkidExec{out: tc.out, err: tc.err}
+			n := &Node{exec: ex}
+			err := n.formatIfBlank(context.Background(), "/dev/sdc", "ext4")
+			switch {
+			case tc.format && err != nil:
+				t.Fatalf("a blank device must be formatted, got %v", err)
+			case tc.format && !ex.formatted():
+				t.Fatal("a blank device must be formatted")
+			case !tc.format && ex.formatted():
+				t.Fatal("FORMATTED a device blkid did not report as blank — this destroys data")
+			}
+		})
 	}
 }

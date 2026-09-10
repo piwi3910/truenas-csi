@@ -68,7 +68,7 @@ func (r *recorder) modprobe(_ context.Context, mod string) error {
 // when the binary providing it is absent, or that fails to name the package an
 // operator must install.
 func TestPreflightMissingTool(t *testing.T) {
-	root := fakeRoot(t, []string{"sbin/mkfs.ext4", "sbin/resize2fs"}, nil, nil)
+	root := fakeRoot(t, []string{"sbin/mkfs.ext4", "sbin/resize2fs", "sbin/blkid"}, nil, nil)
 
 	var rec recorder
 	p, err := Detect(context.Background(), root, rec.modprobe)
@@ -182,7 +182,7 @@ func TestPreflightAlreadyLoadedModuleIsNotReloaded(t *testing.T) {
 // TestTopologyLabelsReflectCapabilities catches labels that are hard-coded rather
 // than derived from what was actually detected.
 func TestTopologyLabelsReflectCapabilities(t *testing.T) {
-	without := fakeRoot(t, []string{"sbin/mkfs.ext4", "sbin/resize2fs"}, nil, nil)
+	without := fakeRoot(t, []string{"sbin/mkfs.ext4", "sbin/resize2fs", "sbin/blkid"}, nil, nil)
 	p, err := Detect(context.Background(), without, nil)
 	if err != nil {
 		t.Fatalf("Detect: %v", err)
@@ -195,7 +195,7 @@ func TestTopologyLabelsReflectCapabilities(t *testing.T) {
 		t.Fatalf("ext4 label = %q on a node with e2fsprogs, want \"true\"", got)
 	}
 
-	with := fakeRoot(t, []string{"sbin/mkfs.xfs", "sbin/xfs_growfs"}, nil, nil)
+	with := fakeRoot(t, []string{"sbin/mkfs.xfs", "sbin/xfs_growfs", "sbin/blkid"}, nil, nil)
 	p, err = Detect(context.Background(), with, nil)
 	if err != nil {
 		t.Fatalf("Detect: %v", err)
@@ -212,7 +212,7 @@ func TestTopologyLabelsReflectCapabilities(t *testing.T) {
 // TestDetectFindsBinariesInEverySearchDir catches a Detect that only looks in sbin.
 func TestDetectFindsBinariesInEverySearchDir(t *testing.T) {
 	for _, dir := range []string{"sbin", "usr/sbin", "bin", "usr/bin"} {
-		root := fakeRoot(t, []string{dir + "/mkfs.xfs", dir + "/xfs_growfs"}, nil, nil)
+		root := fakeRoot(t, []string{dir + "/mkfs.xfs", dir + "/xfs_growfs", dir + "/blkid"}, nil, nil)
 		p, err := Detect(context.Background(), root, nil)
 		if err != nil {
 			t.Fatalf("Detect: %v", err)

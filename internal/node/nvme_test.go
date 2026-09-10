@@ -80,7 +80,9 @@ func (h *nvmeHandler) run(name string, args []string) ([]byte, error) {
 		if h.hasFS {
 			return []byte("ext4\n"), nil
 		}
-		return nil, errors.New("exit status 2")
+		// The EXIT STATUS is what says "no filesystem here"; a bare error would
+		// mean blkid could not answer, which must never license mkfs.
+		return nil, exitErr{blkidNothingFound}
 	case "nvme":
 		if len(args) == 0 {
 			return nil, nil
