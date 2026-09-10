@@ -205,7 +205,7 @@ func poolTable(w *tabwriter.Writer, backend string, v any) {
 func diskTable(w *tabwriter.Writer, backend string, v any) {
 	disks, _ := v.([]pooladmin.Disk)
 	_, _ = fmt.Fprintf(w, "\n%s — disks\n", backend)
-	_, _ = fmt.Fprintln(w, "NAME\tPOOL\tSIZE\tMODEL\tSERIAL\tSMART")
+	_, _ = fmt.Fprintln(w, "NAME\tPOOL\tSIZE\tMODEL\tSERIAL\tSMART\tALERTS")
 	for _, d := range disks {
 		// "unavailable" and "disabled" are different claims about someone's
 		// hardware. TrueNAS 25.10 exposes no SMART API at all, and printing
@@ -214,8 +214,16 @@ func diskTable(w *tabwriter.Writer, backend string, v any) {
 		if !d.SMARTAvailable {
 			smart = "unavailable"
 		}
-		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
-			d.Name, d.Pool, humanBytes(d.SizeBytes), d.Model, d.Serial, smart)
+		// Which is exactly why this column exists. With no SMART surface, an
+		// alert naming the disk's serial is the only thing the appliance will
+		// say about a failing disk, and a table that showed "unavailable" and
+		// nothing else read as "nothing is known" when something was.
+		alerts := d.AlertedBy
+		if alerts == "" {
+			alerts = "-"
+		}
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			d.Name, d.Pool, humanBytes(d.SizeBytes), d.Model, d.Serial, smart, alerts)
 	}
 }
 

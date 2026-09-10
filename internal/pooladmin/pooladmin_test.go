@@ -314,3 +314,59 @@ func TestDiskHealthDoesNotClaimSMARTIsDisabled(t *testing.T) {
 		}
 	}
 }
+
+// TestAlertsMarkTheDiskTheyName closes a gap between two things this package
+// already reads.
+//
+// TrueNAS 25.10 exposes no SMART surface at all — there are no smart.* methods
+// and disk.query returns no SMART fields, both verified against a live 25.10.6
+// appliance — so every disk reports SMART "unavailable" and Healthy stays true
+// for want of evidence.
+//
+// But the appliance does report failing disks: as ALERTS. The same Collect that
+// says a disk is healthy was, on the validation appliance, simultaneously
+// reporting "2 uncorrectable errors reported for sdh (ZR12J8YL)". The evidence
+// was already in hand and simply not joined up, so `pool disks` called a disk
+// with known uncorrectable errors healthy.
+//
+// The join is on SERIAL rather than device name: sd* names are assigned by the
+// kernel and move between boots, while a serial is unique and cannot collide
+// with unrelated text in an alert.
+func TestAlertsMarkTheDiskTheyName(t *testing.T) {
+	disks := []Disk{
+		{Name: "sdh", Serial: "ZR12J8YL", Healthy: true},
+		{Name: "sdc", Serial: "ZR141E75", Healthy: true},
+	}
+	alerts := []Alert{
+		{Level: "WARNING", Class: "SMARTUncorrectedErrors",
+			Formatted: "2 uncorrectable errors reported for sdh (ZR12J8YL)."},
+		{Level: "WARNING", Class: "SSHLoginFailures",
+			Formatted: "31 SSH login failures in the last 24 hours"},
+	}
+
+	got := markAlertedDisks(disks, alerts)
+
+	if got[0].Healthy {
+		t.Error("sdh has an active uncorrectable-errors alert against its serial " +
+			"and is still reported healthy")
+	}
+	if !strings.Contains(got[0].AlertedBy, "SMARTUncorrectedErrors") {
+		t.Errorf("the disk should name the alert that condemned it, got %q", got[0].AlertedBy)
+	}
+	if !got[1].Healthy {
+		t.Error("sdc has no alert against it and must stay healthy")
+	}
+	if got[1].AlertedBy != "" {
+		t.Errorf("sdc should carry no alert, got %q", got[1].AlertedBy)
+	}
+}
+
+// TestAlertsDoNotMatchAnEmptySerial: a disk the appliance reports without a
+// serial must not be condemned by every alert that happens to contain "".
+func TestAlertsDoNotMatchAnEmptySerial(t *testing.T) {
+	disks := []Disk{{Name: "sdj", Serial: "", Healthy: true}}
+	alerts := []Alert{{Level: "WARNING", Class: "X", Formatted: "something happened"}}
+	if got := markAlertedDisks(disks, alerts); !got[0].Healthy {
+		t.Error("a disk with no serial was condemned by an unrelated alert")
+	}
+}

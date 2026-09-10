@@ -18,6 +18,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -120,6 +122,49 @@ type Disk struct {
 	// absent SMART result reads as healthy-but-unknown rather than failed, so a
 	// controller without SMART passthrough does not page an operator nightly.
 	Healthy bool
+	// AlertedBy names the appliance alert classes that mention this disk's
+	// serial, empty when none do.
+	//
+	// It exists because 25.10 exposes no SMART surface, so the only thing the
+	// appliance will tell anyone about a failing disk is an alert. Reporting
+	// SMART as "unavailable" and the disk as healthy, while the same appliance
+	// is raising SMARTUncorrectedErrors against it, is two true statements
+	// adding up to a false impression.
+	AlertedBy string
+}
+
+// markAlertedDisks flags every disk whose SERIAL appears in an active alert.
+//
+// Serial, not device name: sd* names are assigned by the kernel and move
+// between boots, so joining on them would follow the wrong disk after a
+// reboot, while a serial is unique and cannot collide with unrelated text.
+//
+// A disk the appliance reports without a serial is left alone rather than
+// matched against everything, which is what an empty needle would do.
+func markAlertedDisks(disks []Disk, alerts []Alert) []Disk {
+	out := make([]Disk, len(disks))
+	copy(out, disks)
+	for i := range out {
+		if out[i].Serial == "" {
+			continue
+		}
+		var classes []string
+		for _, a := range alerts {
+			if a.Dismissed || !strings.Contains(a.Formatted, out[i].Serial) {
+				continue
+			}
+			if !slices.Contains(classes, a.Class) {
+				classes = append(classes, a.Class)
+			}
+		}
+		if len(classes) == 0 {
+			continue
+		}
+		sort.Strings(classes)
+		out[i].AlertedBy = strings.Join(classes, ",")
+		out[i].Healthy = false
+	}
+	return out
 }
 
 // Alert is one active appliance alert.
@@ -334,14 +379,9 @@ func Collect(ctx context.Context, b Backend) (*Diagnostics, error) {
 		}
 	}
 
-	disks, err := DiskHealth(ctx, b)
-	if err != nil {
-		d.Errors = append(d.Errors, err.Error())
-	} else {
-		d.Disks = disks
-		for _, dk := range disks {
-			obs.SetDiskHealthy(b.Name, dk.Name, dk.Healthy)
-		}
+	disks, diskErr := DiskHealth(ctx, b)
+	if diskErr != nil {
+		d.Errors = append(d.Errors, diskErr.Error())
 	}
 
 	alerts, err := Alerts(ctx, b)
@@ -354,6 +394,17 @@ func Collect(ctx context.Context, b Backend) (*Diagnostics, error) {
 			byLevel[a.Level]++
 		}
 		obs.SetApplianceAlerts(b.Name, byLevel)
+	}
+
+	// Alerts are read BEFORE the disks are published, because on an appliance
+	// with no SMART surface they are the only thing that will say a disk is
+	// failing. Publishing the disks first would export truenas_disk_healthy=1
+	// for a disk this same call already knows the appliance is alerting on.
+	if diskErr == nil {
+		d.Disks = markAlertedDisks(disks, d.Alerts)
+		for _, dk := range d.Disks {
+			obs.SetDiskHealthy(b.Name, dk.Name, dk.Healthy)
+		}
 	}
 
 	if len(d.Errors) == 3 {
