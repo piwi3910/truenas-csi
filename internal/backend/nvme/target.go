@@ -3,14 +3,17 @@ package nvme
 import (
 	"context"
 	"fmt"
-	"github.com/piwi3910/truenas-csi/internal/obs"
 	"net"
 	"strconv"
 	"strings"
 	"sync"
 
+	"github.com/piwi3910/truenas-csi/internal/obs"
+
 	"github.com/piwi3910/truenas-csi/internal/truenas"
 	"github.com/piwi3910/truenas-csi/internal/volume"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // portMu serialises port creation. The port is the ONE object this backend
@@ -123,9 +126,22 @@ func (b *nvmeBackend) ensurePort(ctx context.Context, p Params, rollback *[]func
 		return nil, fmt.Errorf("querying NVMe-oF ports: %w", err)
 	}
 	for i := range ports {
-		if ports[i].TRType == trtype && ports[i].Port() == p.Port {
-			return &ports[i], nil
+		if ports[i].TRType != trtype || ports[i].Port() != p.Port {
+			continue
 		}
+		// A port carries its own enabled switch, and matching on transport and
+		// service id alone adopted a disabled one silently: the volume
+		// provisioned, bound to a listener that serves nothing, and then failed
+		// to attach with nothing pointing at the cause. Say so here instead,
+		// once, at the claim.
+		if !ports[i].Listening() {
+			return nil, status.Errorf(codes.FailedPrecondition,
+				"the NVMe-oF port on %s:%d is disabled on the appliance, so a volume bound "+
+					"to it could never be attached; enable it under Shares > NVMe-oF > Ports "+
+					"or point %s at another port",
+				ports[i].TRAddr, ports[i].Port(), ParamPort)
+		}
+		return &ports[i], nil
 	}
 
 	if addr == "" {

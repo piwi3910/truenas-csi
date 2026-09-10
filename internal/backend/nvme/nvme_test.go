@@ -1120,3 +1120,34 @@ func TestFailedCreateLeavesTheSharedPortAlone(t *testing.T) {
 			"by another volume loses its listener")
 	}
 }
+
+// TestDisabledPortIsRefusedRatherThanUsed: nvmet ports carry their own enabled
+// switch, and the driver matched an existing port on transport and service id
+// alone. A disabled port was therefore adopted silently — volumes provisioned,
+// bound to it, and then could never be attached, with nothing in the failure
+// pointing at the listener. Verified against a real appliance that
+// nvmet.port.update accepts {"enabled": false} and that create defaults it true.
+func TestDisabledPortIsRefusedRatherThanUsed(t *testing.T) {
+	ctx := context.Background()
+	n := newNAS(t)
+	b := n.backend()
+
+	n.mu.Lock()
+	n.ports = append(n.ports, map[string]any{
+		"id": float64(77), "addr_trtype": "TCP",
+		"addr_traddr": "192.168.10.253", "addr_trsvcid": float64(4420),
+		"enabled": false,
+	})
+	n.mu.Unlock()
+
+	_, err := b.Create(ctx, createReq("pvc-1", 1<<30, map[string]string{
+		ParamPortAddress: "192.168.10.253",
+	}))
+	if err == nil {
+		t.Fatal("a volume was provisioned against a DISABLED listener; it could " +
+			"never be attached and nothing would say why")
+	}
+	if !strings.Contains(err.Error(), "disabled") {
+		t.Fatalf("the refusal must name the disabled port, got: %v", err)
+	}
+}

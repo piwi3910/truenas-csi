@@ -96,7 +96,17 @@ type NVMePort struct {
 	TRType  string  `json:"addr_trtype"`
 	TRAddr  string  `json:"addr_traddr"`
 	TRSvcID flexInt `json:"addr_trsvcid"`
+
+	// Enabled is the listener's own switch. A POINTER because absent must not
+	// read as disabled: middleware that does not report the field at all would
+	// otherwise make every port look unusable and stop provisioning outright.
+	Enabled *bool `json:"enabled"`
 }
+
+// Listening reports whether the port is actually serving. A port that does not
+// report the field is assumed to be, which is how every release before it
+// behaved.
+func (p *NVMePort) Listening() bool { return p == nil || p.Enabled == nil || *p.Enabled }
 
 // Port returns the port's service id as an int.
 func (p *NVMePort) Port() int { return int(p.TRSvcID) }
