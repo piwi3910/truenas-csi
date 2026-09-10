@@ -240,3 +240,72 @@ func TestHealthConditionSurfacedInStats(t *testing.T) {
 		t.Error("usage must still be reported for an unhealthy volume")
 	}
 }
+
+// TestMonitorReportsADeviceThatIsADifferentVolume covers the one failure this
+// file's probes cannot see.
+//
+// A fenced node keeps its mounted device at a LUN the controller has since
+// given to another volume. Every existing probe passes on that device — it is
+// reachable, it stats, its portal dials — and the pod goes on writing into
+// another claim's data with nothing anywhere saying so.
+func TestMonitorReportsADeviceThatIsADifferentVolume(t *testing.T) {
+	const (
+		staged = "0x6589cfc0000002be12ecd2689a164171"
+		other  = "6589cfc0000005997b02e9e47100d1c1"
+	)
+	m := &HealthMonitor{
+		Statfs: func(string) error { return nil },
+		Dial:   func(context.Context, string) error { return nil },
+		Now:    time.Now,
+		// The kernel answers about the disk actually in the slot.
+		DeviceIdentity: func(string) (string, bool) { return other, true },
+	}
+	m.targets = map[string]HealthTarget{}
+	m.states = map[string]*HealthState{}
+	m.Track(HealthTarget{VolumeID: "nas1/iscsi/Pool0/k8s/pvc-a", Protocol: ProtocolISCSI,
+		Path: "/staging", Backend: "nas1", DataAddr: "192.168.10.253:3260", NAA: staged})
+
+	m.CheckOnce(context.Background())
+
+	abnormal, message := m.Condition("nas1/iscsi/Pool0/k8s/pvc-a")
+	if !abnormal {
+		t.Fatal("the monitor called a device healthy while it holds a different volume; " +
+			"the pod writes into another claim's data and nothing reports it")
+	}
+	if !strings.Contains(message, other) {
+		t.Errorf("the condition must name the identity actually found; got %q", message)
+	}
+}
+
+// TestMonitorDoesNotInventAMismatch keeps the check from turning the ordinary
+// cases into false alarms: the matching device, the device that has gone away
+// (which is the reachability case and has its own better message), and every
+// protocol that has no device at all.
+func TestMonitorDoesNotInventAMismatch(t *testing.T) {
+	const staged = "0x6589cfc0000002be12ecd2689a164171"
+	for _, tc := range []struct {
+		name     string
+		naa      string
+		identity func(string) (string, bool)
+	}{
+		{"the same device", staged, func(want string) (string, bool) { return want, true }},
+		{"a device that has gone away", staged, func(string) (string, bool) { return "", false }},
+		{"a protocol with no device", "", func(string) (string, bool) { return "anything", true }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := &HealthMonitor{
+				Statfs: func(string) error { return nil },
+				Dial:   func(context.Context, string) error { return nil },
+				Now:    time.Now, DeviceIdentity: tc.identity,
+			}
+			m.targets = map[string]HealthTarget{}
+			m.states = map[string]*HealthState{}
+			m.Track(HealthTarget{VolumeID: "v", Protocol: ProtocolISCSI, Path: "/staging",
+				Backend: "nas1", DataAddr: "192.168.10.253:3260", NAA: tc.naa})
+			m.CheckOnce(context.Background())
+			if abnormal, message := m.Condition("v"); abnormal {
+				t.Errorf("reported a healthy volume as unhealthy: %s", message)
+			}
+		})
+	}
+}

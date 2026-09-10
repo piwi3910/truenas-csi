@@ -316,13 +316,17 @@ type Node struct {
 // NewNode builds the node plugin for one node from its identity, the startup
 // capability preflight and an Executor reaching the host.
 func NewNode(nodeID string, p *Preflight, exec Executor) *Node {
-	return &Node{
+	n := &Node{
 		Root:   DefaultHostRoot,
 		nodeID: nodeID,
 		pre:    p,
 		exec:   exec,
 		health: NewHealthMonitor(),
 	}
+	// The monitor cannot read a device's identity on its own: the read is
+	// relative to the host root, which only the node knows.
+	n.health.DeviceIdentity = n.stagedDeviceIdentity
+	return n
 }
 
 // SetReachability records the startup backend reachability probe, whose result
@@ -382,6 +386,10 @@ func (n *Node) Stage(ctx context.Context, req StageRequest) error {
 		Path:     healthPathOf(req),
 		Backend:  backendOf(req.VolumeID),
 		DataAddr: dataAddrOf(req.PublishContext),
+		// Only iSCSI: it is the only protocol here whose address space the
+		// appliance recycles under a live initiator. An NVMe volume owns its
+		// whole subsystem, and the file protocols have no device at all.
+		NAA: req.PublishContext[KeyNAA],
 	})
 	n.trackIO(ctx, req, proto)
 	return nil

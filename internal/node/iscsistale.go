@@ -188,3 +188,32 @@ func (n *Node) deviceWWID(name string) string {
 	// value "0x6589cfc…".
 	return normalizeNAA(strings.TrimPrefix(strings.TrimSpace(string(b)), "naa."))
 }
+
+// stagedDeviceIdentity reports the identity the kernel currently gives the
+// device published under a NAA, and whether it could be read.
+//
+// It follows the by-id link rather than remembering a kernel name, because a
+// kernel name is exactly what goes stale: sdb is a slot, and the disk in it can
+// change. The link is regenerated from the device's own identity, so following
+// it and then reading the identity back is a round trip that can only disagree
+// with itself when the host layout is broken.
+//
+// The interesting case is the link being GONE while the mount lives on. That
+// happens when the appliance unmaps the LUN under a node it has fenced, and it
+// is reported as unreadable rather than as a mismatch: the caller treats an
+// unreadable identity as "no answer", which is the honest one.
+func (n *Node) stagedDeviceIdentity(naa string) (string, bool) {
+	id := normalizeNAA(naa)
+	if id == "" {
+		return "", false
+	}
+	dest, err := os.Readlink(filepath.Join(n.hostRoot(), "dev", "disk", "by-id", "scsi-3"+id))
+	if err != nil {
+		return "", false
+	}
+	got := n.deviceWWID(filepath.Base(dest))
+	if got == "" {
+		return "", false
+	}
+	return got, true
+}

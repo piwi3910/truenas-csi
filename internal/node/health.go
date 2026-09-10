@@ -72,6 +72,19 @@ type HealthTarget struct {
 	// DataAddr is the appliance's data address (host:port) — the NFS server or
 	// the iSCSI portal — probed with a bounded TCP dial.
 	DataAddr string
+	// NAA is the identity of the block device this volume was staged on, in the
+	// publish context's "0x…" spelling. Empty for the file protocols, which
+	// have no device.
+	//
+	// It is checked because reachability is not the only way a data path goes
+	// wrong. Every volume on a backend is a LUN on ONE shared target and the
+	// appliance recycles LUN ids, so a node fenced from a volume — force
+	// detached after going NotReady, say — keeps a mounted device at a LUN the
+	// controller has since given to a DIFFERENT volume. That device answers
+	// every probe in this file perfectly: it is reachable, it stats, the portal
+	// dials. It is simply not this volume any more, and the pod is writing into
+	// another claim's data.
+	NAA string
 }
 
 // HealthState is what the monitor last observed about one volume.
@@ -97,6 +110,11 @@ type HealthMonitor struct {
 	Statfs func(path string) error
 	// Dial probes an appliance data address.
 	Dial func(ctx context.Context, addr string) error
+	// DeviceIdentity reports the identity the kernel currently gives the device
+	// staged for a NAA, and whether it could be read at all. It is a field
+	// because the read needs the node's host root, which the monitor has no
+	// other reason to know.
+	DeviceIdentity func(naa string) (string, bool)
 	// Now is the clock, overridable in tests.
 	Now func() time.Time
 
@@ -261,6 +279,12 @@ func (m *HealthMonitor) CheckOnce(ctx context.Context) {
 
 // probeVolume runs the bounded filesystem check for one target.
 func (m *HealthMonitor) probeVolume(ctx context.Context, t HealthTarget) error {
+	// Identity before reachability: a device that is the wrong volume is worse
+	// than one that is unreachable, and saying "unreachable" about it would be
+	// a lie that reads as a network problem.
+	if err := m.checkIdentity(t); err != nil {
+		return err
+	}
 	if t.Path == "" {
 		// A raw block volume has no filesystem to stat; the backend dial is the
 		// only signal available, and it is applied by the caller.
@@ -271,6 +295,34 @@ func (m *HealthMonitor) probeVolume(ctx context.Context, t HealthTarget) error {
 		statfs = statfsProbe
 	}
 	return m.bounded(ctx, func() error { return statfs(t.Path) })
+}
+
+// ErrWrongDevice is the condition reported when a staged volume's device is no
+// longer the volume it was staged for.
+var ErrWrongDevice = errors.New("the staged device is a different volume")
+
+// checkIdentity verifies that the device this volume was staged on still
+// reports the identity it was staged with.
+//
+// This is a sysfs read, so unlike everything else here it cannot hang, and it
+// runs unbounded on purpose: wrapping it in a goroutine and a deadline would
+// add the one failure mode it does not have.
+//
+// A device that has gone away entirely is NOT reported here. That is the
+// ordinary "unreachable" case the rest of this file exists for, and it already
+// has a better message than this one would give it.
+func (m *HealthMonitor) checkIdentity(t HealthTarget) error {
+	if t.NAA == "" || m.DeviceIdentity == nil {
+		return nil
+	}
+	want := normalizeNAA(t.NAA)
+	got, ok := m.DeviceIdentity(want)
+	if !ok || got == "" || got == want {
+		return nil
+	}
+	return fmt.Errorf("%w: it now reports %s, not %s — the appliance has reassigned this "+
+		"volume's LUN and anything written here lands in another volume's data",
+		ErrWrongDevice, got, want)
 }
 
 // probeBackend runs the bounded appliance dial.
