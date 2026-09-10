@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -175,5 +176,72 @@ func TestExpandBlockVolumeIsNoOp(t *testing.T) {
 	}
 	if !sawRescan {
 		t.Fatalf("raw block expansion did not rescan the device: %q", e.cmds())
+	}
+}
+
+// countingBlockdev answers blockdev --getsize64 with a fixed size and counts
+// how many times it was asked.
+type countingBlockdev struct {
+	size  int64
+	polls int
+}
+
+func (c *countingBlockdev) Run(_ context.Context, name string, _ ...string) ([]byte, error) {
+	if name == "blockdev" {
+		c.polls++
+		return []byte(strconv.FormatInt(c.size, 10) + "\n"), nil
+	}
+	return nil, nil
+}
+
+// TestWaitForGrowthStopsOnceTheDeviceIsBigEnough.
+//
+// The wait used to look only for the size to CHANGE, so a device the kernel had
+// already grown before the driver first sampled it looked identical to one that
+// never grew: NodeExpandVolume sat out the full 30-second timeout on a volume
+// that was ready immediately, then logged "device size did not change after
+// rescan" — a warning that fires on the healthy path and is therefore no use
+// for spotting the unhealthy one. Both were observed on the real cluster.
+func TestWaitForGrowthStopsOnceTheDeviceIsBigEnough(t *testing.T) {
+	const want = 2 << 30
+	ex := &countingBlockdev{size: want}
+	n := &Node{exec: ex}
+
+	restore := expandWaitTimeout
+	expandWaitTimeout = 5 * time.Second
+	t.Cleanup(func() { expandWaitTimeout = restore })
+
+	start := time.Now()
+	got := n.waitForGrowth(context.Background(), "/dev/sdc", want, true, want)
+	if got != want {
+		t.Fatalf("size = %d, want %d", got, want)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("waited %s for a device that was already at the requested size", elapsed)
+	}
+	if ex.polls != 1 {
+		t.Fatalf("polled %d times; a device already at the requested size needs one look", ex.polls)
+	}
+}
+
+// TestWaitForGrowthKeepsWaitingUntilTheRequestedSize: a device that grows but
+// is still short of the request is not done. Returning at the first change
+// reported a partial expansion as the final answer.
+func TestWaitForGrowthKeepsWaitingUntilTheRequestedSize(t *testing.T) {
+	const want = 2 << 30
+	ex := &countingBlockdev{size: 1 << 30} // grew from 512M, still short of 2G
+	n := &Node{exec: ex}
+
+	restore, restorePoll := expandWaitTimeout, expandPollInterval
+	expandWaitTimeout, expandPollInterval = 300*time.Millisecond, 50*time.Millisecond
+	t.Cleanup(func() { expandWaitTimeout, expandPollInterval = restore, restorePoll })
+
+	got := n.waitForGrowth(context.Background(), "/dev/sdc", 512<<20, true, want)
+	if got != 1<<30 {
+		t.Fatalf("size = %d, want the observed %d", got, 1<<30)
+	}
+	if ex.polls < 2 {
+		t.Fatalf("polled %d times; a device short of the request must keep being "+
+			"watched rather than accepted at the first change", ex.polls)
 	}
 }

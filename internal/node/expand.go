@@ -73,7 +73,7 @@ func (n *Node) Expand(ctx context.Context, req ExpandRequest) (ExpandResponse, e
 	if err := rescan(); err != nil {
 		return resp, err
 	}
-	after := n.waitForGrowth(ctx, device, before, haveBefore)
+	after := n.waitForGrowth(ctx, device, before, haveBefore, req.CapacityBytes)
 	if after > 0 {
 		resp.CapacityBytes = after
 	}
@@ -134,25 +134,42 @@ func (n *Node) deviceSize(ctx context.Context, device string) (int64, bool) {
 	return size, true
 }
 
-// waitForGrowth waits for the kernel to publish the new device size after a rescan,
-// which is not instantaneous, and returns the size it settled on. A device whose
-// size never changes is not an error: the volume may already have been at the new
-// size from an earlier, partially completed expansion, and growing the filesystem
-// is idempotent anyway.
-func (n *Node) waitForGrowth(ctx context.Context, device string, before int64, haveBefore bool) int64 {
+// waitForGrowth waits for the kernel to publish the new device size after a
+// rescan, which is not instantaneous, and returns the size it settled on.
+//
+// It waits for the REQUESTED size rather than merely for the size to change.
+// Watching for a change alone got both ends of this wrong. A device the kernel
+// had already grown before the driver first sampled it never changed, so every
+// such expansion sat out the full timeout and then logged a warning — on the
+// healthy path, which made the warning useless for spotting the unhealthy one.
+// And a device that grew part of the way was accepted at the first change and
+// reported as the final answer. Both were observed on a real cluster.
+//
+// A device that is still short when the deadline passes is not failed here: the
+// size actually observed is returned, the CO compares it against what it asked
+// for, and growing the filesystem is idempotent either way. What changes is
+// that the warning now fires only when something really is wrong.
+func (n *Node) waitForGrowth(ctx context.Context, device string, before int64, haveBefore bool, want int64) int64 {
 	deadline := time.Now().Add(expandWaitTimeout)
 	last := before
 	for {
 		size, ok := n.deviceSize(ctx, device)
 		if ok {
 			last = size
-			if !haveBefore || size != before {
+			switch {
+			case want > 0 && size >= want:
+				return size
+			case want <= 0 && (!haveBefore || size != before):
+				// No requested size to aim at: fall back to "it changed".
 				return size
 			}
 		}
 		if !time.Now().Before(deadline) {
-			obs.Logger(ctx).Warn("device size did not change after rescan; growing the filesystem anyway",
-				"device", device, "size_bytes", last)
+			if want > 0 && last < want {
+				obs.Logger(ctx).Warn("device is still smaller than the requested size after a "+
+					"rescan; growing the filesystem to what the device actually reports",
+					"device", device, "size_bytes", last, "requested_bytes", want)
+			}
 			return last
 		}
 		time.Sleep(expandPollInterval)
