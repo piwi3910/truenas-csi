@@ -56,11 +56,20 @@ func (c *controller) GetCapacity(ctx context.Context, req *csipb.GetCapacityRequ
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	p, err := cl.PoolQuery(ctx, b.Pool)
+	// The POOL ROOT DATASET, not pool.query. pool.query reports raw bytes,
+	// which on a RAIDZ pool include parity that can never hold data: measured
+	// on a 12-disk RAIDZ2, 41.05 TiB raw free against 30.33 TiB actually
+	// writable. Advertising the raw figure told the scheduler there was a third
+	// more room than the pool could ever store.
+	root, err := cl.DatasetQuery(ctx, b.Pool)
 	if err != nil {
 		return nil, toStatus(err)
 	}
-	usable := usableCapacity(p.Free.Parsed, b.Reserve(p.Size.Parsed))
+	if root == nil {
+		return nil, status.Errorf(codes.FailedPrecondition, "pool %q does not exist", b.Pool)
+	}
+	usable := usableCapacity(root.Available.Parsed,
+		poolReserve(root.Available.Parsed, root.Used.Parsed, b.ReservedBytes, b.ReservedPercent))
 	return &csipb.GetCapacityResponse{
 		AvailableCapacity: usable,
 		// The largest volume this driver would actually create is the same
@@ -79,14 +88,37 @@ func (c *controller) GetCapacity(ctx context.Context, req *csipb.GetCapacityRequ
 	}, nil
 }
 
-// usableCapacity is the free space this driver may hand out: the pool's free
-// space less the operator's reservation, clamped at zero.
+// poolReserve is the operator's reservation, measured in WRITABLE bytes.
+//
+// config.Backend.Reserve takes a pool size, and the only size available to it
+// was pool.query's, which is RAW: on a RAIDZ pool that includes parity, which
+// can never hold data. A percentage of it therefore reserved a share of space
+// that partly does not exist. This takes the writable total instead — the
+// pool root dataset's available plus used — so "reserve a tenth of the pool"
+// means a tenth of what the pool can actually store.
+func poolReserve(writableFree, writableUsed, reservedBytes int64, reservedPercent float64) int64 {
+	reserve := reservedBytes
+	if reservedPercent > 0 {
+		if total := writableFree + writableUsed; total > 0 {
+			if pct := int64(float64(total) * reservedPercent / 100); pct > reserve {
+				reserve = pct
+			}
+		}
+	}
+	if reserve < 0 {
+		return 0
+	}
+	return reserve
+}
+
+// usableCapacity is the free space this driver may hand out: the pool's
+// WRITABLE free space less the operator's reservation, clamped at zero.
 //
 // The clamp is not cosmetic. A pool already inside its reserve would otherwise
 // report a NEGATIVE capacity, which the external-provisioner treats as an
 // enormous unsigned figure and happily schedules against.
-func usableCapacity(poolFree, reserve int64) int64 {
-	if avail := poolFree - reserve; avail > 0 {
+func usableCapacity(writableFree, reserve int64) int64 {
+	if avail := writableFree - reserve; avail > 0 {
 		return avail
 	}
 	return 0
@@ -115,17 +147,23 @@ func (c *controller) requireRoomOutsideReserve(ctx context.Context, backendName 
 	if err != nil {
 		return toStatus(err)
 	}
-	p, err := cl.PoolQuery(ctx, b.Pool)
+	// Same source as GetCapacity, and for the same reason: a reserve measured
+	// in raw bytes is not the headroom the operator asked for.
+	root, err := cl.DatasetQuery(ctx, b.Pool)
 	if err != nil {
 		return toStatus(err)
 	}
-	reserve := b.Reserve(p.Size.Parsed)
-	usable := usableCapacity(p.Free.Parsed, reserve)
+	if root == nil {
+		return status.Errorf(codes.FailedPrecondition, "pool %q does not exist", b.Pool)
+	}
+	free := root.Available.Parsed
+	reserve := poolReserve(free, root.Used.Parsed, b.ReservedBytes, b.ReservedPercent)
+	usable := usableCapacity(free, reserve)
 	if size > usable {
 		return status.Errorf(codes.ResourceExhausted,
-			"pool %q on backend %q has %d bytes free and reserves %d of them, leaving %d usable; "+
+			"pool %q on backend %q has %d writable bytes free and reserves %d of them, leaving %d usable; "+
 				"the request for %d bytes would eat into the reserve",
-			b.Pool, backendName, p.Free.Parsed, reserve, usable, size)
+			b.Pool, backendName, free, reserve, usable, size)
 	}
 	return nil
 }

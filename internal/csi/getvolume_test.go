@@ -283,13 +283,15 @@ func TestListVolumesReportsPublishedNodes(t *testing.T) {
 // oversized claim Pending if the driver says what oversized means, and the only
 // honest answer is the figure CreateVolume itself enforces.
 func TestGetCapacityReportsAMaximumVolumeSize(t *testing.T) {
-	const free, size = int64(44861949222912), int64(72000831750144)
+	// Writable bytes: capacity is measured against what the pool root dataset
+	// reports, not pool.query's raw figures.
+	const free, used = int64(33352704796320), int64(21466962973168)
 	s := fake.Start(t, fake.Options{})
-	s.Handle("pool.query", func([]json.RawMessage) (any, error) {
+	s.Handle("pool.dataset.query", func([]json.RawMessage) (any, error) {
 		var v any
 		_ = json.Unmarshal([]byte(fmt.Sprintf(
-			`[{"name":"Pool0","status":"ONLINE","healthy":true,
-			   "free":{"parsed":%d},"size":{"parsed":%d}}]`, free, size)), &v)
+			`[{"id":"Pool0","type":"FILESYSTEM",
+			   "available":{"parsed":%d},"used":{"parsed":%d}}]`, free, used)), &v)
 		return v, nil
 	})
 	c := ctlWithServer(t, s)

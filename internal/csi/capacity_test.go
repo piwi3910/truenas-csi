@@ -28,16 +28,32 @@ func ctlWithServer(t *testing.T, s *fake.Server) csipb.ControllerServer {
 	return NewController(r, cfg)
 }
 
-// TestCapacityMatchesPool uses the free-space figure the real appliance
-// reported for Pool0 during research.
-func TestCapacityMatchesPool(t *testing.T) {
-	const free = int64(44861949222912)
+// TestCapacityMatchesWritableSpace uses the figures the validation appliance
+// reported for its 12-disk RAIDZ2 Pool0.
+//
+// The raw pool numbers are served too, and are deliberately much larger: this
+// test used to read them, and a driver that goes back to reading them would
+// advertise a third more room than the pool can hold.
+func TestCapacityMatchesWritableSpace(t *testing.T) {
+	const (
+		writableFree = int64(33352704796320) // root dataset "available"
+		writableUsed = int64(21466962973168) // root dataset "used"
+		rawFree      = int64(45132604108800) // pool.query "free" — includes parity
+	)
 	s := fake.Start(t, fake.Options{})
 	s.Handle("pool.query", func([]json.RawMessage) (any, error) {
 		var v any
 		_ = json.Unmarshal([]byte(fmt.Sprintf(
 			`[{"name":"Pool0","status":"ONLINE","healthy":true,
-			   "free":{"parsed":%d},"size":{"parsed":72000831750144}}]`, free)), &v)
+			   "free":{"parsed":%d},"size":{"parsed":72000831750144}}]`, rawFree)), &v)
+		return v, nil
+	})
+	s.Handle("pool.dataset.query", func([]json.RawMessage) (any, error) {
+		var v any
+		_ = json.Unmarshal([]byte(fmt.Sprintf(
+			`[{"id":"Pool0","type":"FILESYSTEM",
+			   "available":{"parsed":%d},"used":{"parsed":%d}}]`,
+			writableFree, writableUsed)), &v)
 		return v, nil
 	})
 	c := ctlWithServer(t, s)
@@ -47,9 +63,14 @@ func TestCapacityMatchesPool(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resp.GetAvailableCapacity() != free {
-		t.Fatalf("reported %d, want the pool's real free space %d",
-			resp.GetAvailableCapacity(), free)
+	// No reservation is configured here, so the whole writable free space is
+	// on offer — and nothing of the raw figure.
+	if got := resp.GetAvailableCapacity(); got != writableFree {
+		t.Fatalf("reported %d, want the writable free space %d (raw free is %d)",
+			got, writableFree, rawFree)
+	}
+	if got := resp.GetMaximumVolumeSize().GetValue(); got != writableFree {
+		t.Fatalf("maximum volume size %d, want %d", got, writableFree)
 	}
 
 	_, err = c.GetCapacity(context.Background(), &csipb.GetCapacityRequest{

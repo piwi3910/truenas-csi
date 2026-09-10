@@ -73,22 +73,6 @@ type Backend struct {
 	InsecureSkipVerify bool `yaml:"insecureSkipVerify"`
 }
 
-// Reserve returns the number of bytes of poolSize this driver must leave
-// untouched: the larger of ReservedBytes and ReservedPercent of poolSize, and
-// zero when neither is configured. The result is never negative.
-func (b Backend) Reserve(poolSize int64) int64 {
-	reserve := b.ReservedBytes
-	if b.ReservedPercent > 0 && poolSize > 0 {
-		if pct := int64(float64(poolSize) * b.ReservedPercent / 100); pct > reserve {
-			reserve = pct
-		}
-	}
-	if reserve < 0 {
-		return 0
-	}
-	return reserve
-}
-
 // BreakerReset is the configured circuit-breaker reset timeout, or zero when
 // unset. Load has already rejected an unparsable value, so the zero here only
 // covers a Backend built in code; the client substitutes its own default.

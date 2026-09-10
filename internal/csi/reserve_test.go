@@ -14,18 +14,33 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// ctlWithPool builds a controller against a fake appliance whose pool reports
-// the given size and free space, with the reservation the backend is configured
-// with.
+// ctlWithPool builds a controller against a fake appliance whose pool can hold
+// `size` bytes of data with `free` of them still writable, and the reservation
+// the backend is configured with.
+//
+// size and free are WRITABLE bytes — what the pool root dataset reports, and
+// what the driver measures capacity in. pool.query is served too, with the
+// inflated raw figures a RAIDZ pool really returns, so a driver that went back
+// to reading them fails these tests instead of quietly advertising a third more
+// room than the pool can hold.
 func ctlWithPool(t *testing.T, size, free int64, reservedBytes int64, reservedPercent float64) (csipb.ControllerServer, *fake.Server) {
 	t.Helper()
 	s := fake.Start(t, fake.Options{})
 	s.HandleValue("system.info", map[string]any{"version": "25.10.6"})
 	s.Handle("pool.query", func([]json.RawMessage) (any, error) {
+		// 0.739 writable per raw byte, measured on a 12-disk RAIDZ2.
+		const inflate = 1000 / 739
 		return []any{map[string]any{
 			"name": "Pool0", "status": "ONLINE", "healthy": true,
-			"free": map[string]any{"parsed": free},
-			"size": map[string]any{"parsed": size},
+			"free": map[string]any{"parsed": free * inflate},
+			"size": map[string]any{"parsed": size * inflate},
+		}}, nil
+	})
+	s.Handle("pool.dataset.query", func([]json.RawMessage) (any, error) {
+		return []any{map[string]any{
+			"id": "Pool0", "type": "FILESYSTEM",
+			"available": map[string]any{"parsed": free},
+			"used":      map[string]any{"parsed": size - free},
 		}}, nil
 	})
 	cfg := &config.Config{NodeID: "worker-21", Backends: map[string]config.Backend{

@@ -40,29 +40,3 @@ func TestReservedConfigValidation(t *testing.T) {
 		}
 	}
 }
-
-// TestReserveTakesTheLargerReservation proves the two knobs do not add up: when
-// both are set the larger wins, so an operator who states both gets the stronger
-// guarantee rather than the sum of two independent guesses.
-func TestReserveTakesTheLargerReservation(t *testing.T) {
-	const poolSize = int64(1000)
-	for _, tc := range []struct {
-		name    string
-		bytes   int64
-		percent float64
-		want    int64
-	}{
-		{name: "none", want: 0},
-		{name: "bytes only", bytes: 250, want: 250},
-		{name: "percent only", percent: 10, want: 100},
-		{name: "both, bytes larger", bytes: 250, percent: 10, want: 250},
-		{name: "both, percent larger", bytes: 50, percent: 30, want: 300},
-	} {
-		b := validBackend()
-		b.ReservedBytes = tc.bytes
-		b.ReservedPercent = tc.percent
-		if got := b.Reserve(poolSize); got != tc.want {
-			t.Errorf("%s: Reserve(%d) = %d, want %d", tc.name, poolSize, got, tc.want)
-		}
-	}
-}

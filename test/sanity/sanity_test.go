@@ -36,7 +36,17 @@ type nas struct {
 }
 
 func newNAS() *nas {
-	return &nas{datasets: map[string]map[string]any{}, snaps: map[string]map[string]any{}}
+	n := &nas{datasets: map[string]map[string]any{}, snaps: map[string]map[string]any{}}
+	// The pool root dataset. Every appliance has one, and the driver measures
+	// capacity against it rather than against pool.query, whose figures are raw
+	// and on a RAIDZ pool include parity that can never hold data. A fake
+	// without it described an appliance that cannot exist.
+	n.datasets["Pool0"] = map[string]any{
+		"id": "Pool0", "type": "FILESYSTEM",
+		"available": map[string]any{"parsed": int64(33352704796320)},
+		"used":      map[string]any{"parsed": int64(21466962973168)},
+	}
+	return n
 }
 
 func arg(params []json.RawMessage, i int, out any) error {
