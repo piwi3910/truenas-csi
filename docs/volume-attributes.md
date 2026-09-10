@@ -25,6 +25,9 @@ changed on a mounted, in-use volume. So an operator can make that trade on one
 claim — and take it back afterwards.
 
 ```yaml
+# storage.k8s.io/v1 on Kubernetes 1.34+, storage.k8s.io/v1beta1 before it.
+# The chart's volumeAttributesClass.apiVersion value renders whichever the
+# cluster serves; see "Enabling it" for why 1.34+ cannot use this yet.
 apiVersion: storage.k8s.io/v1beta1
 kind: VolumeAttributesClass
 metadata:
@@ -160,11 +163,29 @@ Off by default, in three places that must be turned on together.
 1. **Kubernetes.** 1.31 or newer, with the `VolumeAttributesClass` feature gate
    enabled on the API server, the scheduler and the controller manager, and
    `storage.k8s.io/v1beta1` served (`--runtime-config=storage.k8s.io/v1beta1=true`).
-   The API graduates to `storage.k8s.io/v1` in 1.34.
+
+   > **This feature does not currently work on Kubernetes 1.34 or newer.**
+   > 1.34 graduates the API to `storage.k8s.io/v1` and stops serving
+   > `storage.k8s.io/v1beta1`, and no released `csi-provisioner` asks for `v1`
+   > yet — v5.1.0 and v5.3.0 were both measured against a 1.34.4 cluster and
+   > both still request `v1beta1`. The class itself applies (the chart renders
+   > `storage.k8s.io/v1`), and then every claim naming one stays `Pending` with
+   >
+   > ```
+   > ProvisioningFailed: failed to provision volume with StorageClass "...":
+   > the server could not find the requested resource
+   > ```
+   >
+   > which is the API server's 404 for the `v1beta1` endpoint the sidecar is
+   > asking for, not anything this driver refused. There is no workaround from
+   > here: it needs a `csi-provisioner` release that speaks `v1`. Until then,
+   > leave `volumeAttributesClass.enabled` off on 1.34+ — a claim that names a
+   > class never binds.
+
 2. **Sidecars.** `csi-provisioner` ≥ v5.0 (it carries the class named on a claim
    into `CreateVolume`) and `csi-resizer` ≥ v1.11 (it watches a live claim and
    calls `ControllerModifyVolume`). Both are already pinned above those in the
-   chart.
+   chart — which is necessary and, on 1.34+, not sufficient: see the note above.
 3. **The chart.**
 
 ```console

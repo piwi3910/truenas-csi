@@ -1083,3 +1083,20 @@ uppercased and the true name only in `parsed`/`rawvalue`. Verified on
 Anything compared against a real ZFS name must read `RawValue`. Comparing
 `Value` fails silently — nothing errors, the match simply never happens.
 This is why `Property` decodes `rawvalue` separately.
+
+## VolumeAttributesClass is unusable on Kubernetes 1.34+ (upstream, not this driver)
+
+1.34 graduates VolumeAttributesClass to `storage.k8s.io/v1` and stops serving
+`storage.k8s.io/v1beta1`. No released `csi-provisioner` asks for `v1`:
+v5.1.0 and v5.3.0 were both measured against a 1.34.4 cluster and both still
+request `v1beta1`. v5.4.0 does not exist.
+
+The symptom is a claim naming a class that never binds:
+
+```
+ProvisioningFailed: ... the server could not find the requested resource
+```
+
+which is exactly what `kubectl get --raw /apis/storage.k8s.io/v1beta1/volumeattributesclasses`
+returns on that cluster. RBAC is not involved — the controller SA can list the
+v1 resource fine. Nothing in this driver can fix it; it needs a sidecar release.
