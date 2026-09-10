@@ -516,18 +516,36 @@ func fsTypeOf(cap VolumeCapability, pc map[string]string) string {
 	return "ext4"
 }
 
+// CapabilityForFS names the node capability a filesystem needs, reporting
+// whether the driver supports that filesystem at all.
+//
+// The mapping is deliberately many-to-one: ext2, ext3 and ext4 are all made and
+// grown by e2fsprogs, so one capability covers them. Anything that derives a
+// TOPOLOGY key from a filesystem name must come through here rather than using
+// the name directly — a node advertises the capabilities in capabilityOrder and
+// nothing else, so a requirement spelled "ext3" is a requirement no node on
+// earth can satisfy, and the pod stays Pending forever with a scheduler message
+// that names a label instead of the filesystem.
+func CapabilityForFS(fsType string) (Capability, bool) {
+	switch fsType {
+	case "ext4", "ext3", "ext2":
+		return CapExt4, true
+	case "xfs":
+		return CapXFS, true
+	default:
+		return "", false
+	}
+}
+
 // requireFS fails a stage before any mount is attempted when the node lacks the
 // tooling for the requested filesystem, so the operator sees "needs xfsprogs"
 // instead of a mount(8) exit code.
 func (n *Node) requireFS(fsType string) error {
-	switch fsType {
-	case "ext4", "ext3", "ext2":
-		return n.pre.Require(CapExt4)
-	case "xfs":
-		return n.pre.Require(CapXFS)
-	default:
+	capName, ok := CapabilityForFS(fsType)
+	if !ok {
 		return fmt.Errorf("%w: filesystem %q is not supported by this driver", ErrInvalidRequest, fsType)
 	}
+	return n.pre.Require(capName)
 }
 
 // waitTimeouts bound the two places the node waits on the kernel. They are

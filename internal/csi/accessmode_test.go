@@ -1,11 +1,13 @@
 package csi
 
 import (
-	"github.com/piwi3910/truenas-csi/internal/node"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
+
+	"github.com/piwi3910/truenas-csi/internal/node"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -292,5 +294,66 @@ func TestRequiredTopologyFollowsTheCapabilityFilesystem(t *testing.T) {
 					got[0].GetSegments(), tc.wantKey)
 			}
 		})
+	}
+}
+
+// TestEveryFilesystemTopologyKeyIsOnePublishedByNodes is the invariant that
+// makes a filesystem requirement satisfiable at all.
+//
+// requiredTopology used to spell the requirement with the filesystem's own name,
+// so a StorageClass asking for ext3 — which this driver fully supports, and
+// which the node formats with mkfs.ext3 — produced a PV requiring
+// csi.truenas.watteel.com/ext3. No node publishes that key: nodes publish
+// capabilities, and ext2/ext3/ext4 all live under the ext4 capability. The PV
+// bound, and then every pod using it stayed Pending with the scheduler naming a
+// label rather than the filesystem.
+func TestEveryFilesystemTopologyKeyIsOnePublishedByNodes(t *testing.T) {
+	// Every key a node publishes from its own preflight. The backend key is
+	// published separately, per configured backend, so this test asks for no
+	// backend and every remaining key must come from this set.
+	published := map[string]bool{}
+	for _, c := range node.CapabilityOrder() {
+		published[node.TopologyKey(c)] = true
+	}
+
+	for _, fs := range []string{"ext2", "ext3", "ext4", "xfs"} {
+		t.Run(fs, func(t *testing.T) {
+			caps := []*csipb.VolumeCapability{{
+				AccessType: &csipb.VolumeCapability_Mount{
+					Mount: &csipb.VolumeCapability_MountVolume{FsType: fs}},
+			}}
+			if err := requireSupportedCapabilities("iscsi", caps); err != nil {
+				t.Fatalf("%s is a filesystem this driver supports, but CreateVolume refuses it: %v", fs, err)
+			}
+			for key := range requiredTopology("", "iscsi", nil, caps)[0].GetSegments() {
+				if !published[key] {
+					t.Errorf("a %s volume requires topology key %q, which no node publishes "+
+						"(nodes publish %v) — every pod using it would stay Pending forever",
+						fs, key, published)
+				}
+			}
+		})
+	}
+}
+
+// TestUnsupportedFilesystemIsRefusedAtCreateVolume keeps the refusal where the
+// user can read it. Encoding an unmakeable filesystem in the topology instead
+// binds a PV that no node can ever satisfy, and the only diagnostic is a
+// scheduler message about a label nobody has heard of.
+func TestUnsupportedFilesystemIsRefusedAtCreateVolume(t *testing.T) {
+	caps := []*csipb.VolumeCapability{{
+		AccessType: &csipb.VolumeCapability_Mount{
+			Mount: &csipb.VolumeCapability_MountVolume{FsType: "btrfs"}},
+	}}
+	err := requireSupportedCapabilities("iscsi", caps)
+	if err == nil {
+		t.Fatal("CreateVolume accepted btrfs, which the node cannot make; the PVC would bind " +
+			"and the pod would then be unschedulable with no mention of the filesystem")
+	}
+	if got := status.Code(err); got != codes.InvalidArgument {
+		t.Errorf("want InvalidArgument for an unsupported filesystem, got %v", got)
+	}
+	if !strings.Contains(err.Error(), "btrfs") {
+		t.Errorf("the message must name the filesystem the user asked for; got %q", err)
 	}
 }

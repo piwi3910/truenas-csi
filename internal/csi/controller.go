@@ -1242,9 +1242,14 @@ func requiredTopology(backendName, protocol string, params map[string]string,
 	if fs == "" {
 		fs = params["fsType"]
 	}
-	if fs != "" && fs != "ext4" {
-		segments[node.TopologyKey(node.Capability(fs))] = "true"
-	} else if protocol == "iscsi" || protocol == "nvme" {
+	// Through CapabilityForFS, never the filesystem name: a node advertises
+	// capabilities, and ext3 needs the ext4 capability, not an "ext3" one that
+	// nothing publishes. An unsupported name adds no requirement here because
+	// requireSupportedCapabilities has already refused the request.
+	if capName, ok := node.CapabilityForFS(fs); ok {
+		segments[node.TopologyKey(capName)] = "true"
+	} else if fs == "" && (protocol == "iscsi" || protocol == "nvme") {
+		// No filesystem named, and a block protocol: the node will format ext4.
 		segments[node.TopologyKey(node.CapExt4)] = "true"
 	}
 	if params["multipath"] == "true" {

@@ -2,6 +2,7 @@ package csi
 
 import (
 	csipb "github.com/container-storage-interface/spec/lib/go/csi"
+	"github.com/piwi3910/truenas-csi/internal/node"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -89,14 +90,27 @@ func singleNode(m csipb.VolumeCapability_AccessMode_Mode) bool {
 // so that no volume is created at all.
 func requireSupportedCapabilities(protocol string, caps []*csipb.VolumeCapability) error {
 	for _, c := range caps {
-		if c.GetBlock() == nil {
+		if c.GetBlock() != nil {
+			if accessClassOf(protocol) == classSharedFilesystem {
+				return status.Errorf(codes.InvalidArgument,
+					"protocol %q serves a filesystem and cannot provide a raw block device: "+
+						"use volumeMode: Filesystem, or a StorageClass whose protocol is iscsi or nvme",
+					protocol)
+			}
 			continue
 		}
-		if accessClassOf(protocol) == classSharedFilesystem {
+		// A filesystem this driver cannot make is refused HERE, where the CO
+		// puts the message on the PVC. Accepting it and encoding it in the
+		// volume's topology instead produces a PV no node can satisfy, and the
+		// only thing the user ever sees is a scheduler complaining about a
+		// label — never the word "btrfs".
+		fs := c.GetMount().GetFsType()
+		if fs == "" {
+			continue
+		}
+		if _, ok := node.CapabilityForFS(fs); !ok {
 			return status.Errorf(codes.InvalidArgument,
-				"protocol %q serves a filesystem and cannot provide a raw block device: "+
-					"use volumeMode: Filesystem, or a StorageClass whose protocol is iscsi or nvme",
-				protocol)
+				"filesystem %q is not supported by this driver; use ext4, ext3, ext2 or xfs", fs)
 		}
 	}
 	return nil
