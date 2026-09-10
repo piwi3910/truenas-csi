@@ -871,6 +871,15 @@ func toStatus(err error) error {
 			return err
 		}
 	}
+	// A shrink is permanently impossible, and Internal tells the CO to retry.
+	// The file backends already refused it with InvalidArgument; the zvol ones
+	// returned a bare sentinel, so the same impossible request came back as
+	// Internal and the external-resizer retried it for ever. Measured on real
+	// hardware: nfs answered InvalidArgument and iscsi answered Internal for
+	// the identical 2Gi -> 1Gi request.
+	if errors.Is(err, backend.ErrShrinkNotAllowed) {
+		return status.Error(codes.InvalidArgument, obs.Redact(err.Error()))
+	}
 	return status.Error(codes.Internal, obs.Redact(err.Error()))
 }
 

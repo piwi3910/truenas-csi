@@ -85,7 +85,7 @@ const maxSubsysName = 96
 // ErrShrinkNotAllowed is returned for an expansion request smaller than the
 // current size. The middleware refuses a zvol shrink too, but its message says
 // nothing an operator can act on, so the driver refuses first.
-var ErrShrinkNotAllowed = errors.New("volume cannot be shrunk")
+var ErrShrinkNotAllowed = backend.ErrShrinkNotAllowed
 
 // ErrVolumeNotFound is returned when an operation names a zvol that is not there.
 var ErrVolumeNotFound = errors.New("volume does not exist")

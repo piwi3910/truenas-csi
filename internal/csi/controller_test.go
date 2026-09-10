@@ -2,6 +2,8 @@ package csi
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"github.com/piwi3910/truenas-csi/internal/node"
 	"os"
 	"path/filepath"
@@ -794,5 +796,23 @@ func TestCloneVolumeChecksBackendAndProtocolBeforeSnapshotting(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestShrinkIsNotRetryable: the file backends refused a shrink with
+// InvalidArgument and the zvol backends returned a bare sentinel, so the same
+// permanently impossible request came back as Internal and the external-resizer
+// retried it for ever. Measured on real hardware — nfs answered InvalidArgument
+// and iscsi answered Internal for the identical 2Gi -> 1Gi request.
+func TestShrinkIsNotRetryable(t *testing.T) {
+	err := toStatus(fmt.Errorf("%w: Pool0/k8s/pvc-1 is %d bytes, requested %d",
+		backend.ErrShrinkNotAllowed, 2<<30, 1<<30))
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("code = %v, want InvalidArgument: Internal makes the resizer retry "+
+			"a request that can never succeed (err %v)", status.Code(err), err)
+	}
+	// An error that is not a shrink still reads as Internal.
+	if got := status.Code(toStatus(errors.New("appliance is unreachable"))); got != codes.Internal {
+		t.Fatalf("an ordinary failure must stay Internal, got %v", got)
 	}
 }

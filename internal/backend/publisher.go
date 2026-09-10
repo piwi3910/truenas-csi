@@ -45,6 +45,12 @@ var ErrNotFenceable = errors.New("access for this node cannot be granted in a re
 // treats it as success — a volume that does not exist is fenced.
 var ErrVolumeGone = errors.New("volume does not exist")
 
+// ErrShrinkNotAllowed means an expansion asked for less than the volume already
+// has. It lives here rather than in each backend so the CSI layer can map it
+// once: a shrink is permanently impossible, and reporting it as Internal made
+// the external-resizer retry it for ever.
+var ErrShrinkNotAllowed = errors.New("volume cannot be shrunk")
+
 // ReadGrants reads a volume's publish ledger from the appliance.
 //
 // A volume with no ledger — every volume provisioned before this driver kept
