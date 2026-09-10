@@ -23,7 +23,7 @@ type nodeServer struct {
 // NewNode adapts the node data path to the CSI gRPC surface.
 func NewNode(n *node.Node) csipb.NodeServer {
 	s := &nodeServer{n: n, published: newPublishedTargets()}
-	s.published.recover(n.PublishedTargets())
+	s.published.recover(n.PublishedTargets(context.Background()))
 	return s
 }
 

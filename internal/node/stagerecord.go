@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/piwi3910/truenas-csi/internal/obs"
 )
@@ -90,8 +91,8 @@ type PublishedTarget struct {
 // Like RecoverStagedVolumes, it trusts the host's mount table over any
 // directory walk: a publication that is no longer mounted is not a publication,
 // and reserving it would refuse a legitimate publish for ever.
-func (n *Node) PublishedTargets() []PublishedTarget {
-	entries, err := n.mounts()
+func (n *Node) PublishedTargets(ctx context.Context) []PublishedTarget {
+	entries, err := n.mountsToScan(ctx)
 	if err != nil {
 		return nil
 	}
@@ -148,6 +149,61 @@ func readStageRecord(path string) (stageRecord, bool) {
 	return stageRecord{PublishContext: flat}, true
 }
 
+// scanTimeout bounds the whole startup scan of the mount table. It is generous
+// because the scan is fast when nothing is wrong — a few hundred stat-sized
+// reads — and the only thing it protects against is a read that never returns.
+var scanTimeout = 20 * time.Second
+
+// mountsToScan is the host mount table, read under a deadline.
+//
+// Reading a record means reading a file in the DIRECTORY HOLDING a mount point,
+// and this walks every mount on the host, including other software's. That
+// directory can itself lie inside some third party's hung network mount, and an
+// open(2) there does not return. This runs at startup, before the plugin serves
+// anything, so an unbounded walk would turn one stuck mount belonging to
+// somebody else into a node plugin that never starts.
+//
+// On a timeout the goroutine is left behind — it cannot be cancelled, only the
+// mount going away will release it — and the caller carries on with no
+// recovery, which is the behaviour before recovery existed. The same trade the
+// health monitor makes, for the same reason.
+func (n *Node) mountsToScan(ctx context.Context) ([]mountEntry, error) {
+	type result struct {
+		entries []mountEntry
+		err     error
+	}
+	done := make(chan result, 1)
+	go func() {
+		entries, err := n.mounts()
+		if err != nil {
+			done <- result{err: err}
+			return
+		}
+		// The records are read HERE, inside the bounded goroutine, because
+		// reading them is the part that can block.
+		kept := make([]mountEntry, 0, len(entries))
+		for _, e := range entries {
+			if _, ok := readStageRecord(e.target); ok {
+				kept = append(kept, e)
+			}
+		}
+		done <- result{entries: kept}
+	}()
+
+	timer := time.NewTimer(scanTimeout)
+	defer timer.Stop()
+	select {
+	case r := <-done:
+		return r.entries, r.err
+	case <-timer.C:
+		obs.Logger(ctx).Warn("gave up scanning the host mount table for volumes staged before "+
+			"this process started; something on this node has a mount that does not answer. "+
+			"Those volumes will not be monitored until they are staged again",
+			"timeout", scanTimeout.String())
+		return nil, nil
+	}
+}
+
 // RecoverStagedVolumes re-registers, with the health monitor and the I/O metric
 // sink, every volume this node had staged before the process started.
 //
@@ -157,7 +213,7 @@ func readStageRecord(path string) (stageRecord, bool) {
 // the staging mount of a filesystem volume and the published bind mount of a
 // raw block volume carry a record, so both are found.
 func (n *Node) RecoverStagedVolumes(ctx context.Context) int {
-	entries, err := n.mounts()
+	entries, err := n.mountsToScan(ctx)
 	if err != nil {
 		obs.Logger(ctx).Warn("could not read the host mount table; volumes staged before "+
 			"this process started will not be monitored until they are staged again",

@@ -5,8 +5,13 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
+	"time"
 )
+
+// mkfifo makes a named pipe, whose open-for-read blocks until a writer arrives.
+func mkfifo(path string) error { return syscall.Mkfifo(path, 0o600) }
 
 // stageRecordHost writes a host whose mount table holds one staged volume and
 // one published block volume, each with its record beside it.
@@ -200,5 +205,55 @@ func TestRecoveryNeverStatsANetworkMount(t *testing.T) {
 			t.Errorf("fstype %q is %s: statted=%v, want %v",
 				tc.fsType, tc.whatItIs, got, tc.mayStat)
 		}
+	}
+}
+
+// TestAStuckMountCannotStopTheNodePluginStarting is about the blast radius of
+// somebody else's problem.
+//
+// Reading a record means reading a file in the DIRECTORY HOLDING a mount point,
+// and recovery walks every mount on the host, including other software's. That
+// directory can itself lie inside a third party's hung network mount, where
+// open(2) never returns. Recovery runs before the plugin serves anything, so
+// unbounded it would turn one stuck mount belonging to somebody else into a
+// node plugin that never starts — and a node whose CSI driver never registers
+// mounts nothing at all.
+func TestAStuckMountCannotStopTheNodePluginStarting(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "proc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A FIFO where a record would be. Opening it for reading blocks until
+	// somebody opens the write end, which nobody ever will — the same shape as
+	// a read into a hung mount, and the closest a test can get to one.
+	stuck := filepath.Join(root, "stuck")
+	if err := os.MkdirAll(filepath.Dir(StageRecordPath(stuck)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := mkfifo(StageRecordPath(stuck)); err != nil {
+		t.Skipf("cannot create a fifo here (%v)", err)
+	}
+	table := "/dev/sdb " + stuck + " ext4 rw 0 0\n"
+	if err := os.WriteFile(filepath.Join(root, "proc", "mounts"), []byte(table), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	restore := scanTimeout
+	t.Cleanup(func() { scanTimeout = restore })
+	scanTimeout = 250 * time.Millisecond
+
+	n := &Node{Root: root, pre: &Preflight{Found: map[Capability]bool{}}, health: NewHealthMonitor()}
+	done := make(chan int, 1)
+	go func() { done <- n.RecoverStagedVolumes(context.Background()) }()
+
+	select {
+	case got := <-done:
+		if got != 0 {
+			t.Errorf("recovered %d volumes from a mount that never answered", got)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("RecoverStagedVolumes did not return: one stuck mount anywhere on the host " +
+			"stops the node plugin from ever starting, and a node whose CSI driver never " +
+			"registers can mount nothing at all")
 	}
 }
