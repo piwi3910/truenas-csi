@@ -37,18 +37,31 @@ import (
 //
 // It is deliberately narrow. A device is removed only when all three hold:
 //
-//   - it belongs to OUR portal and target, so Longhorn's session and the host's
-//     own disks are never candidates;
+//   - it sits at the LUN this volume was mapped to on OUR portal and target.
+//     That is the only device that can be in our way, so it is the only one
+//     considered: another initiator's session, the host's own disks, and every
+//     other LUN of our own target are all out of scope;
 //   - its wwid is not the NAA being resolved, so the volume being staged is
 //     never removed;
 //   - nothing on the host has it mounted, directly or as a multipath member,
 //     which is what makes the removal safe — a stale device by definition
 //     carries nothing.
 //
+// The LUN restriction is what keeps this from being destructive. Removing every
+// unmounted device of the target would also take devices that are perfectly
+// valid and merely idle — one staged but not yet mounted, or a raw block volume
+// whose consumer is starting — and racing a sibling's stage is not a price
+// worth paying to fix our own.
+//
 // It returns the number of devices removed, so the caller can skip a rescan it
 // does not need.
-func (n *Node) dropStaleTargetDevices(ctx context.Context, portal, iqn, wantNAA string) int {
-	devices, err := n.devicesOfTarget(portal, iqn)
+func (n *Node) dropStaleTargetDevices(ctx context.Context, portal, iqn, wantNAA, lun string) int {
+	if lun == "" {
+		// Without a LUN there is no way to name the one device in our way, and
+		// guessing wider is how a fix becomes an outage.
+		return 0
+	}
+	devices, err := n.devicesAtLUN(portal, iqn, lun)
 	if err != nil || len(devices) == 0 {
 		return 0
 	}
@@ -149,6 +162,19 @@ func (n *Node) deleteSCSIDevice(name string) error {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 	return nil
+}
+
+// devicesAtLUN returns the kernel names of the devices the host has for ONE LUN
+// of one portal and target, read from the by-path link the kernel maintains for
+// exactly that triple.
+func (n *Node) devicesAtLUN(portal, iqn, lun string) (map[string]bool, error) {
+	dir := filepath.Join(n.hostRoot(), "dev", "disk", "by-path")
+	link := filepath.Join(dir, "ip-"+portal+"-iscsi-"+iqn+"-lun-"+lun)
+	dest, err := os.Readlink(link)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]bool{filepath.Base(dest): true}, nil
 }
 
 // deviceWWID reads a disk's identity as the kernel reports it, normalised to the

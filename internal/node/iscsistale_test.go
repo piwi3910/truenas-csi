@@ -88,7 +88,9 @@ func TestDropStaleTargetDevicesRemovesOnlyRecycledLUNs(t *testing.T) {
 	}, []string{"sdc"})
 
 	n := &Node{Root: root, pre: &Preflight{Found: map[Capability]bool{}}}
-	if got := n.dropStaleTargetDevices(context.Background(), stalePortal, staleIQN, want); got != 1 {
+	// LUN 0 is the one this volume was mapped to, and the one a deleted volume
+	// still occupies.
+	if got := n.dropStaleTargetDevices(context.Background(), stalePortal, staleIQN, want, "0"); got != 1 {
 		t.Fatalf("removed %d devices, want exactly 1", got)
 	}
 	if !deleted(t, root, "sdb") {
@@ -100,6 +102,28 @@ func TestDropStaleTargetDevicesRemovesOnlyRecycledLUNs(t *testing.T) {
 	}
 	if deleted(t, root, "sdd") {
 		t.Error("removed the device for the volume being staged")
+	}
+
+	// The same host, asked about a LUN whose device is mounted by a sibling and
+	// about the LUN the wanted volume already occupies: neither may be touched.
+	for _, lun := range []string{"1", "2"} {
+		if got := n.dropStaleTargetDevices(context.Background(), stalePortal, staleIQN, want, lun); got != 0 {
+			t.Errorf("removed %d devices at lun %s; a mounted sibling and the volume being "+
+				"staged are both off limits", got, lun)
+		}
+	}
+}
+
+// TestDropStaleTargetDevicesNeedsALUN keeps the recovery from widening into a
+// sweep. Without the LUN there is no way to name the one device in the way, and
+// removing every idle device of the target would race a sibling's stage.
+func TestDropStaleTargetDevicesNeedsALUN(t *testing.T) {
+	root := staleHost(t, stalePortal, staleIQN, map[int]struct{ dev, wwid string }{
+		0: {"sdb", "6589cfc0000005997b02e9e47100d1c1"},
+	}, nil)
+	n := &Node{Root: root, pre: &Preflight{Found: map[Capability]bool{}}}
+	if got := n.dropStaleTargetDevices(context.Background(), stalePortal, staleIQN, "abc", ""); got != 0 {
+		t.Fatalf("removed %d devices with no LUN to go on; want 0", got)
 	}
 }
 
@@ -114,7 +138,7 @@ func TestDropStaleTargetDevicesLeavesEverythingAloneWhenItCannotTell(t *testing.
 		t.Fatal(err)
 	}
 	n := &Node{Root: root, pre: &Preflight{Found: map[Capability]bool{}}}
-	if got := n.dropStaleTargetDevices(context.Background(), stalePortal, staleIQN, "abc"); got != 0 {
+	if got := n.dropStaleTargetDevices(context.Background(), stalePortal, staleIQN, "abc", "0"); got != 0 {
 		t.Fatalf("removed %d devices whose identity could not be read; want 0", got)
 	}
 }
@@ -126,7 +150,7 @@ func TestDropStaleTargetDevicesIgnoresOtherTargets(t *testing.T) {
 	root := staleHost(t, stalePortal, "iqn.2019-10.io.longhorn:pvc-other",
 		map[int]struct{ dev, wwid string }{0: {"sdb", "60000000000000000e00000000010001"}}, nil)
 	n := &Node{Root: root, pre: &Preflight{Found: map[Capability]bool{}}}
-	if got := n.dropStaleTargetDevices(context.Background(), stalePortal, staleIQN, "abc"); got != 0 {
+	if got := n.dropStaleTargetDevices(context.Background(), stalePortal, staleIQN, "abc", "0"); got != 0 {
 		t.Fatalf("removed %d devices belonging to another target; want 0", got)
 	}
 	if deleted(t, root, "sdb") {

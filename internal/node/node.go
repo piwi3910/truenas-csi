@@ -65,6 +65,10 @@ const (
 	// KeyNAA is the extent's NAA identifier, as returned by iscsi.extent.create,
 	// in its "0x…" form.
 	KeyNAA = "naa"
+	// KeyLUN is the LUN id this volume's extent was mapped to on the shared
+	// target. The node needs it to identify the ONE device standing in its way
+	// when a recycled LUN id is still held by a device from a deleted volume.
+	KeyLUN = "lun"
 	// KeyNQN is the NVMe subsystem NQN the node connects to.
 	KeyNQN = "nqn"
 	// KeySerial is the nvmet subsystem's serial, as returned by

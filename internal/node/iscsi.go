@@ -72,7 +72,7 @@ func (n *Node) stageISCSI(ctx context.Context, req StageRequest) error {
 		// a LUN now means a different disk. Without this the node is stuck for
 		// good — every retry logs in to a session that already exists, finds
 		// nothing new, and fails again with the same message.
-		if n.dropStaleTargetDevices(ctx, portal, iqn, naa) > 0 {
+		if n.dropStaleTargetDevices(ctx, portal, iqn, naa, req.PublishContext[KeyLUN]) > 0 {
 			if rErr := iscsiRescan(ctx, n.exec, portal, iqn); rErr != nil {
 				return err
 			}
