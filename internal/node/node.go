@@ -302,14 +302,22 @@ type Node struct {
 
 	// health watches the data path of every volume staged on this node. It is
 	// owned by the node so that Stage and Unstage can keep its target set in
-	// step with what is actually mounted, rather than parsing /proc/mounts and
-	// picking up another storage system's mounts.
+	// step with what is actually mounted.
+	//
+	// At startup the set is rebuilt by RecoverStagedVolumes, which does read
+	// the host mount table — but claims only mounts carrying this driver's own
+	// stage record, so another storage system's mounts are still never picked
+	// up. The set has to be rebuilt because the kubelet does not re-issue
+	// NodeStageVolume for a volume it already considers staged, so without it
+	// every restart of this process stopped watching every volume already here.
 	health *HealthMonitor
 
 	// ioMetricsState carries the per-volume performance metrics, off unless
 	// EnableIOMetrics was called. Its target set is kept in step with Stage and
-	// Unstage for the same reason the monitor's is: a volume this driver did
-	// not stage is not this driver's to report.
+	// Unstage, and rebuilt at startup, for the same reasons the monitor's is: a
+	// volume this driver did not stage is not this driver's to report, and a
+	// volume it did stage does not stop being its own because the process
+	// restarted.
 	ioMetricsState
 }
 
