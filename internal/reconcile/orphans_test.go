@@ -202,3 +202,49 @@ func TestOrphanReconcilerIgnoresTheGraveyard(t *testing.T) {
 		}
 	}
 }
+
+// namespaceListing is what the appliance returns for a driver with namespace
+// quotas on: the namespace's parent dataset, which the driver creates and owns,
+// and one volume inside it that the CO knows about.
+//
+// The parent dataset INHERITS nothing — its namespace marker is LOCAL, which is
+// exactly how it is told apart from the volumes beneath it, whose own marker is
+// inherited from it.
+const namespaceListing = `[
+ {"id":"Pool0/k8s/shop","type":"FILESYSTEM",
+  "user_properties":{"io.truenas.csi:managed":{"value":"truenas-csi","source":"LOCAL"},
+                     "io.truenas.csi:namespace":{"value":"shop","source":"LOCAL"}}},
+ {"id":"Pool0/k8s/shop/pvc-a","type":"FILESYSTEM","refquota":{"parsed":1073741824},
+  "user_properties":{"io.truenas.csi:managed":{"value":"truenas-csi","source":"LOCAL"},
+                     "io.truenas.csi:namespace":{"value":"shop","source":"INHERITED"}}}]`
+
+// TestOrphanReconcilerIgnoresANamespaceParent.
+//
+// A namespace's parent dataset is driver-owned and has no PersistentVolume BY
+// DESIGN — it accounts for a namespace's quota, it holds no data of its own,
+// and nothing will ever create a PV for it. This scanner's own comment says so
+// and says why it must be skipped; the code skipped only the graveyard shapes,
+// so every scan reported it, for ever, on any cluster with namespace quotas on.
+//
+// A permanent false positive is worse than no report: truenas_csi_orphaned_volumes
+// never reaches zero, and an operator learns to ignore the one signal that says
+// a real dataset has been leaked. ListVolumes already skips it by the same test.
+func TestOrphanReconcilerIgnoresANamespaceParent(t *testing.T) {
+	s := fake.Start(t, fake.Options{})
+	s.Handle("pool.dataset.query", datasetsJSON(t, namespaceListing))
+	r := regFor(t, s)
+
+	// The volume inside the namespace has a PersistentVolume; the parent never
+	// can. So a correct scan reports nothing at all.
+	live := map[string]struct{}{"nas1/nfs/Pool0/k8s/shop/pvc-a": {}}
+	got, err := NewOrphanReconciler(r, stubLister{handles: live}, 0).
+		RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("reported %v as orphaned; a namespace's parent dataset has no "+
+			"PersistentVolume by design, so this fires on every scan for ever and "+
+			"trains the operator to ignore the report", got)
+	}
+}

@@ -76,8 +76,13 @@ func (o *OrphanReconciler) RunOnce(ctx context.Context) ([]string, error) {
 				continue
 			}
 			// A namespace's parent dataset is driver-owned and has no
-			// PersistentVolume by design; reporting it as an orphan would be a
-			// permanent false positive on every scan.
+			// PersistentVolume by design: it accounts for a namespace's quota
+			// and holds no data of its own. Reporting it would be a permanent
+			// false positive on every scan — the same test ListVolumes applies
+			// for the same reason.
+			if volume.IsNamespaceDataset(d.LocalProperty(volume.NamespaceProperty)) {
+				continue
+			}
 			// Delete protection's graveyard, and the volumes retired into it,
 			// are driver-owned and have no PersistentVolume BY DESIGN — the CO
 			// was told those volumes were deleted. Reporting them would turn
