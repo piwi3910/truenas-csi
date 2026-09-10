@@ -6,6 +6,9 @@ import (
 	"regexp"
 	"testing"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	csipb "github.com/container-storage-interface/spec/lib/go/csi"
 )
 
@@ -159,5 +162,58 @@ func TestEveryShippedProtocolIsClassified(t *testing.T) {
 	}
 	if found < 4 {
 		t.Fatalf("found only %d protocol packages; this test is no longer reading them", found)
+	}
+}
+
+// TestBlockVolumesRefusedForFileProtocols.
+//
+// NFS and SMB serve a filesystem the appliance arbitrates; neither can hand a
+// node a block device. CreateVolume accepted volumeMode: Block against them
+// anyway, so the claim BOUND and a dataset was provisioned that nothing could
+// ever use — the pod then sat Pending with MapVolume.MapPodDevice failing
+// "protocol \"nfs\" has no block device", observed on a real cluster.
+//
+// The node's refusal was correct and correctly typed; the problem is where it
+// happened. CSI requires CreateVolume to answer INVALID_ARGUMENT when the
+// requested capabilities cannot be served, so that no volume is created.
+func TestBlockVolumesRefusedForFileProtocols(t *testing.T) {
+	block := &csipb.VolumeCapability{
+		AccessType: &csipb.VolumeCapability_Block{Block: &csipb.VolumeCapability_BlockVolume{}},
+		AccessMode: &csipb.VolumeCapability_AccessMode{
+			Mode: csipb.VolumeCapability_AccessMode_SINGLE_NODE_WRITER},
+	}
+	mount := &csipb.VolumeCapability{
+		AccessType: &csipb.VolumeCapability_Mount{Mount: &csipb.VolumeCapability_MountVolume{}},
+		AccessMode: &csipb.VolumeCapability_AccessMode{
+			Mode: csipb.VolumeCapability_AccessMode_SINGLE_NODE_WRITER},
+	}
+	for _, tc := range []struct {
+		protocol string
+		cap      *csipb.VolumeCapability
+		ok       bool
+	}{
+		{"nfs", block, false},
+		{"smb", block, false},
+		{"nfs", mount, true},
+		{"smb", mount, true},
+		{"iscsi", block, true},
+		{"nvme", block, true},
+		{"iscsi", mount, true},
+	} {
+		name := tc.protocol
+		if tc.cap.GetBlock() != nil {
+			name += "-block"
+		} else {
+			name += "-mount"
+		}
+		t.Run(name, func(t *testing.T) {
+			err := requireSupportedCapabilities(tc.protocol, []*csipb.VolumeCapability{tc.cap})
+			switch {
+			case tc.ok && err != nil:
+				t.Fatalf("%s must be accepted: %v", name, err)
+			case !tc.ok && status.Code(err) != codes.InvalidArgument:
+				t.Fatalf("code = %v, want InvalidArgument (err %v)", status.Code(err), err)
+			}
+		})
 	}
 }

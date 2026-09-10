@@ -188,6 +188,11 @@ func (c *controller) CreateVolume(ctx context.Context, req *csipb.CreateVolumeRe
 	if err != nil {
 		return nil, err
 	}
+	// Before anything is created: a capability this protocol cannot serve must
+	// not produce a bound claim over a dataset nothing can ever use.
+	if err := requireSupportedCapabilities(id.Protocol, req.GetVolumeCapabilities()); err != nil {
+		return nil, err
+	}
 	// A claim may name a VolumeAttributesClass at creation as well as later, so
 	// the same allowlist governs both paths. Validated here, before anything is
 	// provisioned, so a class naming a property this driver refuses costs no
@@ -763,6 +768,11 @@ func (c *controller) ValidateVolumeCapabilities(ctx context.Context, req *csipb.
 	}
 	if err := c.requireVolumeExists(ctx, id); err != nil {
 		return nil, err
+	}
+	if err := requireSupportedCapabilities(id.Protocol, req.GetVolumeCapabilities()); err != nil {
+		return &csipb.ValidateVolumeCapabilitiesResponse{
+			Message: err.Error(),
+		}, nil
 	}
 	for _, cap := range req.GetVolumeCapabilities() {
 		if !supportsAccessMode(id.Protocol, cap.GetAccessMode().GetMode()) {

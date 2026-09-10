@@ -2,6 +2,8 @@ package csi
 
 import (
 	csipb "github.com/container-storage-interface/spec/lib/go/csi"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // accessClass is what decides how many nodes a volume may be served to at once.
@@ -74,4 +76,28 @@ func singleNode(m csipb.VolumeCapability_AccessMode_Mode) bool {
 		return true
 	}
 	return false
+}
+
+// requireSupportedCapabilities refuses capabilities a protocol cannot serve.
+//
+// NFS and SMB serve a filesystem the appliance arbitrates and cannot hand a
+// node a block device. Accepting volumeMode: Block against them BOUND the claim
+// and provisioned a dataset nothing could ever use: the pod then sat Pending
+// with MapVolume.MapPodDevice failing "protocol \"nfs\" has no block device".
+// The node's refusal was right; the place was wrong. CSI requires CreateVolume
+// to answer INVALID_ARGUMENT when the requested capabilities cannot be served,
+// so that no volume is created at all.
+func requireSupportedCapabilities(protocol string, caps []*csipb.VolumeCapability) error {
+	for _, c := range caps {
+		if c.GetBlock() == nil {
+			continue
+		}
+		if accessClassOf(protocol) == classSharedFilesystem {
+			return status.Errorf(codes.InvalidArgument,
+				"protocol %q serves a filesystem and cannot provide a raw block device: "+
+					"use volumeMode: Filesystem, or a StorageClass whose protocol is iscsi or nvme",
+				protocol)
+		}
+	}
+	return nil
 }
