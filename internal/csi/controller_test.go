@@ -342,7 +342,7 @@ func TestTopologyExcludesIncapableNode(t *testing.T) {
 			map[string]string{"protocol": "iscsi", "multipath": "true"}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			required := requiredTopology("nas1", tc.params["protocol"], tc.params)
+			required := requiredTopology("nas1", tc.params["protocol"], tc.params, nil)
 			if len(required) != 1 {
 				t.Fatalf("want exactly one topology requirement, got %d", len(required))
 			}

@@ -71,7 +71,7 @@ func TestTopologyKeysMatchWhatNodesPublish(t *testing.T) {
 		{"backend": "nas1", "protocol": "iscsi", "fsType": "xfs"},
 		{"backend": "nas1", "protocol": "iscsi", "multipath": "true"},
 	} {
-		required := requiredTopology(params["backend"], params["protocol"], params)
+		required := requiredTopology(params["backend"], params["protocol"], params, nil)
 		if len(required) != 1 {
 			t.Fatalf("want exactly one topology term, got %d", len(required))
 		}

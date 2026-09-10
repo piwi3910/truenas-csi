@@ -259,7 +259,8 @@ func (c *controller) CreateVolume(ctx context.Context, req *csipb.CreateVolumeRe
 		return nil, err
 	}
 
-	topology := requiredTopology(id.Backend, id.Protocol, req.GetParameters())
+	topology := requiredTopology(id.Backend, id.Protocol, req.GetParameters(),
+		req.GetVolumeCapabilities())
 	if err := requireTopologyReachable(req.GetAccessibilityRequirements(), topology); err != nil {
 		return nil, err
 	}
@@ -1199,7 +1200,33 @@ func requireTopologyReachable(req *csipb.TopologyRequirement, want []*csipb.Topo
 		strings.Join(missing, ", "))
 }
 
-func requiredTopology(backendName, protocol string, params map[string]string) []*csipb.Topology {
+// capabilityFSType is the filesystem the CO asked for, or "" when the volume is
+// raw block or the CO named none. A block capability deliberately contributes
+// nothing: there is no filesystem to format, so no filesystem tooling is needed.
+func capabilityFSType(caps []*csipb.VolumeCapability) string {
+	for _, c := range caps {
+		if m := c.GetMount(); m != nil && m.GetFsType() != "" {
+			return m.GetFsType()
+		}
+	}
+	return ""
+}
+
+// requiredTopology is the accessible topology a volume needs: the protocol's
+// tooling, the backend's reachability, the filesystem's tooling, and multipath
+// when the class asked for it.
+//
+// caps carries the filesystem, and that is not a detail. Kubernetes conveys it
+// through the reserved csi.storage.k8s.io/fstype parameter, which the external
+// provisioner CONSUMES — it strips the reserved keys and puts the value in the
+// volume capability's mount fs_type — so a driver reading only params never
+// sees the spelling Kubernetes actually documents. Measured on a real cluster:
+// a class setting csi.storage.k8s.io/fstype=xfs produced a volume formatted xfs
+// whose PV required the ext4 label, so the scheduler was free to place it on a
+// node with no xfsprogs.
+func requiredTopology(backendName, protocol string, params map[string]string,
+	caps []*csipb.VolumeCapability,
+) []*csipb.Topology {
 	segments := map[string]string{
 		node.TopologyKey(node.Capability(protocol)): "true",
 	}
@@ -1209,7 +1236,13 @@ func requiredTopology(backendName, protocol string, params map[string]string) []
 	if backendName != "" {
 		segments[node.BackendTopologyKey(backendName)] = "true"
 	}
-	if fs := params["fsType"]; fs != "" && fs != "ext4" {
+	// The capability first, the driver-specific parameter second: the former is
+	// what the node will actually format with.
+	fs := capabilityFSType(caps)
+	if fs == "" {
+		fs = params["fsType"]
+	}
+	if fs != "" && fs != "ext4" {
 		segments[node.TopologyKey(node.Capability(fs))] = "true"
 	} else if protocol == "iscsi" || protocol == "nvme" {
 		segments[node.TopologyKey(node.CapExt4)] = "true"

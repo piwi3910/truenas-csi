@@ -1,6 +1,7 @@
 package csi
 
 import (
+	"github.com/piwi3910/truenas-csi/internal/node"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -213,6 +214,82 @@ func TestBlockVolumesRefusedForFileProtocols(t *testing.T) {
 				t.Fatalf("%s must be accepted: %v", name, err)
 			case !tc.ok && status.Code(err) != codes.InvalidArgument:
 				t.Fatalf("code = %v, want InvalidArgument (err %v)", status.Code(err), err)
+			}
+		})
+	}
+}
+
+// TestRequiredTopologyFollowsTheCapabilityFilesystem.
+//
+// Kubernetes conveys the filesystem through the reserved
+// csi.storage.k8s.io/fstype StorageClass parameter, which the external
+// provisioner CONSUMES: it strips the reserved keys and puts the value in the
+// volume capability's mount fs_type. So a driver reading only params never sees
+// it.
+//
+// requiredTopology read only params["fsType"], a driver-specific spelling.
+// Measured on a real cluster: a class setting csi.storage.k8s.io/fstype=xfs
+// produced a volume formatted xfs whose PV required the ext4 topology label. On
+// a cluster where some nodes lack xfsprogs the scheduler would place the pod on
+// a node that cannot format or grow it — the exact failure this function's own
+// comment says it exists to prevent.
+func TestRequiredTopologyFollowsTheCapabilityFilesystem(t *testing.T) {
+	mount := func(fs string) []*csipb.VolumeCapability {
+		return []*csipb.VolumeCapability{{
+			AccessType: &csipb.VolumeCapability_Mount{
+				Mount: &csipb.VolumeCapability_MountVolume{FsType: fs}},
+			AccessMode: &csipb.VolumeCapability_AccessMode{
+				Mode: csipb.VolumeCapability_AccessMode_SINGLE_NODE_WRITER},
+		}}
+	}
+	key := func(c node.Capability) string { return node.TopologyKey(c) }
+
+	for _, tc := range []struct {
+		name    string
+		params  map[string]string
+		caps    []*csipb.VolumeCapability
+		wantKey string
+	}{
+		{
+			name:    "capability names xfs, params say nothing",
+			params:  map[string]string{},
+			caps:    mount("xfs"),
+			wantKey: key(node.CapXFS),
+		},
+		{
+			name:    "capability names ext4",
+			params:  map[string]string{},
+			caps:    mount("ext4"),
+			wantKey: key(node.CapExt4),
+		},
+		{
+			name:    "capability wins over the driver-specific parameter",
+			params:  map[string]string{"fsType": "ext4"},
+			caps:    mount("xfs"),
+			wantKey: key(node.CapXFS),
+		},
+		{
+			name:    "no capability filesystem falls back to the parameter",
+			params:  map[string]string{"fsType": "xfs"},
+			caps:    mount(""),
+			wantKey: key(node.CapXFS),
+		},
+		{
+			name:    "block volumes need no filesystem tooling at all",
+			params:  map[string]string{},
+			caps:    mount(""),
+			wantKey: key(node.CapExt4), // the historical default for a zvol
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := requiredTopology("nas1", "iscsi", tc.params, tc.caps)
+			if len(got) != 1 {
+				t.Fatalf("want one topology, got %d", len(got))
+			}
+			if _, ok := got[0].GetSegments()[tc.wantKey]; !ok {
+				t.Fatalf("topology %v does not require %q; the scheduler could place "+
+					"this volume on a node that cannot format it",
+					got[0].GetSegments(), tc.wantKey)
 			}
 		})
 	}
