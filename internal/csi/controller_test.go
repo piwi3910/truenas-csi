@@ -49,7 +49,18 @@ func (b *countingBackend) Create(_ context.Context, r backend.CreateRequest) (*b
 	}
 	b.creates.Add(1)
 	b.exist[key] = r.CapacityBytes
-	return &backend.Volume{ID: r.ID, CapacityBytes: r.CapacityBytes}, nil
+	// The real iSCSI backend returns its PUBLISH context here verbatim
+	// ("Context: pc"), credential and all. A fake that returned a clean map
+	// described a backend that does not exist, and left the leak this file
+	// exists to catch reachable through the other half of the merge.
+	return &backend.Volume{
+		ID: r.ID, CapacityBytes: r.CapacityBytes,
+		Context: map[string]string{
+			"ok":            "1",
+			"chapSecretRef": "3",
+			"chapSecret":    "not-a-real-secret",
+		},
+	}, nil
 }
 
 func (b *countingBackend) Delete(_ context.Context, id volume.ID) error {

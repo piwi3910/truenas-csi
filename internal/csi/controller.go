@@ -329,7 +329,15 @@ func (c *controller) CreateVolume(ctx context.Context, req *csipb.CreateVolumeRe
 	// and ControllerPublishVolume returns it. PublishContext is read-only, so a
 	// volume it cannot describe yet is skipped rather than provisioned open.
 	vctx := map[string]string{}
+	// BOTH sources are filtered, and the backend's own context is the one that
+	// matters most: the iSCSI backend returns its publish context verbatim from
+	// Create ("Context: pc"), credential included, so filtering only the merge
+	// below left the secret in the PersistentVolume anyway. Observed on a live
+	// cluster as spec.csi.volumeAttributes.chapSecret carrying a real value.
 	for k, v := range vol.Context {
+		if sensitivePublishKeys[k] {
+			continue
+		}
 		vctx[k] = v
 	}
 	if pc, pcErr := b.PublishContext(ctx, vol.ID); pcErr == nil {
