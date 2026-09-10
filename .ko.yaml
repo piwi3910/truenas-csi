@@ -1,0 +1,25 @@
+# ko builds and pushes the driver image WITHOUT a container daemon.
+#
+# It exists because Docker Desktop proved unreliable on this workstation: its
+# VM disk went read-only mid-build more than once, which failed the build, left
+# a tag unpushed, and once left the cluster pulling an image that did not exist.
+# ko cross-compiles with the local Go toolchain and writes the OCI image
+# straight to the registry, so there is no daemon in the path at all.
+#
+# The Dockerfile is still the RELEASE build — CI builds it, and it is what ships.
+# This is the loop used while developing against a live cluster, and it is kept
+# byte-for-byte equivalent where it matters: same base image, same CGO setting,
+# same trimpath, same version ldflag.
+defaultBaseImage: gcr.io/distroless/static-debian12:nonroot
+
+builds:
+  - id: truenas-csi
+    main: ./cmd/truenas-csi
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s
+      - -w
+      - -X github.com/piwi3910/truenas-csi/internal/driver.Version={{.Env.VERSION}}
