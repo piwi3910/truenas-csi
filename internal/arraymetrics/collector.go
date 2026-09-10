@@ -55,14 +55,23 @@ type Registry interface {
 // A volume id, node name, initiator IQN or share path would be unbounded, and a
 // credential must never reach a label at all.
 var (
+	// RAW bytes, which is what `zpool list` and the appliance's pool view show.
+	// On a RAIDZ pool that INCLUDES PARITY and is therefore larger than the
+	// data the pool can hold: a 12-disk RAIDZ2 measured 41.05 TiB raw free
+	// against 30.33 TiB writable. Alert on these for the health of the pool
+	// itself; for "can another volume be provisioned", the driver's
+	// CSIStorageCapacity is the figure that answers it, and it is deliberately
+	// smaller.
 	poolSizeDesc = prometheus.NewDesc("truenas_pool_size_bytes",
-		"Total size of a ZFS pool, in bytes, as the appliance reports it.",
+		"Total RAW size of a ZFS pool in bytes, as the appliance reports it. "+
+			"On RAIDZ this includes parity, so it exceeds what the pool can store.",
 		[]string{"backend", "pool"}, nil)
 	poolFreeDesc = prometheus.NewDesc("truenas_pool_free_bytes",
-		"Free space in a ZFS pool, in bytes.",
+		"Free RAW space in a ZFS pool in bytes. On RAIDZ this includes parity, so "+
+			"it exceeds what can still be written.",
 		[]string{"backend", "pool"}, nil)
 	poolUsedDesc = prometheus.NewDesc("truenas_pool_used_bytes",
-		"Used space in a ZFS pool, in bytes (size minus free).",
+		"Used RAW space in a ZFS pool, in bytes (size minus free).",
 		[]string{"backend", "pool"}, nil)
 	poolHealthyDesc = prometheus.NewDesc("truenas_pool_healthy",
 		"1 when the appliance reports the pool healthy, 0 otherwise.",

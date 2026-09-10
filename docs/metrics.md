@@ -133,6 +133,14 @@ default) and served from cache: `truenas_pool_size_bytes`,
 `truenas_iscsi_sessions`, `truenas_collection_duration_seconds`,
 `truenas_collection_errors_total`.
 
+The three pool byte counts are RAW, which is what `zpool list` and the
+appliance's own pool view show. On a RAIDZ pool that includes parity and is
+therefore larger than the data the pool can hold — a 12-disk RAIDZ2 measured
+41.05 TiB raw free against 30.33 TiB writable. Alert on them for the health of
+the pool itself. For "can another volume be provisioned", the answer is the
+driver's `CSIStorageCapacity`, which is measured in writable bytes and already
+excludes the operator's reserve, so it is deliberately the smaller number.
+
 ## Driver and node health
 
 `truenas_csi_calls_total`, `truenas_csi_call_duration_seconds`,
