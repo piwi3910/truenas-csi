@@ -215,8 +215,12 @@ bug hunt continued.
 
 125 commits since v0.1.3. They are not only fixes: delete protection with a
 graveyard and a reaper, `ControllerModifyVolume` driven by a
-VolumeAttributesClass, per-volume I/O limits via cgroup v2, namespace quotas,
-group snapshots, and opt-in per-node access control all arrived in this range.
+VolumeAttributesClass, per-volume I/O limits via cgroup v2, per-volume I/O
+metrics, and opt-in per-node access control all arrived in this range.
+
+(Checked rather than assumed: namespace quotas, group snapshots, volume health
+monitoring and pod fencing all predate v0.1.0 and are NOT new here. The commits
+touching them in this range are fixes.)
 
 Several changes also alter behaviour a working cluster may depend on:
 
@@ -234,4 +238,7 @@ Under semantic versioning for 0.x, new features and behaviour changes of this
 kind are a MINOR bump, not a patch. The alternative reading is that everything
 in 0.x is a patch until 1.0, which this project's CHANGELOG has not followed.
 
-- OPEN: v0.2.0 or v0.1.4?
+- **CHOSEN:** v0.2.0 — a minor bump, which is what semantic versioning gives
+  new features and changed behaviour in 0.x.
+- v0.1.4, on the reading that everything below 1.0 is a patch. It would
+  understate the features and give no signal about the topology change.
