@@ -210,3 +210,28 @@ bug hunt continued.
 - Re-run one or more named tasks as a fresh audit against its brief, to check
   the delivered work actually meets what the brief asked for.
 - Stop the hunt and produce a written status of the plan's tasks instead.
+
+## The version number for the release after v0.1.3
+
+125 commits since v0.1.3. They are not only fixes: delete protection with a
+graveyard and a reaper, `ControllerModifyVolume` driven by a
+VolumeAttributesClass, per-volume I/O limits via cgroup v2, namespace quotas,
+group snapshots, and opt-in per-node access control all arrived in this range.
+
+Several changes also alter behaviour a working cluster may depend on:
+
+- a volume's required topology now names the filesystem the CO actually asked
+  for, so a StorageClass with `csi.storage.k8s.io/fstype: xfs` produces PVs that
+  only schedule onto nodes carrying the xfs label. On a cluster where some nodes
+  lack xfsprogs, pods that used to schedule (onto a node that then failed to
+  mount) now stay Pending, correctly, but visibly;
+- CreateVolume now refuses a filesystem this driver cannot make, and refuses a
+  clone or restore whose destination StorageClass names a different filesystem
+  from the source;
+- CreateVolume refuses a StorageClass parameter nothing reads.
+
+Under semantic versioning for 0.x, new features and behaviour changes of this
+kind are a MINOR bump, not a patch. The alternative reading is that everything
+in 0.x is a patch until 1.0, which this project's CHANGELOG has not followed.
+
+- OPEN: v0.2.0 or v0.1.4?
