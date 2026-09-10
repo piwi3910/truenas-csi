@@ -704,3 +704,52 @@ func TestCreateVolumeKeepsCredentialsOutOfThePersistentVolume(t *testing.T) {
 		t.Errorf("an ordinary publish-context entry was dropped: %v", vctx)
 	}
 }
+
+// TestRestoreAcrossProtocolsIsRefusedUpFront.
+//
+// A ZFS snapshot of a FILESYSTEM cannot become a zvol, and the reverse is
+// equally impossible, so restoring an nfs or smb snapshot into an iscsi or
+// nvme StorageClass can never succeed. The controller compared only the
+// BACKEND name, so the request went through: the clone was made, sizing it
+// failed with the middleware's own "'volsize'" error, and the rollback removed
+// it — measured against a real appliance, which answered
+//
+//	Internal: sizing the restored volume Pool0/csi-xproto/xp-dst:
+//	  pool.dataset.update: jsonrpc -32001 EINVAL: 'volsize'
+//
+// Internal is what makes that bad rather than merely ugly: it tells the CO to
+// retry, so the claim retries for ever and every attempt clones and rolls back
+// a dataset on the appliance.
+func TestRestoreAcrossProtocolsIsRefusedUpFront(t *testing.T) {
+	for _, tc := range []struct {
+		protocol, srcType string
+		ok                bool
+	}{
+		{"nfs", "FILESYSTEM", true},
+		{"smb", "FILESYSTEM", true},
+		{"iscsi", "VOLUME", true},
+		{"nvme", "VOLUME", true},
+
+		{"iscsi", "FILESYSTEM", false},
+		{"nvme", "FILESYSTEM", false},
+		{"nfs", "VOLUME", false},
+		{"smb", "VOLUME", false},
+	} {
+		name := tc.protocol + "-from-" + tc.srcType
+		t.Run(name, func(t *testing.T) {
+			err := requireRestorableInto(tc.protocol, tc.srcType, "snap-1")
+			switch {
+			case tc.ok && err != nil:
+				t.Fatalf("%s must be restorable from a %s snapshot: %v",
+					tc.protocol, tc.srcType, err)
+			case !tc.ok && status.Code(err) != codes.InvalidArgument:
+				t.Fatalf("code = %v, want InvalidArgument (err %v)", status.Code(err), err)
+			}
+		})
+	}
+	// An unknown type is not evidence of a mismatch: a source the driver cannot
+	// classify must not become a refusal of a restore that would have worked.
+	if err := requireRestorableInto("iscsi", "", "snap-1"); err != nil {
+		t.Fatalf("an unreadable source type must not refuse the restore: %v", err)
+	}
+}

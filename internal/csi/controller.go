@@ -274,6 +274,10 @@ func (c *controller) CreateVolume(ctx context.Context, req *csipb.CreateVolumeRe
 					"snapshot %q lives on backend %q but the volume would be created on %q",
 					s.GetSnapshotId(), srcBackend, id.Backend)
 			}
+			if err := requireRestorableInto(id.Protocol,
+				c.snapshotSourceType(ctx, s.GetSnapshotId()), s.GetSnapshotId()); err != nil {
+				return nil, err
+			}
 			// The backend talks to ZFS, which knows nothing of the backend
 			// prefix the CSI id carries.
 			cr.SourceSnapshot = zfsID
@@ -879,6 +883,71 @@ func (c *controller) requireSnapshotExists(ctx context.Context, snapshotID strin
 		return status.Errorf(codes.NotFound, "snapshot %q does not exist", snapshotID)
 	}
 	return nil
+}
+
+// snapshotSourceType reports the ZFS type of the dataset a snapshot was taken
+// from, or "" when it cannot be established. "" is deliberately not an error:
+// the only caller uses it to refuse an impossible restore, and a source it
+// could not classify must not refuse a restore that would have worked.
+func (c *controller) snapshotSourceType(ctx context.Context, snapshotID string) string {
+	backendName, zfsID, err := backend.SnapshotSource(snapshotID)
+	if err != nil {
+		return ""
+	}
+	cl, err := c.reg.Client(ctx, backendName)
+	if err != nil {
+		return ""
+	}
+	dataset, _, found := strings.Cut(zfsID, "@")
+	if !found {
+		return ""
+	}
+	ds, err := cl.DatasetQuery(ctx, dataset)
+	if err != nil || ds == nil {
+		return ""
+	}
+	return ds.Type
+}
+
+// datasetTypeFor is the ZFS dataset type a protocol serves: a zvol for the
+// block protocols, a filesystem for the file ones.
+func datasetTypeFor(protocol string) string {
+	switch protocol {
+	case "iscsi", "nvme":
+		return "VOLUME"
+	default:
+		return "FILESYSTEM"
+	}
+}
+
+// requireRestorableInto refuses a restore whose source cannot become the kind
+// of volume the StorageClass asks for.
+//
+// A ZFS snapshot of a FILESYSTEM cannot become a zvol and a snapshot of a zvol
+// cannot become a filesystem, so an nfs or smb snapshot restored into an iscsi
+// or nvme class can never succeed. Only the BACKEND was compared before, so the
+// request reached the appliance: the clone was made, sizing it failed with the
+// middleware's own "'volsize'" error, and the rollback removed it. That was
+// reported as Internal, which tells the CO to RETRY — so the claim retried for
+// ever and every attempt cloned and rolled back a dataset on the appliance.
+//
+// An empty srcType means the source could not be classified, which is not
+// evidence of a mismatch: it must not turn into a refusal of a restore that
+// would have worked.
+func requireRestorableInto(protocol, srcType, snapshotID string) error {
+	if srcType == "" {
+		return nil
+	}
+	want := datasetTypeFor(protocol)
+	if srcType == want {
+		return nil
+	}
+	kind := map[string]string{"VOLUME": "block volume", "FILESYSTEM": "filesystem"}
+	return status.Errorf(codes.InvalidArgument,
+		"snapshot %q is of a %s and cannot be restored into a %q volume, which needs a %s: "+
+			"a ZFS snapshot keeps the shape of what it was taken from, so restore it into a "+
+			"StorageClass whose protocol serves the same shape",
+		snapshotID, kind[srcType], protocol, kind[want])
 }
 
 // rejectSnapshotNameReuse enforces the CSI rule that one snapshot name may not
