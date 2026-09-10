@@ -10,6 +10,8 @@ import (
 	"github.com/piwi3910/truenas-csi/internal/obs"
 	"github.com/piwi3910/truenas-csi/internal/truenas"
 	"github.com/piwi3910/truenas-csi/internal/volume"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // unmappedLUN is the sentinel publishContext takes for "this volume occupies no
@@ -48,6 +50,17 @@ func (b *iscsiBackend) Publish(ctx context.Context, id volume.ID, node backend.N
 	}
 	if extent == nil {
 		return nil, fmt.Errorf("%w: extent %s", ErrVolumeNotFound, name)
+	}
+	// An extent carries its own enabled switch, and a disabled one presents no
+	// device: the LUN maps, the publish reports success, and the node then
+	// waits for a device that never appears. Verified on a real appliance —
+	// iscsi.extent.update accepts {"enabled": false} and the extent still
+	// answers a query under the same name.
+	if !extent.Serving() {
+		return nil, status.Errorf(codes.FailedPrecondition,
+			"the iSCSI extent %s is disabled on the appliance, so this volume presents "+
+				"no device to the node; re-enable it in Shares > Block Shares > Extents",
+			name)
 	}
 
 	tname := targetName(b.pool, b.parent)

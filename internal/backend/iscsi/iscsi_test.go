@@ -3,6 +3,8 @@ package iscsi
 import (
 	"context"
 	"errors"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"strings"
 	"testing"
 	"time"
@@ -394,5 +396,28 @@ func TestISCSICrashMidCloneDoesNotLeak(t *testing.T) {
 	}
 	if got, _ := userProp(t, ds, volume.ProtocolProperty); got != Protocol {
 		t.Errorf("resumed clone protocol = %q, want %q", got, Protocol)
+	}
+}
+
+// TestPublishRefusesADisabledExtent.
+//
+// An extent carries its own enabled switch and Publish read only its id and
+// NAA, so a disabled extent was published as if healthy: the LUN mapped, the
+// call reported success, and the node then waited for a device that never
+// appeared. Verified on a real appliance — iscsi.extent.update accepts
+// {"enabled": false} and the extent still answers a query under the same name.
+func TestPublishRefusesADisabledExtent(t *testing.T) {
+	ctx := context.Background()
+	n := newNAS(t)
+	b := n.backend()
+	if _, err := b.Create(ctx, createReq("pvc-1", 1<<30, nil)); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	n.disableExtent(extentName(volID("pvc-1")))
+
+	_, err := b.Publish(ctx, volID("pvc-1"),
+		backend.NodeRef{ID: "worker-21", Addrs: []string{"192.168.10.104"}})
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("code = %v, want FailedPrecondition (err %v)", status.Code(err), err)
 	}
 }

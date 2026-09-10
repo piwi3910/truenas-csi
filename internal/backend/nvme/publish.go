@@ -9,6 +9,8 @@ import (
 	"github.com/piwi3910/truenas-csi/internal/obs"
 	"github.com/piwi3910/truenas-csi/internal/truenas"
 	"github.com/piwi3910/truenas-csi/internal/volume"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // Publish binds the volume's subsystem to its transport port, and grants the
@@ -38,6 +40,21 @@ func (b *nvmeBackend) Publish(ctx context.Context, id volume.ID, node backend.No
 	}
 	if subsys == nil {
 		return nil, fmt.Errorf("%w: subsystem %s", ErrVolumeNotFound, name)
+	}
+
+	// A namespace carries its own enabled switch, and a disabled one presents
+	// no device: the subsystem binds, the publish reports success, and the node
+	// then waits for a device that never appears. nvmet.namespace.create
+	// declares the field, so it can be turned off after provisioning.
+	ns, err := b.c.NVMeNamespaceByDevice(ctx, devicePath(id))
+	if err != nil {
+		return nil, fmt.Errorf("querying the namespace for %s: %w", id, err)
+	}
+	if ns != nil && !ns.Serving() {
+		return nil, status.Errorf(codes.FailedPrecondition,
+			"the NVMe-oF namespace for %s is disabled on the appliance, so this volume "+
+				"presents no device to the node; re-enable it under Shares > NVMe-oF",
+			id)
 	}
 
 	port, err := b.portFor(ctx, ds)

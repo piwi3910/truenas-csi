@@ -88,7 +88,16 @@ type NVMeNamespace struct {
 	SubsysID   refField `json:"subsys_id"`
 	DeviceType string   `json:"device_type"`
 	DevicePath string   `json:"device_path"`
+
+	// Enabled is the namespace's own switch. A POINTER because absent must not
+	// read as disabled: middleware that stopped reporting the field would
+	// otherwise make every namespace look dead and refuse every publish.
+	Enabled *bool `json:"enabled"`
 }
+
+// Serving reports whether the appliance is actually presenting this namespace.
+// A namespace that does not report the field is assumed to be.
+func (n *NVMeNamespace) Serving() bool { return n == nil || n.Enabled == nil || *n.Enabled }
 
 // NVMePort is a transport endpoint subsystems are bound to.
 type NVMePort struct {

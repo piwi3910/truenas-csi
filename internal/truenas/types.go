@@ -251,7 +251,16 @@ type ISCSIExtent struct {
 	Type string `json:"type"`
 	Disk string `json:"disk"`
 	NAA  string `json:"naa"`
+
+	// Enabled is the extent's own switch. A POINTER because absent must not
+	// read as disabled: middleware that stopped reporting the field would
+	// otherwise make every extent look dead and refuse every publish.
+	Enabled *bool `json:"enabled"`
 }
+
+// Serving reports whether the appliance is actually presenting this extent. An
+// extent that does not report the field is assumed to be.
+func (e *ISCSIExtent) Serving() bool { return e == nil || e.Enabled == nil || *e.Enabled }
 
 // ISCSITarget is an iSCSI target.
 type ISCSITarget struct {

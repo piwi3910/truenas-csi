@@ -389,6 +389,10 @@ func (n *nas) install() {
 		e := map[string]any{
 			"id": id, "name": name, "type": spec["type"], "disk": spec["disk"],
 			"naa": fmt.Sprintf("0x6589cfc0000000000000000000000%03d", id),
+			// The appliance reports the extent's own enabled switch on every
+			// query, and create defaults it true. A fake that never returned it
+			// described an extent that cannot be turned off.
+			"enabled": true,
 		}
 		n.extents = append(n.extents, e)
 		return e, nil
@@ -567,5 +571,17 @@ func zvol(id string, size int64, marker, source string) map[string]any {
 		"id": id, "type": "VOLUME",
 		"volsize":         map[string]any{"parsed": float64(size)},
 		"user_properties": props,
+	}
+}
+
+// disableExtent turns an extent off the way an operator would, so a test can
+// drive the path where the appliance presents no device for a mapped LUN.
+func (n *nas) disableExtent(name string) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	for _, e := range n.extents {
+		if e["name"] == name {
+			e["enabled"] = false
+		}
 	}
 }
