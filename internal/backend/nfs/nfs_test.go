@@ -777,3 +777,28 @@ func TestDisabledExportIsRefusedRatherThanAdopted(t *testing.T) {
 			status.Code(err), err)
 	}
 }
+
+// TestPublishRefusesADisabledExport is the half that matters most.
+//
+// An existing volume's pod being rescheduled comes through Publish, NOT through
+// CreateVolume, so a share disabled after provisioning was still adopted there.
+// Observed on a real cluster: the node then failed to mount with the
+// appliance's own "reason given by server: No such file or directory" and
+// nothing naming the disabled share.
+func TestPublishRefusesADisabledExport(t *testing.T) {
+	n := newNAS(t)
+	n.put("Pool0/k8s/pvc-1", &fakeDataset{refquota: gib, marker: volume.OwnerValue, source: "LOCAL"})
+	n.mu.Lock()
+	n.shares["/mnt/Pool0/k8s/pvc-1"] = &fakeExport{id: 9, disabled: true}
+	n.mu.Unlock()
+
+	pub, ok := newBackend(t, n).(backend.Publisher)
+	if !ok {
+		t.Fatal("the nfs backend must be a Publisher")
+	}
+	_, err := pub.Publish(context.Background(), testID("pvc-1"),
+		backend.NodeRef{ID: "worker-21", Addrs: []string{"192.168.10.104"}})
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("code = %v, want FailedPrecondition (err %v)", status.Code(err), err)
+	}
+}

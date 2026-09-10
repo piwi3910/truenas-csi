@@ -49,6 +49,18 @@ func (b *Backend) Publish(ctx context.Context, id volume.ID, node backend.NodeRe
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "query NFS share for %s: %v", mountpoint, err)
 	}
+	if share != nil && !share.serving() {
+		// The publish path matters more than the create path here: an existing
+		// volume's pod being rescheduled comes through HERE, not through
+		// CreateVolume, so a share disabled after provisioning was still
+		// adopted and the node then failed to mount with the appliance's own
+		// "No such file or directory" and nothing naming the cause. Observed
+		// on a real cluster.
+		return nil, status.Errorf(codes.FailedPrecondition,
+			"the NFS share for %s is disabled on the appliance, so this volume cannot "+
+				"be mounted; re-enable it or delete it and let the driver recreate it",
+			mountpoint)
+	}
 	if share == nil {
 		// Self-healing rather than a failure: an export removed by hand is
 		// recreated already fenced to this node, which is the state the volume
