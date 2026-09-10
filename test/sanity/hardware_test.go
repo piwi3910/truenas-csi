@@ -371,6 +371,18 @@ func TestDependentCloneGuardAgainstHardware(t *testing.T) {
 		t.Errorf("the refusal must name the volume blocking the delete, got: %v", err)
 	}
 
+	// The SOURCE VOLUME is blocked too, by a different code path: DeleteVolume
+	// goes through pool.dataset.delete, whose refusal is classified by
+	// IsHasDependentClones and named by clonesOf -- a separate scan that read
+	// origin's display form and so could never name anything either.
+	_, err = ctrl.DeleteVolume(ctx, &csipb.DeleteVolumeRequest{VolumeId: srcID})
+	if err == nil {
+		t.Fatal("deleting a volume whose snapshot still has a clone must be refused")
+	}
+	if !strings.Contains(err.Error(), "guard-clone") {
+		t.Errorf("the refusal must name the clone keeping the volume alive, got: %v", err)
+	}
+
 	// And once the clone is gone the snapshot deletes cleanly, which is what
 	// proves the guard was reading a real dependency rather than refusing
 	// everything.
