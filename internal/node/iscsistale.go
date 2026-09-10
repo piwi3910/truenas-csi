@@ -157,7 +157,7 @@ func (n *Node) deleteSCSIDevice(name string) error {
 	if err != nil {
 		return fmt.Errorf("open %s: %w", path, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if _, err := f.WriteString("1"); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
@@ -230,7 +230,7 @@ func (n *Node) rescanSCSIDevice(name string) error {
 	if err != nil {
 		return fmt.Errorf("open %s: %w", path, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if _, err := f.WriteString("1"); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
