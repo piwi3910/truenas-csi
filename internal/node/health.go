@@ -145,6 +145,9 @@ type HealthMonitor struct {
 	// identityChecked is when each volume's identity was last established, so
 	// the expensive check keeps its own slower cadence.
 	identityChecked map[string]time.Time
+	// identityVerdict is what that check last concluded, so the passes between
+	// checks repeat it rather than reporting a device they did not look at.
+	identityVerdict map[string]error
 }
 
 // NewHealthMonitor builds a monitor with the production probes.
@@ -211,6 +214,8 @@ func (m *HealthMonitor) Forget(volumeID string) {
 	t, ok := m.targets[volumeID]
 	delete(m.targets, volumeID)
 	delete(m.states, volumeID)
+	delete(m.identityChecked, volumeID)
+	delete(m.identityVerdict, volumeID)
 	m.mu.Unlock()
 	if ok {
 		obs.ForgetVolumeHealth(volumeID, t.Protocol)
@@ -341,7 +346,12 @@ func (m *HealthMonitor) checkIdentity(ctx context.Context, t HealthTarget) error
 		return nil
 	}
 	if !m.identityDue(t.VolumeID) {
-		return nil
+		// Between checks the last verdict STANDS. A device that is the wrong
+		// volume does not become the right one because this pass did not look:
+		// reporting healthy on the nine passes between checks made the
+		// condition flap once a minute on real hardware, which is worse than
+		// not reporting it — an operator reads a flapping alert as a glitch.
+		return m.lastIdentityVerdict(t.VolumeID)
 	}
 	want := normalizeNAA(t.NAA)
 
@@ -361,11 +371,33 @@ func (m *HealthMonitor) checkIdentity(ctx context.Context, t HealthTarget) error
 		return nil
 	}
 	if !ok || got == "" || got == want {
+		m.rememberIdentityVerdict(t.VolumeID, nil)
 		return nil
 	}
-	return fmt.Errorf("%w: LUN %s now holds %s, not %s — the appliance has reassigned this "+
+	err := fmt.Errorf("%w: LUN %s now holds %s, not %s — the appliance has reassigned this "+
 		"volume's LUN and anything written here lands in another volume's data",
 		ErrWrongDevice, t.LUN, got, want)
+	m.rememberIdentityVerdict(t.VolumeID, err)
+	return err
+}
+
+// rememberIdentityVerdict stores the result of the last identity check so the
+// passes in between can repeat it.
+func (m *HealthMonitor) rememberIdentityVerdict(volumeID string, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.identityVerdict == nil {
+		m.identityVerdict = map[string]error{}
+	}
+	m.identityVerdict[volumeID] = err
+}
+
+// lastIdentityVerdict is what the last identity check concluded, or nil when
+// none has run yet.
+func (m *HealthMonitor) lastIdentityVerdict(volumeID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.identityVerdict[volumeID]
 }
 
 // identityDue rate-limits the identity check to IdentityInterval per volume,

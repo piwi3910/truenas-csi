@@ -314,3 +314,46 @@ func TestMonitorDoesNotInventAMismatch(t *testing.T) {
 		})
 	}
 }
+
+// TestAWrongDeviceStaysWrongBetweenIdentityChecks pins the cadence against the
+// thing that makes a cadence dangerous.
+//
+// The identity check runs once a minute and the reachability pass every ten
+// seconds. On real hardware that made the condition flap: reported, then
+// "recovered" ten seconds later because the pass in between had not looked, and
+// reported again a minute after that. An operator reads a flapping alert as a
+// glitch, so a verdict has to stand until the next check overturns it.
+func TestAWrongDeviceStaysWrongBetweenIdentityChecks(t *testing.T) {
+	const staged = "0x6589cfc0000002be12ecd2689a164171"
+	now := time.Now()
+	checks := 0
+	m := &HealthMonitor{
+		Statfs:           func(string) error { return nil },
+		Dial:             func(context.Context, string) error { return nil },
+		Now:              func() time.Time { return now },
+		IdentityInterval: time.Minute,
+		DeviceIdentity: func(string, string, string) (string, bool) {
+			checks++
+			return "6589cfc0000005997b02e9e47100d1c1", true
+		},
+	}
+	m.targets = map[string]HealthTarget{}
+	m.states = map[string]*HealthState{}
+	m.Track(HealthTarget{VolumeID: "v", Protocol: ProtocolISCSI, Path: "/staging",
+		Backend: "nas1", DataAddr: "192.168.10.253:3260",
+		NAA: staged, Portal: "p", IQN: "i", LUN: "0"})
+
+	// Six passes at ten seconds: one identity check, five that must repeat it.
+	for i := 0; i < 6; i++ {
+		m.CheckOnce(context.Background())
+		if abnormal, message := m.Condition("v"); !abnormal {
+			t.Fatalf("pass %d reported the volume healthy; the device is still a different "+
+				"volume and the condition flapped (%q)", i, message)
+		}
+		now = now.Add(10 * time.Second)
+	}
+	if checks != 1 {
+		t.Errorf("established the device's identity %d times in a minute, want 1: the rescan "+
+			"goes to the wire for every volume on the node", checks)
+	}
+}
