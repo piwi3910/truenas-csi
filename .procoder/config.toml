@@ -1,0 +1,11 @@
+# Files that must already carry the release version when a tag is cut.
+#
+# Without this list the version-sync leg of `procoder release` passes by
+# verifying nothing, which is worse than no check: it reads as green. The
+# changelog is checked separately by the controller, so it is not listed here.
+#
+# The chart is the only file that carries the driver's version. `appVersion`
+# is the default image tag, so a chart published with the previous appVersion
+# installs the previous driver from a correctly-versioned chart — silently.
+[release]
+files = ["deploy/helm/truenas-csi/Chart.yaml"]

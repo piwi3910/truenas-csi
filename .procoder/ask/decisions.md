@@ -275,3 +275,65 @@ before this change.
 - **CHOSEN:** Commit to `main` directly, as the 139 commits before it were.
 - Branch and open a PR against `feat/foundation`.
 - Hold — leave it in the working tree for review first.
+
+## Verify the #14 fix on hardware before trusting it?
+
+The rescan fix is deployed to kw (revision 30, image
+`nightly-c0fefc53f75c6366e3e27072dec89a21a5907dc8`) but its code path has not
+run: #14 only triggers when a second iSCSI volume stages on a node that already
+holds the shared session, and `minio` and `nexus` now sit on different nodes
+(master-12 and worker-22). Everything verified so far is a unit test and a clean
+rollout, not the reported failure reproducing and then not reproducing.
+
+- **CHOSEN:** Stage two iSCSI PVCs onto one node with a nodeSelector, confirm both mount,
+  then delete them. Proves the fix against the actual bug; creates and removes
+  two 1Gi volumes on a live cluster.
+- Leave it. The unit test covers the logic, and the next real co-located volume
+  will exercise it — at the cost of finding out in production.
+
+## Close #14 by hand?
+
+`main` is not the default branch (`feat/foundation` is), so the `Closes #14`
+keyword in c0fefc5 will never auto-close it. The fix is committed, pushed and
+deployed.
+
+- Close it now with a comment naming the commit and the deployed image tag.
+- **CHOSEN:** Hold until the hardware verification above has actually run.
+- Leave it open; close it whenever the fix reaches `feat/foundation`.
+
+## Rotate the nas1 TrueNAS API key?
+
+`helm get values` printed it in cleartext into this session's scrollback. It was
+not sent anywhere external; the scratchpad copy was mode 600 and has been
+shredded. The key also sits in the cluster Secret and in the terminal history.
+
+- **CHOSEN:** Leave it. Exposure was local to a terminal the owner controls.
+- Rotate it on the appliance and update the release values.
+
+> Correction to "Close #14 by hand?" above: its premise was wrong. `main` is the
+> GitHub default branch — the local `origin/HEAD` pointing at `feat/foundation`
+> was stale — so `Closes #14` in c0fefc5 closed the issue on push at 05:52:25Z,
+> before the question was asked. The hardware verification still ran and is
+> recorded as a comment on the issue.
+
+## Release after the iSCSI rescan fix: version, and whether to cut dead code first
+
+The repo-wide simplify sweep before the tag found exactly three dead methods on
+the TrueNAS client — `NFSShareCreate` (+ `NFSShareSpec`), `PortalDelete` and
+`NVMePortDelete`. All three are declared on the `API` interface in
+`internal/truenas/api.go` and implemented on `Ops`, and nothing calls them:
+the NFS backend builds its own `sharing.nfs.create` payload in `access.go`, and
+the portal and NVMe port are shared infrastructure the driver creates once and
+never deletes. `Ops` is the only implementation and the package is `internal/`,
+so removing them breaks no public API. The other 131 "unreferenced" symbols the
+index reported are interface-dispatch false positives.
+
+- **CHOSEN:** Cut all three plus their interface lines, then tag — the fix and
+  the cleanup ship together.
+- Release the fix alone and let the cleanup land separately.
+- Keep them deliberately for create/delete symmetry in the client.
+
+Version, with `v0.2.0` two days old and c0fefc5 the only commit since:
+
+- **CHOSEN:** `v0.2.1` — a patch, being a bug fix and nothing else.
+- `v0.3.0`, if the rescan counted as a behaviour change worth signalling.

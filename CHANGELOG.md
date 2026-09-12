@@ -3,6 +3,53 @@
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project uses [semantic versioning](https://semver.org/).
 
+## 0.2.1 - 2026-09-12
+
+_Fixes an iSCSI attach failure that hit every volume after the first on a node,
+verified on the eight-node arm64 cluster it was reported from._
+
+### Fixed
+
+- **Every iSCSI volume after the first on a node failed to attach**
+  ([#14](https://github.com/piwi3910/truenas-csi/issues/14)). All volumes on a
+  node share ONE iSCSI session, because every volume is a LUN on one target. A
+  login enumerates LUNs; a session that is already up does not, and nothing in
+  the protocol tells a live session that a LUN has since been mapped to it. So
+  for the second and every later volume the driver polled
+  `/dev/disk/by-id/scsi-3<naa>` for a device the kernel had never been asked to
+  look for, failed with `block device did not appear after attach` after 30s,
+  and retried identically for ever. It presented as an intermittent,
+  node-dependent failure: the same PVC worked on a node with no prior session
+  and hung on one that had it.
+
+  `NodeStageVolume` now rescans the session on every stage, after the login and
+  before the device poll, scoped to the driver's own portal and target — an
+  unscoped rescan would disturb other initiators' sessions on the same node.
+  Rescanning on every attempt also means a transient miss self-heals on the next
+  retry instead of looping until an operator runs `iscsiadm` by hand. A rescan
+  that itself fails warns rather than failing the stage, since the device may be
+  there regardless.
+
+  The fix deliberately does not log out and back in to force enumeration, which
+  is the other way to do it: sibling volumes hold that session, and recycling it
+  is the data loss fixed in 0.2.0
+  ([#15](https://github.com/piwi3910/truenas-csi/issues/15)).
+
+### Removed
+
+- Three TrueNAS client methods no caller ever reached — `NFSShareCreate`,
+  `PortalDelete` and `NVMePortDelete`. The NFS backend creates its exports
+  directly, because the access list must be written in the same call that
+  creates the share; the iSCSI portal and the NVMe port are shared
+  infrastructure the driver creates once and never removes. All three were
+  unexported surface on an `internal/` package, so no configuration or API
+  changes.
+
+### Upgrading
+
+Nothing to do. No API, schema or behaviour change beyond the attach fix; volumes
+staged by 0.2.0 are unaffected.
+
 ## [0.2.0] - 2026-09-10
 
 125 commits since 0.1.3. Everything below was verified against a real TrueNAS
