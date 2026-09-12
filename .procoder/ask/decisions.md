@@ -242,3 +242,36 @@ in 0.x is a patch until 1.0, which this project's CHANGELOG has not followed.
   new features and changed behaviour in 0.x.
 - v0.1.4, on the reading that everything below 1.0 is a patch. It would
   understate the features and give no signal about the topology change.
+
+## Issue #15 (shared-session teardown / data loss): close as already fixed?
+
+Reported against build `dev-923bfc2`. The refcounted logout landed in `b4eb3f9`
+("node: stop logging out of a shared iSCSI session other volumes are using"),
+which is a descendant of that build, and later commits widened it — `c8e120c`
+made the in-use check see raw block volumes, which the first version missed.
+`unstageISCSI` now has the only logout call site in the tree, and it is guarded
+by `iscsiTargetInUse` with a fail-safe on error. Nothing in the stage path logs
+out. That covers both of the issue's asks, including "enumerate the LUNs still
+mapped and refuse if any are in use".
+
+Not verified on hardware by me — this is a read of the code, not a reproduction.
+
+- **CHOSEN:** Close it with a comment naming the commits, and ask the reporter
+  to reopen if it recurs on a current build.
+- Comment only, leave it open until the reporter confirms on real hardware.
+- Leave it entirely alone for now.
+
+## Issue #14 (no SCSI rescan on an existing session): commit the fix to `main`?
+
+Fixed: `stageISCSI` now issues a rescan scoped to our target on every stage,
+after the login and before the device poll, warning rather than failing if the
+rescan itself errors. The stale-device fallback is unchanged. Regression test
+added; with the rescan removed it fails with the exact error from the issue.
+Gate clean (0 blocking), full suite green.
+
+The branch is `main`, 139 ahead of `feat/foundation`, and the tree was clean
+before this change.
+
+- **CHOSEN:** Commit to `main` directly, as the 139 commits before it were.
+- Branch and open a PR against `feat/foundation`.
+- Hold — leave it in the working tree for review first.

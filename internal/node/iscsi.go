@@ -64,12 +64,35 @@ func (n *Node) stageISCSI(ctx context.Context, req StageRequest) error {
 		return err
 	}
 
+	// Login enumerates LUNs; a session that was ALREADY up does not, and
+	// nothing in the protocol tells a live session that a LUN has since been
+	// mapped to it. The session here is shared by every volume this driver has
+	// staged on the node, so for every volume after the first it is already up
+	// and the login above was a no-op — which leaves the poll below able to
+	// succeed only if some unrelated process happens to scan inside its window.
+	// Measured on the cluster: a second volume on a node failed identically
+	// every 30s until an operator ran iscsiadm by hand, and the one rescan made
+	// the device appear at once.
+	//
+	// So the node asks, on every stage. The command is scoped to our target, it
+	// costs one INQUIRY when there is nothing new, and doing it here rather
+	// than only on failure means a transient miss self-heals on the next retry.
+	if err := iscsiRescan(ctx, n.exec, portal, iqn); err != nil {
+		// Not fatal on its own: the device may be there regardless, and failing
+		// here would turn an attach that would have worked into an outage.
+		obs.Logger(ctx).Warn("could not rescan the iSCSI session for newly mapped LUNs; "+
+			"if this volume's device does not appear, this is why",
+			"portal", portal, "target", iqn, "error", obs.Redact(err.Error()))
+	}
+
 	device, err := n.deviceFor(ctx, naa)
 	if errors.Is(err, ErrDeviceNotFound) {
 		// One recovery, then one more look. The LUN this volume was given may
 		// be one this node still holds a device for from a volume deleted
 		// earlier: LUN ids are recycled, and a live session is never told that
-		// a LUN now means a different disk. Without this the node is stuck for
+		// a LUN now means a different disk. A rescan cannot fix that one — the
+		// device is present and merely lying — so the stale device is deleted
+		// first and only then rediscovered. Without this the node is stuck for
 		// good — every retry logs in to a session that already exists, finds
 		// nothing new, and fails again with the same message.
 		if n.dropStaleTargetDevices(ctx, portal, iqn, naa, req.PublishContext[KeyLUN]) > 0 {
@@ -244,7 +267,11 @@ func iscsiLogout(ctx context.Context, e Executor, portal, iqn string) error {
 	return nil
 }
 
-// iscsiRescan asks the kernel to re-read the size of the LUNs on our session only.
+// iscsiRescan asks the kernel to re-read our session only: both the size of the
+// LUNs it already has, which is what an online expansion needs, and the set of
+// LUNs the target now exports, which is how a volume mapped onto a session that
+// was already up is discovered at all.
+//
 // The unscoped form of this command rescans every session on the node, Longhorn's
 // included, so the scoping here is not stylistic.
 func iscsiRescan(ctx context.Context, e Executor, portal, iqn string) error {

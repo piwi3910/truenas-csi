@@ -447,3 +447,55 @@ func TestNeverFormatsWhenBlkidCannotAnswer(t *testing.T) {
 		})
 	}
 }
+
+// TestStageRescansALUNMappedOnAnExistingSession covers the shape that every
+// volume after the first on a node has: the session is SHARED, so it is already
+// up, the login enumerates nothing, and the LUN mapped for this volume stays
+// invisible to the kernel until something asks for it.
+//
+// The fake host mirrors that exactly — the by-id link does not exist, and
+// appears only once a rescan scoped to our target has been issued. A stage that
+// merely polls and waits cannot pass this.
+func TestStageRescansALUNMappedOnAnExistingSession(t *testing.T) {
+	root := iscsiRoot(t, false)
+	h := newISCSIHandler()
+	// A sibling volume staged earlier left the session open.
+	h.sessions[testIQN] = true
+
+	byID := filepath.Join(root, "dev", "disk", "by-id")
+	rescanned := false
+	e := &fakeExec{handler: func(name string, args []string) ([]byte, error) {
+		if name == "iscsiadm" && argValue(args, "-T") == testIQN &&
+			(contains(args, "-R") || contains(args, "--rescan")) {
+			rescanned = true
+			// The kernel enumerates the new LUN and udev publishes its link.
+			if err := os.Chmod(byID, 0o755); err != nil {
+				t.Errorf("chmod by-id: %v", err)
+			}
+			if err := os.Symlink("../../sdc", filepath.Join(byID, "scsi-3"+normalizeNAA(testNAA))); err != nil {
+				t.Errorf("symlink: %v", err)
+			}
+			if os.Geteuid() != 0 {
+				if err := os.Chmod(byID, 0o111); err != nil {
+					t.Errorf("chmod by-id back: %v", err)
+				}
+			}
+		}
+		return h.run(name, args)
+	}}
+	n := newTestNode(t, root, e, CapISCSI, CapExt4)
+	restore := shortDeviceWait(t)
+	defer restore()
+
+	if err := n.Stage(context.Background(), StageRequest{
+		VolumeID:         "pvc-abc",
+		StagingPath:      filepath.Join(t.TempDir(), "globalmount"),
+		PublishContext:   iscsiContext(),
+		VolumeCapability: VolumeCapability{FsType: "ext4"},
+	}); err != nil {
+		t.Fatalf("Stage on a node that already holds the shared session: %v", err)
+	}
+	if !rescanned {
+		t.Fatal("no rescan was issued, so the LUN could only have been found by luck")
+	}
+}
