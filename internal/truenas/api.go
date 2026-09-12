@@ -87,7 +87,6 @@ type API interface {
 	NVMePortFind(ctx context.Context, trtype, addr string, port int) (*NVMePort, error)
 	NVMePortList(ctx context.Context) ([]NVMePort, error)
 	NVMePortCreate(ctx context.Context, trtype, addr string, port int) (*NVMePort, error)
-	NVMePortDelete(ctx context.Context, id int) error
 	NVMePortSubsysList(ctx context.Context, subsysID int) ([]NVMePortSubsys, error)
 	NVMePortSubsysCreate(ctx context.Context, portID, subsysID int) (*NVMePortSubsys, error)
 	NVMePortSubsysDelete(ctx context.Context, id int) error
@@ -101,14 +100,12 @@ type API interface {
 	SnapshotDelete(ctx context.Context, id string) error
 	SnapshotClone(ctx context.Context, snapshot, dst string, props map[string]any) error
 
-	NFSShareCreate(ctx context.Context, spec NFSShareSpec) (*NFSShare, error)
 	NFSShareByPath(ctx context.Context, path string) (*NFSShare, error)
 	NFSShareDelete(ctx context.Context, id int) error
 
 	ISCSIGlobalConfig(ctx context.Context) (*ISCSIGlobal, error)
 	PortalList(ctx context.Context) ([]ISCSIPortal, error)
 	PortalCreate(ctx context.Context, comment string, ips []string) (*ISCSIPortal, error)
-	PortalDelete(ctx context.Context, id int) error
 	TargetByName(ctx context.Context, name string) (*ISCSITarget, error)
 	TargetCreate(ctx context.Context, name string, portalID, initiatorID int) (*ISCSITarget, error)
 	TargetDelete(ctx context.Context, id int) error

@@ -35,15 +35,6 @@ func (c *Ops) PortalCreate(ctx context.Context, comment string, ips []string) (*
 	return &p, nil
 }
 
-// PortalDelete removes a portal.
-func (c *Ops) PortalDelete(ctx context.Context, id int) error {
-	err := c.CallJSON(ctx, nil, "iscsi.portal.delete", id)
-	if err != nil && IsNotFound(err) {
-		return nil
-	}
-	return err
-}
-
 // TargetByName finds a target, or (nil, nil) when absent.
 func (c *Ops) TargetByName(ctx context.Context, name string) (*ISCSITarget, error) {
 	var out []ISCSITarget

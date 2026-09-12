@@ -270,15 +270,6 @@ func (c *Ops) NVMePortCreate(ctx context.Context, trtype, addr string, port int)
 	return &p, nil
 }
 
-// NVMePortDelete removes a port. An absent port is success.
-func (c *Ops) NVMePortDelete(ctx context.Context, id int) error {
-	err := c.CallJSON(ctx, nil, "nvmet.port.delete", id)
-	if err != nil && IsNotFound(err) {
-		return nil
-	}
-	return err
-}
-
 // NVMePortSubsysList returns the port bindings of one subsystem.
 func (c *Ops) NVMePortSubsysList(ctx context.Context, subsysID int) ([]NVMePortSubsys, error) {
 	var out []NVMePortSubsys
