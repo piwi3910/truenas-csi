@@ -176,8 +176,10 @@ func (b *nvmeBackend) bindPort(ctx context.Context, portID, subsysID int) error 
 		// The list above is a check-then-act, and ControllerPublishVolume is
 		// retried and can run concurrently for the same volume: two callers
 		// both see no binding and both create one, and the loser gets
-		// "[EINVAL] ...port_id: This record already exists". Observed on a live
-		// cluster, where it failed a publish that had in fact succeeded.
+		// "[EINVAL] ...port_id: This record already exists". (The same error is
+		// what a plain repeated publish produced while port_subsys rows were
+		// decoded from port_id instead of the "port" object the appliance
+		// actually returns -- azrtydxb/kuvryn-ai#122.)
 		//
 		// Establish the state by query rather than by classifying the error,
 		// exactly as ensureSubsystem does -- the middleware's errname is not

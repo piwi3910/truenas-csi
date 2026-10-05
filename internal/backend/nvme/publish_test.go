@@ -188,3 +188,79 @@ func TestPublishToleratesARaceOnTheExistingBinding(t *testing.T) {
 		})
 	}
 }
+
+// TestPublishTwoVolumesOnOneNode pins azrtydxb/kuvryn-ai#122: the first
+// NVMe-oF attach on a node worked, and a later attach of ANOTHER volume to the
+// same node failed in ControllerPublishVolume with
+//
+//	binding subsystem 156 to port 3: nvmet.port_subsys.create: ... This record already exists
+//
+// Every volume has its own subsystem and they all share the one port, so each
+// publish binds a different (port, subsys) pair -- and the CO re-issues
+// ControllerPublishVolume for an attachment it already holds (retries, attacher
+// resyncs), so each publish must also converge when its own pair already
+// exists. The fake hands rows back in the appliance's real shape, where
+// nvmet.port_subsys / nvmet.host_subsys rows carry "port" / "subsys" / "host"
+// objects rather than *_id fields; reading only port_id made every existing
+// binding look absent, so every publish after the first one per volume tried to
+// create it again and the middleware rejected the duplicate.
+func TestPublishTwoVolumesOnOneNode(t *testing.T) {
+	n := newNAS(t)
+	b := n.backend()
+	ctx := context.Background()
+	node := testNode("gx10-48f4", "nqn.2014-08.org.nvmexpress:uuid:gx10-48f4")
+
+	for _, name := range []string{"pvc-a", "pvc-b"} {
+		if _, err := b.Create(ctx, createReq(name, 1<<30, nil)); err != nil {
+			t.Fatalf("Create %s: %v", name, err)
+		}
+	}
+
+	// Volume A attaches, then volume B on the same node, then the CO repeats
+	// both (an attacher resync or a retry after a lost reply).
+	for _, name := range []string{"pvc-a", "pvc-b", "pvc-a", "pvc-b"} {
+		if _, err := b.Publish(ctx, volID(name), node); err != nil {
+			t.Fatalf("Publish %s: %v", name, err)
+		}
+	}
+	_, subs, _, ports, links := n.counts()
+	if subs != 2 || ports != 1 || links != 2 {
+		t.Fatalf("want two subsystems each bound once to the one shared port, got subsys=%d ports=%d port_subsys=%d",
+			subs, ports, links)
+	}
+	if got := n.hostGrants(); got != 2 {
+		t.Fatalf("want one host grant per volume, got %d", got)
+	}
+
+	// The context a repeated publish returns is the same one the node needs.
+	pc, err := b.Publish(ctx, volID("pvc-b"), node)
+	if err != nil {
+		t.Fatalf("repeated Publish: %v", err)
+	}
+	if pc["portal"] == "" || pc["nqn"] == "" {
+		t.Fatalf("a repeated publish must still return the connection details, got %v", pc)
+	}
+	if pc2, err := b.PublishContext(ctx, volID("pvc-b")); err != nil || pc2["portal"] != pc["portal"] {
+		t.Fatalf("PublishContext must find the port the subsystem is bound to, got %v, %v", pc2, err)
+	}
+
+	// Fencing A touches A only: B keeps its binding and its grant.
+	if err := b.Unpublish(ctx, volID("pvc-a"), node); err != nil {
+		t.Fatalf("Unpublish pvc-a: %v", err)
+	}
+	if _, _, _, _, links := n.counts(); links != 1 {
+		t.Fatalf("unpublishing A must leave exactly B's binding, got %d", links)
+	}
+	if got := n.hostGrants(); got != 1 {
+		t.Fatalf("unpublishing A must revoke A's grant and only A's, got %d grants", got)
+	}
+	if err := b.Unpublish(ctx, volID("pvc-b"), node); err != nil {
+		t.Fatalf("Unpublish pvc-b: %v", err)
+	}
+	if _, _, _, _, links := n.counts(); links != 0 {
+		t.Fatalf("want no bindings left, got %d", links)
+	}
+	if got := n.hostGrants(); got != 0 {
+		t.Fatalf("want no host grants left, got %d", got)
+	}
+}
