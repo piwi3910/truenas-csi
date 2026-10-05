@@ -14,9 +14,17 @@ import (
 // port_subsys binding is what actually exports it.
 //
 // Two decoding notes, both defensive rather than cosmetic:
-//   - reference fields (subsys_id, port_id, host_id) come back as a plain id on
-//     some endpoints and as a nested object on others depending on the query
-//     options, so they are decoded through refField;
+//   - reference fields are WRITTEN as port_id / subsys_id / host_id but READ
+//     back under a different key. nvmet.port_subsys, nvmet.host_subsys and
+//     nvmet.namespace are datastores with datastore_extend_fk, and the
+//     datastore serialises a foreign-key column under its name minus "_id"
+//     with the referenced row nested in it: a port_subsys row is
+//     {"id", "port": {...}, "subsys": {...}}, never {"port_id", "subsys_id"}
+//     (middlewared plugins/datastore/read.py _serialize_row, and the
+//     NVMetPortSubsysEntry / NVMetHostSubsysEntry / NVMetNamespaceEntry
+//     schemas, TS-25.10.6). Query FILTERS still name the column (subsys_id).
+//     The association types therefore decode both spellings through refField,
+//     preferring the *_id key and falling back to the nested object;
 //   - addr_trsvcid is a port number the middleware has been seen to render both
 //     as a number and as a string, so it is decoded through flexInt.
 //
@@ -95,6 +103,20 @@ type NVMeNamespace struct {
 	Enabled *bool `json:"enabled"`
 }
 
+// UnmarshalJSON reads subsys as well as subsys_id; see NVMePortSubsys.
+func (n *NVMeNamespace) UnmarshalJSON(b []byte) error {
+	type plain NVMeNamespace
+	aux := struct {
+		*plain
+		Subsys refField `json:"subsys"`
+	}{plain: (*plain)(n)}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	n.SubsysID = pickRef(n.SubsysID, aux.Subsys)
+	return nil
+}
+
 // Serving reports whether the appliance is actually presenting this namespace.
 // A namespace that does not report the field is assumed to be.
 func (n *NVMeNamespace) Serving() bool { return n == nil || n.Enabled == nil || *n.Enabled }
@@ -127,6 +149,37 @@ type NVMePortSubsys struct {
 	SubsysID refField `json:"subsys_id"`
 }
 
+// pickRef returns the first non-zero reference: the *_id spelling when present,
+// else the nested object the datastore actually returns.
+func pickRef(refs ...refField) refField {
+	for _, r := range refs {
+		if r.ID != 0 {
+			return r
+		}
+	}
+	return refField{}
+}
+
+// UnmarshalJSON reads port/subsys as well as port_id/subsys_id. Reading only
+// the latter decoded every binding as port 0 / subsys 0, so the "already bound"
+// check never matched and every repeated ControllerPublishVolume tried to
+// create the binding again -- which the middleware refuses with "This record
+// already exists" (azrtydxb/kuvryn-ai#122).
+func (p *NVMePortSubsys) UnmarshalJSON(b []byte) error {
+	type plain NVMePortSubsys
+	aux := struct {
+		*plain
+		Port   refField `json:"port"`
+		Subsys refField `json:"subsys"`
+	}{plain: (*plain)(p)}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	p.PortID = pickRef(p.PortID, aux.Port)
+	p.SubsysID = pickRef(p.SubsysID, aux.Subsys)
+	return nil
+}
+
 // NVMeHost is a registered initiator NQN — the NVMe equivalent of an iSCSI
 // initiator group entry.
 type NVMeHost struct {
@@ -139,6 +192,25 @@ type NVMeHostSubsys struct {
 	ID       int      `json:"id"`
 	HostID   refField `json:"host_id"`
 	SubsysID refField `json:"subsys_id"`
+}
+
+// UnmarshalJSON reads host/subsys as well as host_id/subsys_id; see
+// NVMePortSubsys.UnmarshalJSON. Reading only host_id made every grant look
+// absent, so a repeated publish re-granted (and failed on the duplicate) and an
+// unpublish never found the grant it had to revoke.
+func (h *NVMeHostSubsys) UnmarshalJSON(b []byte) error {
+	type plain NVMeHostSubsys
+	aux := struct {
+		*plain
+		Host   refField `json:"host"`
+		Subsys refField `json:"subsys"`
+	}{plain: (*plain)(h)}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	h.HostID = pickRef(h.HostID, aux.Host)
+	h.SubsysID = pickRef(h.SubsysID, aux.Subsys)
+	return nil
 }
 
 // NVMeGlobalConfig returns the appliance-wide NVMe-oF configuration.

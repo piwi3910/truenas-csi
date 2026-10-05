@@ -125,11 +125,41 @@ func matches(item map[string]any, raw []json.RawMessage) bool {
 			continue
 		}
 		field, _ := f[0].(string)
-		if norm(item[field]) != norm(f[2]) {
+		if norm(fieldValue(item, field)) != norm(f[2]) {
 			return false
 		}
 	}
 	return true
+}
+
+// fieldValue reads a filter field the way the middleware's SQL filter does.
+//
+// The nvmet association services (port_subsys, host_subsys, namespace) are
+// datastores with datastore_extend_fk, so a ROW carries the referenced object
+// under "port" / "subsys" / "host" -- the datastore strips the column's "_id"
+// suffix -- while a FILTER still names the column, "subsys_id". The fake has to
+// honour both, or it cannot hold rows in the shape the appliance returns.
+func fieldValue(item map[string]any, field string) any {
+	if v, ok := item[field]; ok {
+		return v
+	}
+	if ref, ok := strings.CutSuffix(field, "_id"); ok {
+		if obj, ok := item[ref].(map[string]any); ok {
+			return obj["id"]
+		}
+	}
+	return nil
+}
+
+// ref renders a foreign key the way datastore_extend_fk does: a nested object.
+func ref(id any) map[string]any { return map[string]any{"id": id} }
+
+// duplicate is the middleware's validation error for an association that
+// already exists (nvmet/port_subsys.py and host_subsys.py, 25.10.6).
+func duplicate(schema, field string, a, b any) *fake.RPCError {
+	return &fake.RPCError{Code: -32602, ErrName: "EINVAL", Reason: fmt.Sprintf(
+		"[EINVAL] %s.%s: This record already exists (Host ID: %s/Subsystem ID: %s)",
+		schema, field, norm(a), norm(b))}
 }
 
 func filterItems(items []map[string]any, raw []json.RawMessage) []map[string]any {
@@ -399,7 +429,7 @@ func (n *nas) install() {
 			}
 		}
 		ns := map[string]any{
-			"id": n.nextID(), "subsys_id": spec["subsys_id"],
+			"id": n.nextID(), "subsys": ref(spec["subsys_id"]),
 			"device_type": spec["device_type"], "device_path": path,
 		}
 		n.namespaces = append(n.namespaces, ns)
@@ -458,7 +488,13 @@ func (n *nas) install() {
 		spec := arg[map[string]any](t, p, 0)
 		n.mu.Lock()
 		defer n.mu.Unlock()
-		ps := map[string]any{"id": n.nextID(), "port_id": spec["port_id"], "subsys_id": spec["subsys_id"]}
+		for _, ps := range n.portSubsys {
+			if norm(fieldValue(ps, "port_id")) == norm(spec["port_id"]) &&
+				norm(fieldValue(ps, "subsys_id")) == norm(spec["subsys_id"]) {
+				return nil, duplicate("nvmet_port_subsys_create", "port_id", spec["port_id"], spec["subsys_id"])
+			}
+		}
+		ps := map[string]any{"id": n.nextID(), "port": ref(spec["port_id"]), "subsys": ref(spec["subsys_id"])}
 		n.portSubsys = append(n.portSubsys, ps)
 		return ps, nil
 	})
@@ -500,7 +536,13 @@ func (n *nas) install() {
 		spec := arg[map[string]any](t, p, 0)
 		n.mu.Lock()
 		defer n.mu.Unlock()
-		hs := map[string]any{"id": n.nextID(), "host_id": spec["host_id"], "subsys_id": spec["subsys_id"]}
+		for _, hs := range n.hostSubsys {
+			if norm(fieldValue(hs, "host_id")) == norm(spec["host_id"]) &&
+				norm(fieldValue(hs, "subsys_id")) == norm(spec["subsys_id"]) {
+				return nil, duplicate("nvmet_host_subsys_create", "host_id", spec["host_id"], spec["subsys_id"])
+			}
+		}
+		hs := map[string]any{"id": n.nextID(), "host": ref(spec["host_id"]), "subsys": ref(spec["subsys_id"])}
 		n.hostSubsys = append(n.hostSubsys, hs)
 		return hs, nil
 	})
